@@ -11,7 +11,8 @@ def convert_line(line, updated):
     key = get_key(line)
     stripped = key.strip()
     if stripped in updated:
-        return '%s:%s' % (key, updated[stripped])
+        value = updated[stripped].replace(' ', '')
+        return '%s:%s' % (key, value)
     else:
         return line
 
