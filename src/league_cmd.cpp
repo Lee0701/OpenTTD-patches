@@ -8,8 +8,8 @@
 /** @file league_cmd.cpp Handling of league tables. */
 
 #include "stdafx.h"
-#include "league_cmd.h"
 #include "league_base.h"
+#include "league_cmd.h"
 #include "command_type.h"
 #include "command_func.h"
 #include "industry.h"
@@ -17,6 +17,7 @@
 #include "town.h"
 #include "window_func.h"
 #include "core/pool_func.hpp"
+#include "company_base.h"
 
 #include "safeguards.h"
 
@@ -173,4 +174,52 @@ CommandCost CmdRemoveLeagueTableElement(DoCommandFlag flags, LeagueTableElementI
 		InvalidateWindowData(WC_COMPANY_LEAGUE, table);
 	}
 	return CommandCost();
+}
+
+CommandCost CmdCreateLeagueTable(TileIndex tile, DoCommandFlag flags, uint32 p1, uint32 p2, uint64 p3, const char *text, const CommandAuxiliaryBase *aux_data)
+{
+	CommandAuxData<LeagueTableCmdData> data;
+	CommandCost ret = data.Load(aux_data);
+	if (ret.Failed()) return ret;
+
+	auto [res, id] = CmdCreateLeagueTable(flags, data->title, data->header, data->footer);
+	res.SetResultData(id);
+	return res;
+}
+
+CommandCost CmdCreateLeagueTableElement(TileIndex tile, DoCommandFlag flags, uint32 p1, uint32 p2, uint64 p3, const char *text, const CommandAuxiliaryBase *aux_data)
+{
+	CommandAuxData<LeagueTableElementCmdData> data;
+	CommandCost ret = data.Load(aux_data);
+	if (ret.Failed()) return ret;
+
+	LeagueTableID table = GB(p1, 0, 8);
+	int64 rating = p3;
+	CompanyID company = (CompanyID)GB(p1, 8, 8);
+	LinkType link_type = (LinkType)GB(p1, 16, 8);
+	LinkTargetID link_target = (LinkTargetID)p2;
+
+	auto [res, id] = CmdCreateLeagueTableElement(flags, table, rating, company, data->text_str, data->score, link_type, link_target);
+	res.SetResultData(id);
+	return res;
+}
+
+CommandCost CmdUpdateLeagueTableElementData(TileIndex tile, DoCommandFlag flags, uint32 p1, uint32 p2, const char *text)
+{
+	LeagueTableElementID element = GB(p1, 0, 16);
+	CompanyID company = (CompanyID)GB(p1, 16, 8);
+	LinkType link_type = (LinkType)GB(p1, 24, 8);
+	LinkTargetID link_target = (LinkTargetID)p2;
+
+	return CmdUpdateLeagueTableElementData(flags, element, company, text, link_type, link_target);
+}
+
+CommandCost CmdUpdateLeagueTableElementScore(TileIndex tile, DoCommandFlag flags, uint32 p1, uint32 p2, uint64 p3, const char *text, const CommandAuxiliaryBase *aux_data)
+{
+	return CmdUpdateLeagueTableElementScore(flags, p1, p3, text);
+}
+
+CommandCost CmdRemoveLeagueTableElement(TileIndex tile, DoCommandFlag flags, uint32 p1, uint32 p2, const char *text)
+{
+	return CmdRemoveLeagueTableElement(flags, p1);
 }

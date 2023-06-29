@@ -94,8 +94,8 @@ struct NetworkServerGameInfo {
 	GRFConfig *grfconfig;        ///< List of NewGRF files used
 	Date start_date;             ///< When the game started
 	Date game_date;              ///< Current date
-	uint16 map_width;            ///< Map width
-	uint16 map_height;           ///< Map height
+	uint32 map_width;            ///< Map width
+	uint32 map_height;           ///< Map height
 	std::string server_name;     ///< Server name
 	std::string server_revision; ///< The version number the server is using (e.g.: 'r304' or 0.5.0)
 	bool dedicated;              ///< Is this a dedicated server?
@@ -132,9 +132,9 @@ typedef std::unordered_map<uint32, NamedGRFIdentifier> GameInfoNewGRFLookupTable
 
 extern NetworkServerGameInfo _network_game_info;
 
-std::string_view GetNetworkRevisionString();
-bool IsNetworkCompatibleVersion(std::string_view other);
-void CheckGameCompatibility(NetworkGameInfo &ngi);
+const char *GetNetworkRevisionString();
+bool IsNetworkCompatibleVersion(const char *other, bool extended = false);
+void CheckGameCompatibility(NetworkGameInfo &ngi, bool extended = false);
 
 void FillStaticNetworkServerGameInfo();
 const NetworkServerGameInfo *GetCurrentNetworkServerGameInfo();
@@ -144,6 +144,8 @@ void DeserializeGRFIdentifierWithName(Packet *p, NamedGRFIdentifier *grf);
 void SerializeGRFIdentifier(Packet *p, const GRFIdentifier *grf);
 
 void DeserializeNetworkGameInfo(Packet *p, NetworkGameInfo *info, const GameInfoNewGRFLookupTable *newgrf_lookup_table = nullptr);
+void DeserializeNetworkGameInfoExtended(Packet *p, NetworkGameInfo *info);
 void SerializeNetworkGameInfo(Packet *p, const NetworkServerGameInfo *info, bool send_newgrf_names = true);
+void SerializeNetworkGameInfoExtended(Packet *p, const NetworkServerGameInfo *info, uint16 flags, uint16 version, bool send_newgrf_names = true);
 
 #endif /* NETWORK_CORE_GAME_INFO_H */

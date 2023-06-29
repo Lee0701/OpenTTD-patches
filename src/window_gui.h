@@ -10,11 +10,6 @@
 #ifndef WINDOW_GUI_H
 #define WINDOW_GUI_H
 
-#include <list>
-#include <algorithm>
-#include <functional>
-
-#include "vehiclelist.h"
 #include "vehicle_type.h"
 #include "viewport_type.h"
 #include "company_type.h"
@@ -23,6 +18,9 @@
 #include "core/smallvec_type.hpp"
 #include "core/smallmap_type.hpp"
 #include "string_type.h"
+
+#include <algorithm>
+#include <functional>
 
 /**
  * Flags to describe the look of the frame
@@ -76,12 +74,25 @@ static inline void DrawFrameRect(const Rect &r, Colours colour, FrameFlags flags
 	DrawFrameRect(r.left, r.top, r.right, r.bottom, colour, flags);
 }
 
-void DrawCaption(const Rect &r, Colours colour, Owner owner, TextColour text_colour, StringID str, StringAlignment align);
+void DrawCaption(const Rect &r, Colours colour, Owner owner, TextColour text_colour, StringID str, StringAlignment align, FontSize fs);
 
 /* window.cpp */
-using WindowList = std::list<Window *>;
-extern WindowList _z_windows;
+extern WindowBase *_z_front_window;
+extern WindowBase *_z_back_window;
+extern WindowBase *_first_window;
 extern Window *_focused_window;
+
+inline uint64 GetWindowUpdateNumber()
+{
+	extern uint64 _window_update_number;
+	return _window_update_number;
+}
+
+inline void IncrementWindowUpdateNumber()
+{
+	extern uint64 _window_update_number;
+	_window_update_number++;
+}
 
 
 /** How do we the window to be placed? */
@@ -96,14 +107,20 @@ Point GetToolbarAlignedWindowPosition(int window_width);
 
 struct HotkeyList;
 
+struct WindowDescPreferences {
+	bool pref_sticky;              ///< Preferred stickyness.
+	int16 pref_width;              ///< User-preferred width of the window. Zero if unset.
+	int16 pref_height;             ///< User-preferred height of the window. Zero if unset.
+};
+
 /**
  * High level window description
  */
-struct WindowDesc : ZeroedMemoryAllocator {
+struct WindowDesc {
 
 	WindowDesc(WindowPosition default_pos, const char *ini_key, int16 def_width_trad, int16 def_height_trad,
 			WindowClass window_class, WindowClass parent_class, uint32 flags,
-			const NWidgetPart *nwid_parts, int16 nwid_length, HotkeyList *hotkeys = nullptr);
+			const NWidgetPart *nwid_parts, int16 nwid_length, HotkeyList *hotkeys = nullptr, WindowDesc *ini_parent = nullptr);
 
 	~WindowDesc();
 
@@ -115,10 +132,12 @@ struct WindowDesc : ZeroedMemoryAllocator {
 	const NWidgetPart *nwid_parts; ///< Nested widget parts describing the window.
 	int16 nwid_length;             ///< Length of the #nwid_parts array.
 	HotkeyList *hotkeys;           ///< Hotkeys for the window.
+	WindowDesc *ini_parent;        ///< Other window desc to use for WindowDescPreferences.
 
-	bool pref_sticky;              ///< Preferred stickyness.
-	int16 pref_width;              ///< User-preferred width of the window. Zero if unset.
-	int16 pref_height;             ///< User-preferred height of the window. Zero if unset.
+	WindowDescPreferences prefs;   ///< Preferences for this window
+
+	const WindowDescPreferences &GetPreferences() const;
+	WindowDescPreferences &GetPreferences() { return const_cast<WindowDescPreferences &>(const_cast<const WindowDesc*>(this)->GetPreferences()); }
 
 	int16 GetDefaultWidth() const;
 	int16 GetDefaultHeight() const;
@@ -144,6 +163,7 @@ enum WindowDefaultFlag {
 	WDF_CONSTRUCTION    =   1 << 0, ///< This window is used for construction; close it whenever changing company.
 	WDF_MODAL           =   1 << 1, ///< The window is a modal child of some other window, meaning the parent is 'inactive'
 	WDF_NO_FOCUS        =   1 << 2, ///< This window won't get focus/make any other window lose focus when click
+	WDF_NETWORK         =   1 << 3, ///< This window is used for network client functionality
 };
 
 /**
@@ -164,7 +184,7 @@ enum SortButtonState {
 /**
  * Window flags.
  */
-enum WindowFlags {
+enum WindowFlags : uint16 {
 	WF_TIMEOUT           = 1 <<  0, ///< Window timeout counter.
 
 	WF_DRAGGING          = 1 <<  3, ///< Window is being dragged.
@@ -176,6 +196,9 @@ enum WindowFlags {
 	WF_WHITE_BORDER      = 1 <<  8, ///< Window white border counter bit mask.
 	WF_HIGHLIGHTED       = 1 <<  9, ///< Window has a widget that has a highlight.
 	WF_CENTERED          = 1 << 10, ///< Window is centered and shall stay centered after ReInit.
+	WF_DIRTY             = 1 << 11, ///< Whole window is dirty, and requires repainting.
+	WF_WIDGETS_DIRTY     = 1 << 12, ///< One or more widgets are dirty, and require repainting.
+	WF_DRAG_DIRTIED      = 1 << 13, ///< The window has already been marked dirty as blocks as part of the current drag operation
 };
 DECLARE_ENUM_AS_BIT_SET(WindowFlags)
 
@@ -204,16 +227,56 @@ enum TooltipCloseCondition {
 	TCC_RIGHT_CLICK,
 	TCC_HOVER,
 	TCC_NONE,
+	TCC_HOVER_VIEWPORT,
+	TCC_NEXT_LOOP,
 	TCC_EXIT_VIEWPORT,
 };
+
+struct WindowBase {
+	WindowBase *z_front;             ///< The window in front of us in z-order.
+	WindowBase *z_back;              ///< The window behind us in z-order.
+	WindowBase *next_window;         ///< The next window in arbitrary iteration order.
+	WindowClass window_class;        ///< Window class
+
+	virtual ~WindowBase() {}
+
+	/**
+	 * Memory allocator for a single class instance.
+	 * @param size the amount of bytes to allocate.
+	 * @return the given amounts of bytes zeroed.
+	 */
+	inline void *operator new(size_t size) { return CallocT<byte>(size); }
+
+protected:
+	WindowBase() {}
+
+private:
+	/**
+	 * Memory allocator for an array of class instances.
+	 * @param size the amount of bytes to allocate.
+	 * @return the given amounts of bytes zeroed.
+	 */
+	inline void *operator new[](size_t size) { NOT_REACHED(); }
+
+	/**
+	 * Memory release for a single class instance.
+	 * @param ptr  the memory to free.
+	 */
+	inline void operator delete(void *ptr) { NOT_REACHED(); }
+
+	/**
+	 * Memory release for an array of class instances.
+	 * @param ptr  the memory to free.
+	 */
+	inline void operator delete[](void *ptr) { NOT_REACHED(); }
+};
+
+typedef std::vector<const Vehicle *> VehicleList;
 
 /**
  * Data structure for an opened window
  */
-struct Window : ZeroedMemoryAllocator {
-private:
-	static std::vector<Window *> closed_windows;
-
+struct Window : WindowBase {
 protected:
 	void InitializeData(WindowNumber window_number);
 	void InitializePositionSize(int x, int y, int min_width, int min_height);
@@ -221,11 +284,10 @@ protected:
 
 	std::vector<int> scheduled_invalidation_data;  ///< Data of scheduled OnInvalidateData() calls.
 
-	/* Protected to prevent deletion anywhere outside Window::DeleteClosedWindows(). */
-	virtual ~Window();
-
 public:
 	Window(WindowDesc *desc);
+
+	virtual ~Window();
 
 	/**
 	 * Helper allocation function to disallow something.
@@ -233,11 +295,22 @@ public:
 	 * to destruct them all at the same time too, which is kinda hard.
 	 * @param size the amount of space not to allocate
 	 */
-	inline void *operator new[](size_t size) = delete;
+	inline void *operator new[](size_t size)
+	{
+		NOT_REACHED();
+	}
+
+	/**
+	 * Helper allocation function to disallow something.
+	 * Don't free the window directly; it corrupts the linked list when iterating
+	 * @param ptr the pointer not to free
+	 */
+	inline void operator delete(void *ptr)
+	{
+	}
 
 	WindowDesc *window_desc;    ///< Window description
 	WindowFlags flags;          ///< Window flags
-	WindowClass window_class;   ///< Window class
 	WindowNumber window_number; ///< Window number within the window class
 
 	uint8 timeout_timer;      ///< Timer value of the WF_TIMEOUT for flags.
@@ -253,7 +326,8 @@ public:
 	Owner owner;        ///< The owner of the content shown in this window. Company colour is acquired from this variable.
 
 	ViewportData *viewport;          ///< Pointer to viewport data, if present.
-	const NWidgetCore *nested_focus; ///< Currently focused nested widget, or \c nullptr if no nested widget has focus.
+	NWidgetViewport *viewport_widget; ///< Pointer to viewport widget, if present.
+	NWidgetCore *nested_focus;       ///< Currently focused nested widget, or \c nullptr if no nested widget has focus.
 	SmallMap<int, QueryString*> querystrings; ///< QueryString associated to WWT_EDITBOX widgets.
 	NWidgetBase *nested_root;        ///< Root of the nested tree.
 	NWidgetBase **nested_array;      ///< Array of pointers into the tree. Do not access directly, use #Window::GetWidget() instead.
@@ -264,7 +338,6 @@ public:
 	int mouse_capture_widget;        ///< Widgetindex of current mouse capture widget (e.g. dragged scrollbar). -1 if no widget has mouse capture.
 
 	Window *parent;                  ///< Parent window.
-	WindowList::iterator z_position;
 
 	template <class NWID>
 	inline const NWID *GetWidget(uint widnum) const;
@@ -276,17 +349,20 @@ public:
 
 	const QueryString *GetQueryString(uint widnum) const;
 	QueryString *GetQueryString(uint widnum);
+	void UpdateQueryStringSize();
 
 	virtual const char *GetFocusedText() const;
 	virtual const char *GetCaret() const;
 	virtual const char *GetMarkedText(size_t *length) const;
 	virtual Point GetCaretPosition() const;
 	virtual Rect GetTextBoundingRect(const char *from, const char *to) const;
-	virtual const char *GetTextCharacterAtPosition(const Point &pt) const;
+	virtual ptrdiff_t GetTextCharacterAtPosition(const Point &pt) const;
 
 	void InitNested(WindowNumber number = 0);
 	void CreateNestedTree(bool fill_nested = true);
 	void FinishInitNested(WindowNumber window_number = 0);
+
+	void ChangeWindowClass(WindowClass cls);
 
 	/**
 	 * Set the timeout flag of the window and initiate the timer.
@@ -436,19 +512,18 @@ public:
 	void RaiseButtons(bool autoraise = false);
 	void CDECL SetWidgetsDisabledState(bool disab_stat, int widgets, ...);
 	void CDECL SetWidgetsLoweredState(bool lowered_stat, int widgets, ...);
-	void SetWidgetDirty(byte widget_index) const;
+	void SetWidgetDirty(byte widget_index);
 
 	void DrawWidgets() const;
-	void DrawViewport() const;
+	void DrawViewport(uint8 display_flags) const;
 	void DrawSortButtonState(int widget, SortButtonState state) const;
 	static int SortButtonWidth();
 
-	void CloseChildWindows(WindowClass wc = WC_INVALID) const;
-	virtual void Close();
-	static void DeleteClosedWindows();
+	void DeleteChildWindows(WindowClass wc = WC_INVALID) const;
 
-	void SetDirty() const;
-	void ReInit(int rx = 0, int ry = 0);
+	void SetDirty();
+	void SetDirtyAsBlocks();
+	void ReInit(int rx = 0, int ry = 0, bool reposition = false);
 
 	/** Is window shaded currently? */
 	inline bool IsShaded() const
@@ -520,9 +595,9 @@ public:
 	 */
 	virtual void SetStringParameters(int widget) const {}
 
-	virtual void OnFocus();
+	virtual void OnFocus(Window *previously_focused_window);
 
-	virtual void OnFocusLost();
+	virtual void OnFocusLost(Window *newly_focused_window);
 
 	/**
 	 * A key has been pressed.
@@ -542,6 +617,15 @@ public:
 	 */
 	virtual EventState OnCTRLStateChange() { return ES_NOT_HANDLED; }
 
+	/**
+	 * The state of the control key has changed, this is sent even if an OnCTRLStateChange handler has return ES_HANDLED
+	 */
+	virtual void OnCTRLStateChangeAlways() {}
+
+	/**
+	 * The state of the shift key has changed
+	 */
+	virtual void OnShiftStateChange() {}
 
 	/**
 	 * A click with the left mouse button has been made on the window.
@@ -699,6 +783,13 @@ public:
 	virtual bool OnVehicleSelect(VehicleList::const_iterator begin, VehicleList::const_iterator end) { return false; }
 
 	/**
+	 * The user clicked on a template vehicle while HT_VEHICLE has been set.
+	 * @param v clicked vehicle. It is guaranteed to be v->IsPrimaryVehicle() == true
+	 * @return True if the click is handled, false if it is ignored.
+	 */
+	virtual bool OnTemplateVehicleSelect(const struct TemplateVehicle *v) { return false; }
+
+	/**
 	 * The user cancelled a tile highlight mode that has been set.
 	 */
 	virtual void OnPlaceObjectAbort() {}
@@ -749,73 +840,101 @@ public:
 	 */
 	virtual void ShowNewGRFInspectWindow() const { NOT_REACHED(); }
 
+	template<class T>
+	using window_base_t = std::conditional_t<std::is_const<T>{}, WindowBase const, WindowBase>;
+
+	enum IterationMode {
+		IM_FROM_FRONT,
+		IM_FROM_BACK,
+		IM_ARBITRARY,
+	};
+
 	/**
 	 * Iterator to iterate all valid Windows
-	 * @tparam TtoBack whether we iterate towards the back.
+	 * @tparam T Type of the class/struct that is going to be iterated
+	 * @tparam Tmode Iteration mode
 	 */
-	template <bool TtoBack>
+	template <class T, IterationMode Tmode>
 	struct WindowIterator {
-		typedef Window *value_type;
-		typedef value_type *pointer;
-		typedef value_type &reference;
+		typedef T value_type;
+		typedef T *pointer;
+		typedef T &reference;
 		typedef size_t difference_type;
 		typedef std::forward_iterator_tag iterator_category;
 
-		explicit WindowIterator(WindowList::iterator start) : it(start)
+		explicit WindowIterator(window_base_t<T> *start) : w(start)
 		{
 			this->Validate();
 		}
-		explicit WindowIterator(const Window *w) : it(w->z_position) {}
 
-		bool operator==(const WindowIterator &other) const { return this->it == other.it; }
+		bool operator==(const WindowIterator &other) const { return this->w == other.w; }
 		bool operator!=(const WindowIterator &other) const { return !(*this == other); }
-		Window * operator*() const { return *this->it; }
+		T * operator*() const { return static_cast<T *>(this->w); }
 		WindowIterator & operator++() { this->Next(); this->Validate(); return *this; }
 
-		bool IsEnd() const { return this->it == _z_windows.end(); }
-
 	private:
-		WindowList::iterator it;
-		void Validate()
-		{
-			while (!this->IsEnd() && *this->it == nullptr) this->Next();
-		}
+		window_base_t<T> *w;
+		void Validate() { while (this->w != nullptr && this->w->window_class == WC_INVALID) this->Next(); }
+
 		void Next()
 		{
-			if constexpr (!TtoBack) {
-				++this->it;
-			} else if (this->it == _z_windows.begin()) {
-				this->it = _z_windows.end();
-			} else {
-				--this->it;
+			if (this->w != nullptr) {
+				switch (Tmode) {
+					case IM_FROM_FRONT:
+						this->w = this->w->z_back;
+						break;
+					case IM_FROM_BACK:
+						this->w = this->w->z_front;
+						break;
+					case IM_ARBITRARY:
+						this->w = this->w->next_window;
+						break;
+				}
 			}
 		}
 	};
-	using IteratorToFront = WindowIterator<false>; //!< Iterate in Z order towards front.
-	using IteratorToBack = WindowIterator<true>; //!< Iterate in Z order towards back.
 
 	/**
 	 * Iterable ensemble of all valid Windows
+	 * @tparam T Type of the class/struct that is going to be iterated
 	 * @tparam Tfront Wether we iterate from front
 	 */
-	template <bool Tfront>
-	struct AllWindows {
-		AllWindows() {}
-		WindowIterator<Tfront> begin()
-		{
-			if constexpr (Tfront) {
-				auto back = _z_windows.end();
-				if (back != _z_windows.begin()) --back;
-				return WindowIterator<Tfront>(back);
-			} else {
-				return WindowIterator<Tfront>(_z_windows.begin());
-			}
-		}
-		WindowIterator<Tfront> end() { return WindowIterator<Tfront>(_z_windows.end()); }
+	template <class T, IterationMode Tmode>
+	struct Iterate {
+		Iterate(window_base_t<T> *from) : from(from) {}
+		WindowIterator<T, Tmode> begin() { return WindowIterator<T, Tmode>(this->from); }
+		WindowIterator<T, Tmode> end() { return WindowIterator<T, Tmode>(nullptr); }
+		bool empty() { return this->begin() == this->end(); }
+	private:
+		window_base_t<T> *from;
 	};
-	using Iterate = AllWindows<false>; //!< Iterate all windows in whatever order is easiest.
-	using IterateFromBack = AllWindows<false>; //!< Iterate all windows in Z order from back to front.
-	using IterateFromFront = AllWindows<true>; //!< Iterate all windows in Z order from front to back.
+
+	/**
+	 * Returns an iterable ensemble of all valid Window from back to front
+	 * @tparam T Type of the class/struct that is going to be iterated
+	 * @param from index of the first Window to consider
+	 * @return an iterable ensemble of all valid Window
+	 */
+	template <class T = Window>
+	static Iterate<T, IM_FROM_BACK> IterateFromBack(window_base_t<T> *from = _z_back_window) { return Iterate<T, IM_FROM_BACK>(from); }
+
+	/**
+	 * Returns an iterable ensemble of all valid Window from front to back
+	 * @tparam T Type of the class/struct that is going to be iterated
+	 * @param from index of the first Window to consider
+	 * @return an iterable ensemble of all valid Window
+	 */
+	template <class T = Window>
+	static Iterate<T, IM_FROM_FRONT> IterateFromFront(window_base_t<T> *from = _z_front_window) { return Iterate<T, IM_FROM_FRONT>(from); }
+
+	/**
+	 * Returns an iterable ensemble of all valid Window in an arbitrary order which is safe to use when deleting
+	 * @tparam T Type of the class/struct that is going to be iterated
+	 * @param from index of the first Window to consider
+	 * @return an iterable ensemble of all valid Window
+	 */
+	template <class T = Window>
+	static Iterate<T, IM_ARBITRARY> IterateUnordered(window_base_t<T> *from = _first_window) { return Iterate<T, IM_ARBITRARY>(from); }
 };
 
 /**
@@ -878,7 +997,7 @@ public:
 		this->parent = parent;
 	}
 
-	void Close() override;
+	virtual ~PickerWindowBase();
 };
 
 Window *BringWindowToFrontById(WindowClass cls, WindowNumber number);
@@ -913,7 +1032,8 @@ extern int _scrollbar_start_pos;
 extern int _scrollbar_size;
 extern byte _scroller_click_timeout;
 
-extern bool _scrolling_viewport;
+extern Window *_scrolling_viewport;
+extern Rect _scrolling_viewport_bound;
 extern bool _mouse_hovering;
 
 /** Mouse modes. */
@@ -929,5 +1049,33 @@ extern SpecialMouseMode _special_mouse_mode;
 void SetFocusedWindow(Window *w);
 
 void ScrollbarClickHandler(Window *w, NWidgetCore *nw, int x, int y);
+
+/**
+ * Returns whether a window may be shown or not.
+ * @param w The window to consider.
+ * @return True iff it may be shown, otherwise false.
+ */
+inline bool MayBeShown(const Window *w)
+{
+	/* If we're not modal, everything is okay. */
+	extern bool _in_modal_progress;
+	if (likely(!_in_modal_progress)) return true;
+
+	switch (w->window_class) {
+		case WC_MAIN_WINDOW:    ///< The background, i.e. the game.
+		case WC_MODAL_PROGRESS: ///< The actual progress window.
+		case WC_CONFIRM_POPUP_QUERY: ///< The abort window.
+			return true;
+
+		default:
+			return false;
+	}
+}
+
+struct GeneralVehicleWindow : public Window {
+	const Vehicle *vehicle;
+
+	GeneralVehicleWindow(WindowDesc *desc, const Vehicle *v) : Window(desc), vehicle(v) {}
+};
 
 #endif /* WINDOW_GUI_H */

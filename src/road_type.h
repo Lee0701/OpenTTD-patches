@@ -12,6 +12,8 @@
 
 #include "core/enum_type.hpp"
 
+extern uint32 _road_layout_change_counter;
+
 typedef uint32 RoadTypeLabel;
 
 /**
@@ -19,7 +21,7 @@ typedef uint32 RoadTypeLabel;
  *
  * @note currently only ROADTYPE_ROAD and ROADTYPE_TRAM are supported.
  */
-enum RoadType : byte {
+enum RoadType {
 	ROADTYPE_BEGIN   = 0,    ///< Used for iterations
 	ROADTYPE_ROAD    = 0,    ///< Basic road type
 	ROADTYPE_TRAM    = 1,    ///< Trams
@@ -47,7 +49,7 @@ DECLARE_ENUM_AS_BIT_SET(RoadTypes)
  * This enumeration defines the possible road parts which
  * can be build on a tile.
  */
-enum RoadBits : byte {
+enum RoadBits {
 	ROAD_NONE = 0U,                  ///< No road-part is build
 	ROAD_NW   = 1U,                  ///< North-west part
 	ROAD_SW   = 2U,                  ///< South-west part
@@ -67,17 +69,5 @@ enum RoadBits : byte {
 };
 DECLARE_ENUM_AS_BIT_SET(RoadBits)
 template <> struct EnumPropsT<RoadBits> : MakeEnumPropsT<RoadBits, byte, ROAD_NONE, ROAD_END, ROAD_NONE, 4> {};
-
-/** Which directions are disallowed ? */
-enum DisallowedRoadDirections : byte {
-	DRD_NONE,       ///< None of the directions are disallowed
-	DRD_SOUTHBOUND, ///< All southbound traffic is disallowed
-	DRD_NORTHBOUND, ///< All northbound traffic is disallowed
-	DRD_BOTH,       ///< All directions are disallowed
-	DRD_END,        ///< Sentinel
-};
-DECLARE_ENUM_AS_BIT_SET(DisallowedRoadDirections)
-/** Helper information for extract tool. */
-template <> struct EnumPropsT<DisallowedRoadDirections> : MakeEnumPropsT<DisallowedRoadDirections, byte, DRD_NONE, DRD_END, DRD_END, 2> {};
 
 #endif /* ROAD_TYPE_H */

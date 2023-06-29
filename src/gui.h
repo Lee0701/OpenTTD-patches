@@ -49,13 +49,15 @@ void ShowIndustryDirectory();
 void ShowIndustryCargoesWindow();
 void ShowSubsidiesList();
 void ShowGoalsList(CompanyID company);
-void ShowGoalQuestion(uint16 id, byte type, uint32 button_mask, const char *question);
+void ShowGoalQuestion(uint16 id, byte type, uint32 button_mask, const std::string &question);
 void ShowStoryBook(CompanyID company, uint16 page_id = INVALID_STORY_PAGE);
 
 void ShowEstimatedCostOrIncome(Money cost, int x, int y);
 
 void ShowExtraViewportWindow(TileIndex tile = INVALID_TILE);
 void ShowExtraViewportWindowForTileUnderCursor();
+
+void ShowModifierKeyToggleWindow();
 
 /* bridge_gui.cpp */
 void ShowBuildBridgeWindow(TileIndex start, TileIndex end, TransportType transport_type, byte bridge_type);

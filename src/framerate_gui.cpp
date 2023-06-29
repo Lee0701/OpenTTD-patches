@@ -28,6 +28,9 @@
 
 #include <atomic>
 #include <mutex>
+#if defined(__MINGW32__)
+#include "3rdparty/mingw-std-threads/mingw.mutex.h"
+#endif
 #include <vector>
 
 #include "safeguards.h"
@@ -180,16 +183,13 @@ namespace {
 		}
 	};
 
-	/** %Game loop rate, cycles per second */
-	static const double GL_RATE = 1000.0 / MILLISECONDS_PER_TICK;
-
 	/**
 	 * Storage for all performance element measurements.
 	 * Elements are initialized with the expected rate in recorded values per second.
 	 * @hideinitializer
 	 */
 	PerformanceData _pf_data[PFE_MAX] = {
-		PerformanceData(GL_RATE),               // PFE_GAMELOOP
+		PerformanceData(1),                     // PFE_GAMELOOP
 		PerformanceData(1),                     // PFE_ACC_GL_ECONOMY
 		PerformanceData(1),                     // PFE_ACC_GL_TRAINS
 		PerformanceData(1),                     // PFE_ACC_GL_ROADVEHS
@@ -260,11 +260,6 @@ PerformanceMeasurer::~PerformanceMeasurer()
 		}
 	}
 	if (this->elem == PFE_SOUND) {
-		/* PFE_SOUND measurements are made from the mixer thread.
-		 * _pf_data cannot be concurrently accessed from the mixer thread
-		 * and the main thread, so store the measurement results in a
-		 * mutex-protected queue which is drained by the main thread.
-		 * See: ProcessPendingPerformanceMeasurements() */
 		TimingMeasurement end = GetPerformanceTimer();
 		std::lock_guard lk(_sound_perf_lock);
 		if (_sound_perf_measurements.size() >= NUM_FRAMERATE_POINTS * 2) return;
@@ -296,7 +291,6 @@ void PerformanceMeasurer::SetExpectedRate(double rate)
  */
 /* static */ void PerformanceMeasurer::Paused(PerformanceElement elem)
 {
-	PerformanceMeasurer::SetInactive(elem);
 	_pf_data[elem].AddPause(GetPerformanceTimer());
 }
 
@@ -482,6 +476,7 @@ struct FramerateWindow : Window {
 
 	void UpdateData()
 	{
+		_pf_data[PFE_GAMELOOP].expected_rate = _ticks_per_second;
 		double gl_rate = _pf_data[PFE_GAMELOOP].GetRate();
 		bool have_script = false;
 		this->rate_gameloop.SetRate(gl_rate, _pf_data[PFE_GAMELOOP].expected_rate);
@@ -741,7 +736,7 @@ static WindowDesc _framerate_display_desc(
 static const NWidgetPart _frametime_graph_window_widgets[] = {
 	NWidget(NWID_HORIZONTAL),
 		NWidget(WWT_CLOSEBOX, COLOUR_GREY),
-		NWidget(WWT_CAPTION, COLOUR_GREY, WID_FGW_CAPTION), SetDataTip(STR_WHITE_STRING, STR_TOOLTIP_WINDOW_TITLE_DRAG_THIS),
+		NWidget(WWT_CAPTION, COLOUR_GREY, WID_FGW_CAPTION), SetDataTip(STR_JUST_STRING, STR_TOOLTIP_WINDOW_TITLE_DRAG_THIS), SetTextStyle(TC_WHITE),
 		NWidget(WWT_STICKYBOX, COLOUR_GREY),
 	EndContainer(),
 	NWidget(WWT_PANEL, COLOUR_GREY),
@@ -1044,7 +1039,7 @@ void ConPrintFramerate()
 	const int count2 = NUM_FRAMERATE_POINTS / 4;
 	const int count3 = NUM_FRAMERATE_POINTS / 1;
 
-	IConsolePrint(TC_SILVER, "Based on num. data points: {} {} {}", count1, count2, count3);
+	IConsolePrintF(TC_SILVER, "Based on num. data points: %d %d %d", count1, count2, count3);
 
 	static const char *MEASUREMENT_NAMES[PFE_MAX] = {
 		"Game loop",
@@ -1071,7 +1066,7 @@ void ConPrintFramerate()
 	for (const PerformanceElement *e = rate_elements; e < rate_elements + lengthof(rate_elements); e++) {
 		auto &pf = _pf_data[*e];
 		if (pf.num_valid == 0) continue;
-		IConsolePrint(TC_GREEN, "{} rate: {:.2f}fps  (expected: {:.2f}fps)",
+		IConsolePrintF(TC_GREEN, "%s rate: %.2ffps  (expected: %.2ffps)",
 			MEASUREMENT_NAMES[*e],
 			pf.GetRate(),
 			pf.expected_rate);
@@ -1088,7 +1083,7 @@ void ConPrintFramerate()
 			seprintf(ai_name_buf, lastof(ai_name_buf), "AI %d %s", e - PFE_AI0 + 1, GetAIName(e - PFE_AI0)),
 			name = ai_name_buf;
 		}
-		IConsolePrint(TC_LIGHT_BLUE, "{} times: {:.2f}ms  {:.2f}ms  {:.2f}ms",
+		IConsolePrintF(TC_LIGHT_BLUE, "%s times: %.2fms  %.2fms  %.2fms",
 			name,
 			pf.GetAverageDurationMilliseconds(count1),
 			pf.GetAverageDurationMilliseconds(count2),
@@ -1097,17 +1092,10 @@ void ConPrintFramerate()
 	}
 
 	if (!printed_anything) {
-		IConsolePrint(CC_ERROR, "No performance measurements have been taken yet.");
+		IConsoleWarning("No performance measurements have been taken yet");
 	}
 }
 
-/**
- * This drains the PFE_SOUND measurement data queue into _pf_data.
- * PFE_SOUND measurements are made by the mixer thread and so cannot be stored
- * into _pf_data directly, because this would not be thread safe and would violate
- * the invariants of the FPS and frame graph windows.
- * @see PerformanceMeasurement::~PerformanceMeasurement()
- */
 void ProcessPendingPerformanceMeasurements()
 {
 	if (_sound_perf_pending.load(std::memory_order_acquire)) {

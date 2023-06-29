@@ -5,7 +5,6 @@ add_files(
     countedptr.hpp
     dbg_helpers.cpp
     dbg_helpers.h
-    endian_buffer.hpp
     fixedsizearray.hpp
     getoptdata.cpp
     getoptdata.h

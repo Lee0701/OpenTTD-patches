@@ -12,9 +12,32 @@
 
 #include "date_type.h"
 #include "vehicle_type.h"
+#include <vector>
+#include <tuple>
 
 void ShowTimetableWindow(const Vehicle *v);
 void UpdateVehicleTimetable(Vehicle *v, bool travelling);
-void SetTimetableParams(int param1, int param2, Ticks ticks);
+void SetTimetableParams(int first_param, Ticks ticks, bool long_mode = false);
+Ticks ParseTimetableDuration(const char *str);
+
+enum SetTimetableWindowsDirtyFlags {
+	STWDF_NONE                       = 0,
+	STWDF_SCHEDULED_DISPATCH         = 1 << 0,
+	STWDF_ORDERS                     = 1 << 1,
+};
+DECLARE_ENUM_AS_BIT_SET(SetTimetableWindowsDirtyFlags)
+void SetTimetableWindowsDirty(const Vehicle *v, SetTimetableWindowsDirtyFlags flags = STWDF_NONE);
+
+struct TimetableProgress {
+	VehicleID id;
+	int order_count;
+	int order_ticks;
+	int cumulative_ticks;
+
+	bool IsValidForSeparation() const { return this->cumulative_ticks >= 0; }
+	bool operator<(const TimetableProgress& other) const { return std::tie(this->order_count, this->order_ticks, this->id) < std::tie(other.order_count, other.order_ticks, other.id); }
+};
+
+std::vector<TimetableProgress> PopulateSeparationState(const Vehicle *v_start);
 
 #endif /* TIMETABLE_H */

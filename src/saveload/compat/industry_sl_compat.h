@@ -12,6 +12,8 @@
 
 #include "../saveload.h"
 
+namespace upstream_sl {
+
 /** Original field order for _industry_desc. */
 const SaveLoadCompat _industry_sl_compat[] = {
 	SLC_VAR("location.tile"),
@@ -68,5 +70,7 @@ const SaveLoadCompat _industrytype_builder_sl_compat[] = {
 	SLC_VAR("max_wait"),
 	SLC_VAR("wait_count"),
 };
+
+}
 
 #endif /* SAVELOAD_COMPAT_INDUSTRY_H */

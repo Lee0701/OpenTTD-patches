@@ -16,6 +16,8 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 static const SaveLoad _subsidies_desc[] = {
 	    SLE_VAR(Subsidy, cargo_type, SLE_UINT8),
 	SLE_CONDVAR(Subsidy, remaining,  SLE_FILE_U8 | SLE_VAR_U16, SL_MIN_VERSION, SLV_CUSTOM_SUBSIDY_DURATION),
@@ -60,3 +62,5 @@ static const ChunkHandlerRef subsidy_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _subsidy_chunk_handlers(subsidy_chunk_handlers);
+
+}

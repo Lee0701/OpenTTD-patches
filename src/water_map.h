@@ -44,7 +44,7 @@ enum WaterTileType {
 };
 
 /** classes of water (for #WATER_TILE_CLEAR water tile type). */
-enum WaterClass : byte {
+enum WaterClass {
 	WATER_CLASS_SEA,     ///< Sea.
 	WATER_CLASS_CANAL,   ///< Canal.
 	WATER_CLASS_RIVER,   ///< River.
@@ -52,17 +52,6 @@ enum WaterClass : byte {
 };
 /** Helper information for extract tool. */
 template <> struct EnumPropsT<WaterClass> : MakeEnumPropsT<WaterClass, byte, WATER_CLASS_SEA, WATER_CLASS_INVALID, WATER_CLASS_INVALID, 2> {};
-
-/**
- * Checks if a water class is valid.
- *
- * @param wc The value to check
- * @return true if the given value is a valid water class.
- */
-static inline bool IsValidWaterClass(WaterClass wc)
-{
-	return wc < WATER_CLASS_INVALID;
-}
 
 /** Sections of the water depot. */
 enum DepotPart {
@@ -87,7 +76,7 @@ bool IsPossibleDockingTile(TileIndex t);
  */
 static inline WaterTileType GetWaterTileType(TileIndex t)
 {
-	assert(IsTileType(t, MP_WATER));
+	dbg_assert_tile(IsTileType(t, MP_WATER), t);
 
 	switch (GB(_m[t].m5, WBL_TYPE_BEGIN, WBL_TYPE_COUNT)) {
 		case WBL_TYPE_NORMAL: return HasBit(_m[t].m5, WBL_COAST_FLAG) ? WATER_TILE_COAST : WATER_TILE_CLEAR;
@@ -116,7 +105,7 @@ static inline bool HasTileWaterClass(TileIndex t)
  */
 static inline WaterClass GetWaterClass(TileIndex t)
 {
-	assert(HasTileWaterClass(t));
+	dbg_assert_tile(HasTileWaterClass(t), t);
 	return (WaterClass)GB(_m[t].m1, 5, 2);
 }
 
@@ -128,7 +117,7 @@ static inline WaterClass GetWaterClass(TileIndex t)
  */
 static inline void SetWaterClass(TileIndex t, WaterClass wc)
 {
-	assert(HasTileWaterClass(t));
+	dbg_assert_tile(HasTileWaterClass(t), t);
 	SB(_m[t].m1, 5, 2, wc);
 }
 
@@ -247,7 +236,7 @@ static inline bool IsShipDepotTile(TileIndex t)
  */
 static inline Axis GetShipDepotAxis(TileIndex t)
 {
-	assert(IsShipDepotTile(t));
+	dbg_assert_tile(IsShipDepotTile(t), t);
 	return (Axis)GB(_m[t].m5, WBL_DEPOT_AXIS, 1);
 }
 
@@ -259,7 +248,7 @@ static inline Axis GetShipDepotAxis(TileIndex t)
  */
 static inline DepotPart GetShipDepotPart(TileIndex t)
 {
-	assert(IsShipDepotTile(t));
+	dbg_assert_tile(IsShipDepotTile(t), t);
 	return (DepotPart)GB(_m[t].m5, WBL_DEPOT_PART, 1);
 }
 
@@ -293,7 +282,7 @@ static inline TileIndex GetOtherShipDepotTile(TileIndex t)
  */
 static inline TileIndex GetShipDepotNorthTile(TileIndex t)
 {
-	assert(IsShipDepot(t));
+	dbg_assert_tile(IsShipDepot(t), t);
 	TileIndex tile2 = GetOtherShipDepotTile(t);
 
 	return t < tile2 ? t : tile2;
@@ -318,7 +307,7 @@ static inline bool IsLock(TileIndex t)
  */
 static inline DiagDirection GetLockDirection(TileIndex t)
 {
-	assert(IsLock(t));
+	dbg_assert_tile(IsLock(t), t);
 	return (DiagDirection)GB(_m[t].m5, WBL_LOCK_ORIENT_BEGIN, WBL_LOCK_ORIENT_COUNT);
 }
 
@@ -330,7 +319,7 @@ static inline DiagDirection GetLockDirection(TileIndex t)
  */
 static inline byte GetLockPart(TileIndex t)
 {
-	assert(IsLock(t));
+	dbg_assert_tile(IsLock(t), t);
 	return GB(_m[t].m5, WBL_LOCK_PART_BEGIN, WBL_LOCK_PART_COUNT);
 }
 
@@ -342,7 +331,7 @@ static inline byte GetLockPart(TileIndex t)
  */
 static inline byte GetWaterTileRandomBits(TileIndex t)
 {
-	assert(IsTileType(t, MP_WATER));
+	dbg_assert_tile(IsTileType(t, MP_WATER), t);
 	return _m[t].m4;
 }
 
@@ -365,7 +354,7 @@ static inline bool HasTileWaterGround(TileIndex t)
  */
 static inline void SetDockingTile(TileIndex t, bool b)
 {
-	assert(IsTileType(t, MP_WATER) || IsTileType(t, MP_RAILWAY) || IsTileType(t, MP_STATION) || IsTileType(t, MP_TUNNELBRIDGE));
+	dbg_assert(IsTileType(t, MP_WATER) || IsTileType(t, MP_RAILWAY) || IsTileType(t, MP_STATION) || IsTileType(t, MP_TUNNELBRIDGE));
 	SB(_m[t].m1, 7, 1, b ? 1 : 0);
 }
 
@@ -445,7 +434,7 @@ static inline void MakeRiver(TileIndex t, uint8 random_bits)
  */
 static inline void MakeCanal(TileIndex t, Owner o, uint8 random_bits)
 {
-	assert(o != OWNER_WATER);
+	dbg_assert(o != OWNER_WATER);
 	MakeWater(t, o, WATER_CLASS_CANAL, random_bits);
 }
 
@@ -513,6 +502,26 @@ static inline void MakeLock(TileIndex t, Owner o, DiagDirection d, WaterClass wc
 	MakeLockTile(t, o, LOCK_PART_MIDDLE, d, wc_middle);
 	MakeLockTile(t - delta, IsWaterTile(t - delta) ? GetTileOwner(t - delta) : o, LOCK_PART_LOWER, d, wc_lower);
 	MakeLockTile(t + delta, IsWaterTile(t + delta) ? GetTileOwner(t + delta) : o, LOCK_PART_UPPER, d, wc_upper);
+}
+
+
+/**
+ * Set the non-flooding water tile state of a tile.
+ * @param t the tile
+ * @param b the non-flooding water tile state
+ */
+static inline void SetNonFloodingWaterTile(TileIndex t, bool b)
+{
+	dbg_assert(IsTileType(t, MP_WATER));
+	SB(_m[t].m3, 0, 1, b ? 1 : 0);
+}
+/**
+ * Checks whether the tile is marked as a non-flooding water tile.
+ * @return true iff the tile is marked as a non-flooding water tile.
+ */
+static inline bool IsNonFloodingWaterTile(TileIndex t)
+{
+	return IsTileType(t, MP_WATER) && HasBit(_m[t].m3, 0);
 }
 
 #endif /* WATER_MAP_H */

@@ -178,6 +178,102 @@ RailType GetTileRailType(TileIndex tile)
 }
 
 /**
+ * Return the rail type of tile and track piece, or INVALID_RAILTYPE if this is no rail tile and return_invalid is true.
+ */
+RailType GenericGetRailTypeByTrack(TileIndex t, Track track, bool return_invalid)
+{
+	if (IsPlainRailTile(t)) {
+		TrackBits bits = GetTrackBits(t);
+		if (bits == TRACK_BIT_HORZ || bits == TRACK_BIT_VERT) {
+			return (TrackToTrackBits(track) & TRACK_BIT_RT_1) ? GetRailType(t) : GetSecondaryRailType(t);
+		} else {
+			return GetRailType(t);
+		}
+	} else if (IsRailTunnelBridgeTile(t)) {
+		TrackBits bits = GetTunnelBridgeTrackBits(t);
+		if (bits == TRACK_BIT_HORZ || bits == TRACK_BIT_VERT) {
+			return (TrackToTrackBits(track) & GetAcrossBridgePossibleTrackBits(t)) ? GetRailType(t) : GetSecondaryRailType(t);
+		} else {
+			return GetRailType(t);
+		}
+	} else {
+		return return_invalid ? GetTileRailType(t) : GetRailType(t);
+	}
+}
+
+/**
+ * Return the rail type of tile and track piece, or INVALID_RAILTYPE if this is no rail tile and return_invalid is true.
+ */
+RailType GenericGetRailTypeByTrackBit(TileIndex t, TrackBits tb, bool return_invalid)
+{
+	if (IsPlainRailTile(t)) {
+		TrackBits bits = GetTrackBits(t);
+		if (bits == TRACK_BIT_HORZ || bits == TRACK_BIT_VERT) {
+			return (tb & TRACK_BIT_RT_1) ? GetRailType(t) : GetSecondaryRailType(t);
+		} else {
+			return GetRailType(t);
+		}
+	} else if (IsRailTunnelBridgeTile(t)) {
+		TrackBits bits = GetTunnelBridgeTrackBits(t);
+		if (bits == TRACK_BIT_HORZ || bits == TRACK_BIT_VERT) {
+			return (tb & (GetAcrossBridgePossibleTrackBits(t) | TRACK_BIT_WORMHOLE)) ? GetRailType(t) : GetSecondaryRailType(t);
+		} else {
+			return GetRailType(t);
+		}
+	} else {
+		return return_invalid ? GetTileRailType(t) : GetRailType(t);
+	}
+}
+
+/**
+ * Return the rail type of tile and entrance direction, or INVALID_RAILTYPE if this is no rail tile and return_invalid is true.
+ */
+RailType GenericGetRailTypeByEntryDir(TileIndex t, DiagDirection enterdir, bool return_invalid)
+{
+	if (IsPlainRailTile(t)) {
+		TrackBits bits = GetTrackBits(t);
+		if (bits == TRACK_BIT_HORZ || bits == TRACK_BIT_VERT) {
+			return (bits & DiagdirReachesTracks(enterdir) & TRACK_BIT_RT_1) ? GetRailType(t) : GetSecondaryRailType(t);
+		} else {
+			return GetRailType(t);
+		}
+	} else if (IsRailTunnelBridgeTile(t)) {
+		TrackBits bits = GetTunnelBridgeTrackBits(t);
+		if (bits == TRACK_BIT_HORZ || bits == TRACK_BIT_VERT) {
+			return (bits & DiagdirReachesTracks(enterdir) & GetAcrossBridgePossibleTrackBits(t)) ? GetRailType(t) : GetSecondaryRailType(t);
+		} else {
+			return GetRailType(t);
+		}
+	} else {
+		return return_invalid ? GetTileRailType(t) : GetRailType(t);
+	}
+}
+
+/**
+ * Return the secondary rail type of tile, or INVALID_RAILTYPE if this tile has no secondary rail type
+ */
+RailType GetTileSecondaryRailTypeIfValid(TileIndex t)
+{
+	if (IsPlainRailTile(t)) {
+		TrackBits bits = GetTrackBits(t);
+		if (bits == TRACK_BIT_HORZ || bits == TRACK_BIT_VERT) {
+			return GetSecondaryRailType(t);
+		} else {
+			return INVALID_RAILTYPE;
+		}
+	} else if (IsRailTunnelBridgeTile(t)) {
+		TrackBits bits = GetTunnelBridgeTrackBits(t);
+		if (bits == TRACK_BIT_HORZ || bits == TRACK_BIT_VERT) {
+			return GetSecondaryRailType(t);
+		} else {
+			return INVALID_RAILTYPE;
+		}
+	} else {
+		return INVALID_RAILTYPE;
+	}
+}
+
+/**
  * Finds out if a company has a certain buildable railtype available.
  * @param company the company in question
  * @param railtype requested RailType
@@ -219,6 +315,10 @@ RailTypes AddDateIntroducedRailTypes(RailTypes current, Date date)
 {
 	RailTypes rts = current;
 
+	if (_settings_game.vehicle.no_introduce_vehicles_after > 0) {
+		date = std::min<Date>(date, ConvertYMDToDate(_settings_game.vehicle.no_introduce_vehicles_after, 0, 1) - 1);
+	}
+
 	for (RailType rt = RAILTYPE_BEGIN; rt != RAILTYPE_END; rt++) {
 		const RailtypeInfo *rti = GetRailTypeInfo(rt);
 		/* Unused rail type. */
@@ -252,11 +352,16 @@ RailTypes GetCompanyRailtypes(CompanyID company, bool introduces)
 {
 	RailTypes rts = RAILTYPES_NONE;
 
+	Date date = _date;
+	if (_settings_game.vehicle.no_introduce_vehicles_after > 0) {
+		date = std::min<Date>(date, ConvertYMDToDate(_settings_game.vehicle.no_introduce_vehicles_after, 0, 1) - 1);
+	}
+
 	for (const Engine *e : Engine::IterateType(VEH_TRAIN)) {
 		const EngineInfo *ei = &e->info;
 
 		if (HasBit(ei->climates, _settings_game.game_creation.landscape) &&
-				(HasBit(e->company_avail, company) || _date >= e->intro_date + DAYS_IN_YEAR)) {
+				(HasBit(e->company_avail, company) || date >= e->intro_date + DAYS_IN_YEAR)) {
 			const RailVehicleInfo *rvi = &e->u.rail;
 
 			if (rvi->railveh_type != RAILVEH_WAGON) {

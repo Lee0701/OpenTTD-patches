@@ -19,22 +19,38 @@
 #include "widgets/smallmap_widget.h"
 #include "guitimer_func.h"
 
+static const int NUM_NO_COMPANY_ENTRIES = 4; ///< Number of entries in the owner legend that are not companies.
+
+/** Mapping of tile type to importance of the tile (higher number means more interesting to show). */
+static const byte _tiletype_importance[] = {
+	2, // MP_CLEAR
+	8, // MP_RAILWAY
+	7, // MP_ROAD
+	5, // MP_HOUSE
+	2, // MP_TREES
+	9, // MP_STATION
+	2, // MP_WATER
+	1, // MP_VOID
+	6, // MP_INDUSTRY
+	8, // MP_TUNNELBRIDGE
+	2, // MP_OBJECT
+	0,
+};
+
 /* set up the cargos to be displayed in the smallmap's route legend */
 void BuildLinkStatsLegend();
 
+struct TunnelBridgeToMap {
+	TileIndex from_tile;
+	TileIndex to_tile;
+};
+typedef std::vector<TunnelBridgeToMap> TunnelBridgeToMapVector;
+
+void UpdateSmallMapSelectedIndustries();
 void BuildIndustriesLegend();
 void ShowSmallMap();
 void BuildLandLegend();
 void BuildOwnerLegend();
-
-/** Enum for how to include the heightmap pixels/colours in small map related functions */
-enum class IncludeHeightmap {
-	Never,      ///< Never include the heightmap
-	IfEnabled,  ///< Only include the heightmap if its enabled in the gui by the player
-	Always      ///< Always include the heightmap
-};
-
-uint32 GetSmallMapOwnerPixels(TileIndex tile, TileType t, IncludeHeightmap include_heightmap);
 
 /** Structure for holding relevant data for legends in small map */
 struct LegendAndColour {
@@ -74,8 +90,10 @@ protected:
 	static int map_height_limit;  ///< Currently used/cached map height limit.
 
 	static const uint INDUSTRY_MIN_NUMBER_OF_COLUMNS = 2; ///< Minimal number of columns in the #WID_SM_LEGEND widget for the #SMT_INDUSTRY legend.
-	static const uint FORCE_REFRESH_PERIOD = 930; ///< map is redrawn after that many milliseconds.
-	static const uint BLINK_PERIOD         = 450; ///< highlight blinking interval in milliseconds.
+	static const uint FORCE_REFRESH_PERIOD = 930;             ///< map is redrawn after that many milliseconds (default).
+	static const uint FORCE_REFRESH_PERIOD_VEH = 240;         ///< map is redrawn after that many milliseconds (modes with vehicles).
+	static const uint FORCE_REFRESH_PERIOD_LINK_GRAPH = 2850; ///< map is redrawn after that many milliseconds (link graph mode).
+	static const uint BLINK_PERIOD         = 450;             ///< highlight blinking interval in milliseconds.
 
 	uint min_number_of_columns;    ///< Minimal number of columns in legends.
 	uint min_number_of_fixed_rows; ///< Minimal number of rows in the legends for the fixed layouts only (all except #SMT_INDUSTRY).
@@ -84,14 +102,14 @@ protected:
 
 	int32 scroll_x;  ///< Horizontal world coordinate of the base tile left of the top-left corner of the smallmap display.
 	int32 scroll_y;  ///< Vertical world coordinate of the base tile left of the top-left corner of the smallmap display.
-	int32 subscroll; ///< Number of pixels (0..3) between the right end of the base tile and the pixel at the top-left corner of the smallmap display.
-	int zoom;        ///< Zoom level. Bigger number means more zoom-out (further away).
+	int tile_zoom;   ///< Tile zoom level. Bigger number means more zoom-out (further away).
+	int ui_zoom;     ///< UI (pixel doubling) Zoom level. Bigger number means more zoom-in (closer).
+	int zoom = 1;    ///< Zoom level. Bigger number means more zoom-out (further away).
 
 	GUITimer refresh; ///< Refresh timer.
 	LinkGraphOverlay *overlay;
 
 	static void BreakIndustryChainLink();
-	Point SmallmapRemapCoords(int x, int y) const;
 
 	/**
 	 * Draws vertical part of map indicator
@@ -151,26 +169,25 @@ protected:
 	 * the _local_company. Spectators get to see all companies' links.
 	 * @return Company mask.
 	 */
-	inline uint32 GetOverlayCompanyMask() const
+	inline CompanyMask GetOverlayCompanyMask() const
 	{
-		return Company::IsValidID(_local_company) ? 1U << _local_company : 0xffffffff;
+		return Company::IsValidID(_local_company) ? 1U << _local_company : MAX_UVALUE(CompanyMask);
 	}
 
-	void RebuildColourIndexIfNecessary();
 	uint GetNumberRowsLegend(uint columns) const;
 	void SelectLegendItem(int click_pos, LegendAndColour *legend, int end_legend_item, int begin_legend_item = 0);
 	void SwitchMapType(SmallMapType map_type);
-	void SetNewScroll(int sx, int sy, int sub);
+	uint GetRefreshPeriod() const;
+	uint PausedAdjustRefreshTimeDelta(uint delta_ms) const;
 
 	void DrawMapIndicators() const;
-	void DrawSmallMapColumn(void *dst, uint xc, uint yc, int pitch, int reps, int start_pos, int end_pos, Blitter *blitter) const;
+	void DrawSmallMapColumn(void *dst, uint xc, uint yc, int pitch, int reps, int start_pos, int end_pos, int y, int end_y, Blitter *blitter) const;
 	void DrawVehicles(const DrawPixelInfo *dpi, Blitter *blitter) const;
 	void DrawTowns(const DrawPixelInfo *dpi) const;
-	void DrawSmallMap(DrawPixelInfo *dpi) const;
+	void DrawSmallMap(DrawPixelInfo *dpi, bool draw_indicators = true) const;
 
-	Point RemapTile(int tile_x, int tile_y) const;
-	Point PixelToTile(int px, int py, int *sub, bool add_sub = true) const;
-	Point ComputeScroll(int tx, int ty, int x, int y, int *sub);
+	Point TileToPixel(int tx, int ty) const;
+	Point PixelToTile(int px, int py) const;
 	void SetZoomLevel(ZoomLevelChange change, const Point *zoom_pt);
 	void SetOverlayCargoMask();
 	void SetupWidgetData();
@@ -184,10 +201,11 @@ public:
 	SmallMapWindow(WindowDesc *desc, int window_number);
 	virtual ~SmallMapWindow();
 
+	static void RebuildColourIndexIfNecessary();
+
 	void SmallMapCenterOnCurrentPos();
 	Point GetStationMiddle(const Station *st) const;
 
-	void Close() override;
 	void SetStringParameters(int widget) const override;
 	void OnInit() override;
 	void OnPaint() override;
@@ -199,6 +217,9 @@ public:
 	void OnRealtimeTick(uint delta_ms) override;
 	void OnScroll(Point delta) override;
 	void OnMouseOver(Point pt, int widget) override;
+
+	void TakeScreenshot();
+	void ScreenshotCallbackHandler(void *buf, uint y, uint pitch, uint n);
 };
 
 #endif /* SMALLMAP_GUI_H */

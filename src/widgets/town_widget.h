@@ -29,6 +29,8 @@ enum TownAuthorityWidgets {
 	WID_TA_SCROLLBAR,    ///< Scrollbar of the list of commands.
 	WID_TA_ACTION_INFO,  ///< Additional information about the action.
 	WID_TA_EXECUTE,      ///< Do-it button.
+	WID_TA_SETTING,      ///< Setting drop-down.
+	WID_TA_BTN_SEL,      ///< Button selector.
 };
 
 /** Widgets of the #TownViewWindow class. */
@@ -49,6 +51,7 @@ enum TownFoundingWidgets {
 	WID_TF_NEW_TOWN,          ///< Create a new town.
 	WID_TF_RANDOM_TOWN,       ///< Randomly place a town.
 	WID_TF_MANY_RANDOM_TOWNS, ///< Randomly place many towns.
+	WID_TF_EXPAND_ALL_TOWNS,  ///< Make all towns grow slightly.
 	WID_TF_TOWN_NAME_EDITBOX, ///< Editor for the town name.
 	WID_TF_TOWN_NAME_RANDOM,  ///< Generate a random town name.
 	WID_TF_SIZE_SMALL,        ///< Selection for a small town.
@@ -61,6 +64,34 @@ enum TownFoundingWidgets {
 	WID_TF_LAYOUT_GRID2,      ///< Selection for the 2x2 grid town layout.
 	WID_TF_LAYOUT_GRID3,      ///< Selection for the 3x3 grid town layout.
 	WID_TF_LAYOUT_RANDOM,     ///< Selection for a randomly chosen town layout.
+};
+
+/** Widgets of the #HousePickerWindow class. */
+enum HousePickerWidgets {
+	WID_HP_CAPTION,
+	WID_HP_MAIN_PANEL_SEL,      ///< Selection widget to show/hide the main panel.
+	WID_HP_HOUSE_SETS_SEL,      ///< Selection widget to show/hide the list of house sets.
+	WID_HP_HOUSE_SETS,          ///< List of available house sets.
+	WID_HP_HOUSE_SELECT_MATRIX, ///< Matrix with houses to select.
+	WID_HP_HOUSE_SELECT_SCROLL, ///< Scrollbar associated with the house matrix.
+	WID_HP_HOUSE_SELECT,        ///< Panels with house images in the house matrix.
+	WID_HP_HOUSE_PREVIEW,       ///< House preview panel.
+	WID_HP_HOUSE_NAME,          ///< House name display.
+	WID_HP_HISTORICAL_BUILDING, ///< "Historical building" label.
+	WID_HP_HOUSE_POPULATION,    ///< House population display.
+	WID_HP_HOUSE_ZONES,         ///< House zones display.
+	WID_HP_HOUSE_LANDSCAPE,     ///< Information about house availability against the landscape.
+	WID_HP_HOUSE_LANDSCAPE_SEL, ///< Selection widget to show/hide the landscape info.
+	WID_HP_HOUSE_YEARS,         ///< Years display.
+	WID_HP_HOUSE_ACCEPTANCE,    ///< Cargo accepted.
+	WID_HP_HOUSE_SUPPLY,        ///< Cargo supplied.
+};
+
+/** Widgets of the #SelectTownWindow class. */
+enum SelectTownWidgets {
+	WID_ST_CAPTION,   ///< Caption of the window.
+	WID_ST_PANEL,     ///< Main panel.
+	WID_ST_SCROLLBAR, ///< Scrollbar of the panel.
 };
 
 #endif /* WIDGETS_TOWN_WIDGET_H */

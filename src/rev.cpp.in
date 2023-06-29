@@ -37,6 +37,8 @@ bool IsReleasedVersion()
  */
 const char _openttd_revision[] = "${REV_VERSION}";
 
+const char _openttd_release_version[] = "${REV_RELEASE}";
+
 /**
  * The text version of OpenTTD's build date.
  * Updating the build date in this file is the safest as it generally gets
@@ -44,6 +46,11 @@ const char _openttd_revision[] = "${REV_VERSION}";
  * updates when they are actually changed themselves.
  */
 const char _openttd_build_date[] = __DATE__ " " __TIME__;
+
+/**
+ * The configure defines used to build OpenTTD
+ */
+const char _openttd_build_configure_defines[] = "${CONFIGURE_DEFINES}";
 
 /**
  * The git revision hash of this version.
@@ -77,7 +84,7 @@ const byte _openttd_revision_tagged = ${REV_ISTAG};
  * It should never contain things like "beta", but only the release version
  * we are compatible with.
  */
-const char _openttd_content_version[] = "${REV_MAJOR}.${REV_MINOR}";
+const char _openttd_content_version[] = "13.0";
 
 /**
  * The NewGRF revision of OTTD:
@@ -95,4 +102,5 @@ const char _openttd_content_version[] = "${REV_MAJOR}.${REV_MINOR}";
  * the "patch" part of the version. To make sure "1.11.0" is smaller than "12.0", we
  * have to adjust the major by 16.
  */
-const uint32 _openttd_newgrf_version = (${REV_MAJOR} + 16) << 24 | ${REV_MINOR} << 20 | ${REV_ISSTABLETAG} << 19 | 28004;
+/** ${REV_ISSTABLETAG} removed */
+const uint32 _openttd_newgrf_version = (${REV_MAJOR} + 16) << 24 | ${REV_MINOR} << 20 | 0 << 19 | 28004;

@@ -31,6 +31,12 @@
 #include "../../language.h"
 #include "../../thread.h"
 #include <array>
+#include <map>
+#include <mutex>
+#if defined(__MINGW32__)
+#include "../../3rdparty/mingw-std-threads/mingw.mutex.h"
+#endif
+
 
 #include "../../safeguards.h"
 
@@ -50,10 +56,42 @@ bool MyShowCursor(bool show, bool toggle)
 	return !show;
 }
 
+/**
+ * Helper function needed by dynamically loading libraries
+ */
+bool LoadLibraryList(Function proc[], const char *dll)
+{
+	while (*dll != '\0') {
+		HMODULE lib;
+		lib = LoadLibrary(OTTD2FS(dll).c_str());
+
+		if (lib == nullptr) return false;
+		for (;;) {
+			Function p;
+
+			while (*dll++ != '\0') { /* Nothing */ }
+			if (*dll == '\0') break;
+			p = GetProcAddressT<Function>(lib, dll);
+			if (p == nullptr) return false;
+			*proc++ = p;
+		}
+		dll++;
+	}
+	return true;
+}
+
 void ShowOSErrorBox(const char *buf, bool system)
 {
 	MyShowCursor(true);
 	MessageBox(GetActiveWindow(), OTTD2FS(buf).c_str(), L"Error!", MB_ICONSTOP | MB_TASKMODAL);
+}
+
+void NORETURN DoOSAbort()
+{
+	RaiseException(0xE1212012, 0, 0, nullptr);
+
+	/* This fallback should not be reached */
+	abort();
 }
 
 void OSOpenBrowser(const char *url)
@@ -188,8 +226,9 @@ void FiosGetDrives(FileList &file_list)
 		FiosItem *fios = &file_list.emplace_back();
 		fios->type = FIOS_TYPE_DRIVE;
 		fios->mtime = 0;
-		seprintf(fios->name, lastof(fios->name),  "%c:", s[0] & 0xFF);
-		strecpy(fios->title, fios->name, lastof(fios->title));
+		fios->name += (char)(s[0] & 0xFF);
+		fios->name += ':';
+		fios->title = fios->name;
 		while (*s++ != '\0') { /* Nothing */ }
 	}
 }
@@ -386,6 +425,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	/* Set system timer resolution to 1ms. */
 	timeBeginPeriod(1);
 
+	PerThreadSetupInit();
 	CrashLog::InitialiseCrashLog();
 
 	/* Convert the command line to UTF-8. We need a dedicated buffer
@@ -472,9 +512,9 @@ void DetermineBasePaths(const char *exe)
 	} else {
 		/* Use the folder of the config file as working directory. */
 		wchar_t config_dir[MAX_PATH];
-		wcsncpy(path, convert_to_fs(_config_file.c_str(), path, lengthof(path)), lengthof(path));
+		wcsncpy(path, convert_to_fs(_config_file, path, lengthof(path)), lengthof(path));
 		if (!GetFullPathName(path, lengthof(config_dir), config_dir, nullptr)) {
-			Debug(misc, 0, "GetFullPathName failed ({})", GetLastError());
+			DEBUG(misc, 0, "GetFullPathName failed (%lu)\n", GetLastError());
 			_searchpaths[SP_WORKING_DIR].clear();
 		} else {
 			std::string tmp(FS2OTTD(config_dir));
@@ -486,13 +526,13 @@ void DetermineBasePaths(const char *exe)
 	}
 
 	if (!GetModuleFileName(nullptr, path, lengthof(path))) {
-		Debug(misc, 0, "GetModuleFileName failed ({})", GetLastError());
+		DEBUG(misc, 0, "GetModuleFileName failed (%lu)\n", GetLastError());
 		_searchpaths[SP_BINARY_DIR].clear();
 	} else {
 		wchar_t exec_dir[MAX_PATH];
 		wcsncpy(path, convert_to_fs(exe, path, lengthof(path)), lengthof(path));
 		if (!GetFullPathName(path, lengthof(exec_dir), exec_dir, nullptr)) {
-			Debug(misc, 0, "GetFullPathName failed ({})", GetLastError());
+			DEBUG(misc, 0, "GetFullPathName failed (%lu)\n", GetLastError());
 			_searchpaths[SP_BINARY_DIR].clear();
 		} else {
 			std::string tmp(FS2OTTD(exec_dir));
@@ -597,10 +637,10 @@ char *convert_from_fs(const wchar_t *name, char *utf8_buf, size_t buflen)
  * @param console_cp convert to the console encoding instead of the normal system encoding.
  * @return pointer to system_buf. If conversion fails the string is of zero-length
  */
-wchar_t *convert_to_fs(const char *name, wchar_t *system_buf, size_t buflen)
+wchar_t *convert_to_fs(const std::string_view name, wchar_t *system_buf, size_t buflen)
 {
-	int len = MultiByteToWideChar(CP_UTF8, 0, name, -1, system_buf, (int)buflen);
-	if (len == 0) system_buf[0] = '\0';
+	int len = MultiByteToWideChar(CP_UTF8, 0, name.data(), (int)name.size(), system_buf, (int)buflen);
+	system_buf[len] = '\0';
 
 	return system_buf;
 }
@@ -644,7 +684,7 @@ void Win32SetCurrentLocaleName(const char *iso_code)
 	MultiByteToWideChar(CP_UTF8, 0, iso, -1, _cur_iso_locale, lengthof(_cur_iso_locale));
 }
 
-int OTTDStringCompare(const char *s1, const char *s2)
+int OTTDStringCompare(std::string_view s1, std::string_view s2)
 {
 	typedef int (WINAPI *PFNCOMPARESTRINGEX)(LPCWSTR, DWORD, LPCWCH, int, LPCWCH, int, LPVOID, LPVOID, LPARAM);
 	static PFNCOMPARESTRINGEX _CompareStringEx = nullptr;
@@ -658,24 +698,23 @@ int OTTDStringCompare(const char *s1, const char *s2)
 #endif
 
 	if (first_time) {
-		static DllLoader _kernel32(L"Kernel32.dll");
-		_CompareStringEx = _kernel32.GetProcAddress("CompareStringEx");
+		_CompareStringEx = GetProcAddressT<PFNCOMPARESTRINGEX>(GetModuleHandle(L"Kernel32"), "CompareStringEx");
 		first_time = false;
 	}
 
 	if (_CompareStringEx != nullptr) {
 		/* CompareStringEx takes UTF-16 strings, even in ANSI-builds. */
-		int len_s1 = MultiByteToWideChar(CP_UTF8, 0, s1, -1, nullptr, 0);
-		int len_s2 = MultiByteToWideChar(CP_UTF8, 0, s2, -1, nullptr, 0);
+		int len_s1 = MultiByteToWideChar(CP_UTF8, 0, s1.data(), (int)s1.size(), nullptr, 0);
+		int len_s2 = MultiByteToWideChar(CP_UTF8, 0, s2.data(), (int)s2.size(), nullptr, 0);
 
 		if (len_s1 != 0 && len_s2 != 0) {
 			LPWSTR str_s1 = AllocaM(WCHAR, len_s1);
 			LPWSTR str_s2 = AllocaM(WCHAR, len_s2);
 
-			MultiByteToWideChar(CP_UTF8, 0, s1, -1, str_s1, len_s1);
-			MultiByteToWideChar(CP_UTF8, 0, s2, -1, str_s2, len_s2);
+			len_s1 = MultiByteToWideChar(CP_UTF8, 0, s1.data(), (int)s1.size(), str_s1, len_s1);
+			len_s2 = MultiByteToWideChar(CP_UTF8, 0, s2.data(), (int)s2.size(), str_s2, len_s2);
 
-			int result = _CompareStringEx(_cur_iso_locale, LINGUISTIC_IGNORECASE | SORT_DIGITSASNUMBERS, str_s1, -1, str_s2, -1, nullptr, nullptr, 0);
+			int result = _CompareStringEx(_cur_iso_locale, LINGUISTIC_IGNORECASE | SORT_DIGITSASNUMBERS, str_s1, len_s1, str_s2, len_s2, nullptr, nullptr, 0);
 			if (result != 0) return result;
 		}
 	}
@@ -685,6 +724,73 @@ int OTTDStringCompare(const char *s1, const char *s2)
 	convert_to_fs(s2, s2_buf, lengthof(s2_buf));
 
 	return CompareString(MAKELCID(_current_language->winlangid, SORT_DEFAULT), NORM_IGNORECASE, s1_buf, -1, s2_buf, -1);
+}
+
+static DWORD main_thread_id;
+static DWORD game_thread_id;
+
+void SetSelfAsMainThread()
+{
+	main_thread_id = GetCurrentThreadId();
+}
+
+void SetSelfAsGameThread()
+{
+	game_thread_id = GetCurrentThreadId();
+}
+
+static BOOL (WINAPI *_SetThreadStackGuarantee)(PULONG) = nullptr;
+
+void PerThreadSetup()
+{
+	if (_SetThreadStackGuarantee != nullptr) {
+		ULONG stacksize = 65536;
+		_SetThreadStackGuarantee(&stacksize);
+	}
+}
+
+void PerThreadSetupInit()
+{
+	LoadLibraryList((Function*)&_SetThreadStackGuarantee, "kernel32.dll\0SetThreadStackGuarantee\0\0");
+}
+
+bool IsMainThread()
+{
+	return main_thread_id == GetCurrentThreadId();
+}
+
+bool IsNonMainThread()
+{
+	return main_thread_id != GetCurrentThreadId();
+}
+
+bool IsGameThread()
+{
+	return game_thread_id == GetCurrentThreadId();
+}
+
+bool IsNonGameThread()
+{
+	return game_thread_id != GetCurrentThreadId();
+}
+
+static std::map<DWORD, std::string> _thread_name_map;
+static std::mutex _thread_name_map_mutex;
+
+static void Win32SetThreadName(uint id, const char *name)
+{
+	std::lock_guard<std::mutex> lock(_thread_name_map_mutex);
+	_thread_name_map[id] = name;
+}
+
+int GetCurrentThreadName(char *str, const char *last)
+{
+	std::lock_guard<std::mutex> lock(_thread_name_map_mutex);
+	auto iter = _thread_name_map.find(GetCurrentThreadId());
+	if (iter != _thread_name_map.end()) {
+		return seprintf(str, last, "%s", iter->second.c_str());
+	}
+	return 0;
 }
 
 #ifdef _MSC_VER
@@ -703,6 +809,8 @@ PACK_N(struct THREADNAME_INFO {
  */
 void SetCurrentThreadName(const char *threadName)
 {
+	Win32SetThreadName(GetCurrentThreadId(), threadName);
+
 	THREADNAME_INFO info;
 	info.dwType = 0x1000;
 	info.szName = threadName;
@@ -718,5 +826,8 @@ void SetCurrentThreadName(const char *threadName)
 #pragma warning(pop)
 }
 #else
-void SetCurrentThreadName(const char *) {}
+void SetCurrentThreadName(const char *threadName)
+{
+	Win32SetThreadName(GetCurrentThreadId(), threadName);
+}
 #endif

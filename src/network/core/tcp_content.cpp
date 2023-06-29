@@ -71,7 +71,7 @@ const char *ContentInfo::GetTextfile(TextfileType type) const
 			break;
 		case CONTENT_TYPE_NEWGRF: {
 			const GRFConfig *gc = FindGRFConfig(BSWAP32(this->unique_id), FGCM_EXACT, this->md5sum);
-			tmp = gc != nullptr ? gc->filename : nullptr;
+			tmp = gc != nullptr ? gc->filename.c_str() : nullptr;
 			break;
 		}
 		case CONTENT_TYPE_BASE_GRAPHICS:
@@ -85,7 +85,6 @@ const char *ContentInfo::GetTextfile(TextfileType type) const
 			break;
 		case CONTENT_TYPE_SCENARIO:
 		case CONTENT_TYPE_HEIGHTMAP:
-			extern const char *FindScenario(const ContentInfo *ci, bool md5sum);
 			tmp = FindScenario(this, true);
 			break;
 	}
@@ -114,9 +113,9 @@ bool NetworkContentSocketHandler::HandlePacket(Packet *p)
 
 		default:
 			if (this->HasClientQuit()) {
-				Debug(net, 0, "[tcp/content] Received invalid packet type {}", type);
+				DEBUG(net, 0, "[tcp/content] Received invalid packet type %d", type);
 			} else {
-				Debug(net, 0, "[tcp/content] Received illegal packet");
+				DEBUG(net, 0, "[tcp/content] Received illegal packet");
 			}
 			return false;
 	}
@@ -147,12 +146,11 @@ bool NetworkContentSocketHandler::ReceivePackets()
 	 *
 	 * What arbitrary number to choose is the ultimate question though.
 	 */
-	Packet *p;
+	std::unique_ptr<Packet> p;
 	static const int MAX_PACKETS_TO_RECEIVE = 42;
 	int i = MAX_PACKETS_TO_RECEIVE;
 	while (--i != 0 && (p = this->ReceivePacket()) != nullptr) {
-		bool cont = this->HandlePacket(p);
-		delete p;
+		bool cont = this->HandlePacket(p.get());
 		if (!cont) return true;
 	}
 
@@ -167,7 +165,7 @@ bool NetworkContentSocketHandler::ReceivePackets()
  */
 bool NetworkContentSocketHandler::ReceiveInvalidPacket(PacketContentType type)
 {
-	Debug(net, 0, "[tcp/content] Received illegal packet type {}", type);
+	DEBUG(net, 0, "[tcp/content] Received illegal packet type %d", type);
 	return false;
 }
 

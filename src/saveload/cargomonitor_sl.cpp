@@ -16,6 +16,8 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 /** Temporary storage of cargo monitoring data for loading or saving it. */
 struct TempStorage {
 	CargoMonitorID number;
@@ -140,3 +142,5 @@ static const ChunkHandlerRef cargomonitor_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _cargomonitor_chunk_handlers(cargomonitor_chunk_handlers);
+
+}

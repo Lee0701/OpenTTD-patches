@@ -21,6 +21,8 @@
 typedef Pool<Industry, IndustryID, 64, 64000> IndustryPool;
 extern IndustryPool _industry_pool;
 
+static const Year PROCESSING_INDUSTRY_ABANDONMENT_YEARS = 5; ///< If a processing industry doesn't produce for this many consecutive years, it may close.
+
 /**
  * Production level maximum, minimum and default values.
  * It is not a value been really used in order to change, but rather an indicator
@@ -31,13 +33,6 @@ enum ProductionLevels {
 	PRODLEVEL_MINIMUM = 0x04,  ///< below this level, the industry is set to be closing
 	PRODLEVEL_DEFAULT = 0x10,  ///< default level set when the industry is created
 	PRODLEVEL_MAXIMUM = 0x80,  ///< the industry is running at full speed
-};
-
-enum class IndustryAction : byte {
-	SetControlFlags = 0,       ///< Set IndustryControlFlags
-	SetExclusiveSupplier = 1,  ///< Set exclusive supplier
-	SetExclusiveConsumer = 2,  ///< Set exclusive consumer
-	SetText = 3,               ///< Set additional text
 };
 
 /**
@@ -80,29 +75,29 @@ struct Industry : IndustryPool::PoolItem<&_industry_pool> {
 	uint16 last_month_transported[INDUSTRY_NUM_OUTPUTS];   ///< total units transported per cargo in the last full month
 	uint16 counter;                                        ///< used for animation and/or production (if available cargo)
 
-	IndustryType type;             ///< type of industry.
-	Owner owner;                   ///< owner of the industry.  Which SHOULD always be (imho) OWNER_NONE
-	byte random_colour;            ///< randomized colour of the industry, for display purpose
-	Year last_prod_year;           ///< last year of production
-	byte was_cargo_delivered;      ///< flag that indicate this has been the closest industry chosen for cargo delivery by a station. see DeliverGoodsToIndustry
-	IndustryControlFlags ctlflags; ///< flags overriding standard behaviours
+	IndustryType type;                  ///< type of industry.
+	Owner owner;                        ///< owner of the industry.  Which SHOULD always be (imho) OWNER_NONE
+	byte random_colour;                 ///< randomized colour of the industry, for display purpose
+	Year last_prod_year;                ///< last year of production
+	byte was_cargo_delivered;           ///< flag that indicate this has been the closest industry chosen for cargo delivery by a station. see DeliverGoodsToIndustry
+	IndustryControlFlags ctlflags;      ///< flags overriding standard behaviours
 
-	PartOfSubsidy part_of_subsidy; ///< NOSAVE: is this industry a source/destination of a subsidy?
-	StationList stations_near;     ///< NOSAVE: List of nearby stations.
-	mutable std::string cached_name; ///< NOSAVE: Cache of the resolved name of the industry
+	PartOfSubsidy part_of_subsidy;      ///< NOSAVE: is this industry a source/destination of a subsidy?
+	StationList stations_near;          ///< NOSAVE: List of nearby stations.
+	mutable std::string cached_name;    ///< NOSAVE: Cache of the resolved name of the industry
 
-	Owner founder;                 ///< Founder of the industry
-	Date construction_date;        ///< Date of the construction of the industry
-	uint8 construction_type;       ///< Way the industry was constructed (@see IndustryConstructionType)
+	Owner founder;                      ///< Founder of the industry
+	Date construction_date;             ///< Date of the construction of the industry
+	uint8 construction_type;            ///< Way the industry was constructed (@see IndustryConstructionType)
 	Date last_cargo_accepted_at[INDUSTRY_NUM_INPUTS]; ///< Last day each cargo type was accepted by this industry
-	byte selected_layout;          ///< Which tile layout was used when creating the industry
-	Owner exclusive_supplier;      ///< Which company has exclusive rights to deliver cargo (INVALID_OWNER = anyone)
-	Owner exclusive_consumer;      ///< Which company has exclusive rights to take cargo (INVALID_OWNER = anyone)
-	std::string text;              ///< General text with additional information.
+	byte selected_layout;               ///< Which tile layout was used when creating the industry
+	Owner exclusive_supplier;           ///< Which company has exclusive rights to deliver cargo (INVALID_OWNER = anyone)
+	Owner exclusive_consumer;           ///< Which company has exclusive rights to take cargo (INVALID_OWNER = anyone)
+	std::string text;                   ///< General text with additional information.
 
-	uint16 random;                 ///< Random value used for randomisation of all kinds of things
+	uint16 random;                      ///< Random value used for randomisation of all kinds of things
 
-	PersistentStorage *psa;        ///< Persistent storage for NewGRF industries.
+	PersistentStorage *psa;             ///< Persistent storage for NewGRF industries.
 
 	Industry(TileIndex tile = INVALID_TILE) : location(tile, 0, 0) {}
 	~Industry();
@@ -188,10 +183,10 @@ struct Industry : IndustryPool::PoolItem<&_industry_pool> {
 		memset(&counts, 0, sizeof(counts));
 	}
 
-	inline const char *GetCachedName() const
+	inline const std::string &GetCachedName() const
 	{
 		if (this->cached_name.empty()) this->FillCachedName();
-		return this->cached_name.c_str();
+		return this->cached_name;
 	}
 
 private:

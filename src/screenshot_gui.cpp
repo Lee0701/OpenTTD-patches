@@ -13,7 +13,6 @@
 #include "screenshot.h"
 #include "widgets/screenshot_widget.h"
 #include "table/strings.h"
-#include "gfx_func.h"
 
 struct ScreenshotWindow : Window {
 	ScreenshotWindow(WindowDesc *desc) : Window(desc)
@@ -37,8 +36,11 @@ struct ScreenshotWindow : Window {
 			case WID_SC_TAKE_ZOOMIN:      st = SC_ZOOMEDIN;    break;
 			case WID_SC_TAKE_DEFAULTZOOM: st = SC_DEFAULTZOOM; break;
 			case WID_SC_TAKE_WORLD:       st = SC_WORLD;       break;
+			case WID_SC_TAKE_WORLD_ZOOM:  st = SC_WORLD_ZOOM;  break;
 			case WID_SC_TAKE_HEIGHTMAP:   st = SC_HEIGHTMAP;   break;
 			case WID_SC_TAKE_MINIMAP:     st = SC_MINIMAP;     break;
+			case WID_SC_TAKE_TOPOGRAPHY:  st = SC_TOPOGRAPHY;  break;
+			case WID_SC_TAKE_INDUSTRY:    st = SC_INDUSTRY;    break;
 		}
 		MakeScreenshotWithConfirm(st);
 	}
@@ -55,9 +57,12 @@ static const NWidgetPart _nested_screenshot[] = {
 		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_SC_TAKE), SetFill(1, 1), SetDataTip(STR_SCREENSHOT_SCREENSHOT, 0), SetMinimalTextLines(2, 0),
 		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_SC_TAKE_ZOOMIN), SetFill(1, 1), SetDataTip(STR_SCREENSHOT_ZOOMIN_SCREENSHOT, 0), SetMinimalTextLines(2, 0),
 		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_SC_TAKE_DEFAULTZOOM), SetFill(1, 1), SetDataTip(STR_SCREENSHOT_DEFAULTZOOM_SCREENSHOT, 0), SetMinimalTextLines(2, 0),
-		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_SC_TAKE_WORLD), SetFill(1, 1), SetDataTip(STR_SCREENSHOT_WORLD_SCREENSHOT, 0), SetMinimalTextLines(2, 0),
+		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_SC_TAKE_WORLD), SetFill(1, 1), SetDataTip(STR_SCREENSHOT_WORLD_SCREENSHOT_DEFAULT_ZOOM, 0), SetMinimalTextLines(2, 0),
+		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_SC_TAKE_WORLD_ZOOM), SetFill(1, 1), SetDataTip(STR_SCREENSHOT_WORLD_SCREENSHOT_CURRENT_ZOOM, 0), SetMinimalTextLines(2, 0),
 		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_SC_TAKE_HEIGHTMAP), SetFill(1, 1), SetDataTip(STR_SCREENSHOT_HEIGHTMAP_SCREENSHOT, 0), SetMinimalTextLines(2, 0),
 		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_SC_TAKE_MINIMAP), SetFill(1, 1), SetDataTip(STR_SCREENSHOT_MINIMAP_SCREENSHOT, 0), SetMinimalTextLines(2, 0),
+		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_SC_TAKE_TOPOGRAPHY), SetFill(1, 1), SetDataTip(STR_SCREENSHOT_TOPOGRAPHY_SCREENSHOT, 0), SetMinimalTextLines(2, 0),
+		NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_SC_TAKE_INDUSTRY), SetFill(1, 1), SetDataTip(STR_SCREENSHOT_INDUSTRY_SCREENSHOT, 0), SetMinimalTextLines(2, 0),
 	EndContainer(),
 };
 
@@ -70,27 +75,20 @@ static WindowDesc _screenshot_window_desc(
 
 void ShowScreenshotWindow()
 {
-	CloseWindowById(WC_SCREENSHOT, 0);
+	DeleteWindowById(WC_SCREENSHOT, 0);
 	new ScreenshotWindow(&_screenshot_window_desc);
 }
 
-/**
- * Set the visibility of the screenshot window when taking a screenshot.
- * @param hide Are we hiding the window or showing it again after the screenshot is taken?
- */
-void SetScreenshotWindowVisibility(bool hide)
+void SetScreenshotWindowHidden(bool hidden)
 {
-	ScreenshotWindow *scw = (ScreenshotWindow *)FindWindowById(WC_SCREENSHOT, 0);
-
-	if (scw == nullptr) return;
-
-	if (hide) {
-		/* Set dirty the screen area where the window is covering (not the window itself), then move window off screen. */
-		scw->SetDirty();
-		scw->left += 2 * _screen.width;
-	} else {
-		/* Return window to original position. */
-		scw->left -= 2 * _screen.width;
-		scw->SetDirty();
+	ScreenshotWindow *scw = (ScreenshotWindow *) FindWindowById(WC_SCREENSHOT, 0);
+	if (scw != nullptr) {
+		if (hidden) {
+			scw->SetDirtyAsBlocks();
+			SetBit(scw->left, 30);
+		} else {
+			ClrBit(scw->left, 30);
+			scw->SetDirtyAsBlocks();
+		}
 	}
 }

@@ -11,13 +11,16 @@
 #define LINKGRAPHJOB_H
 
 #include "../thread.h"
+#include "../core/dyn_arena_alloc.hpp"
 #include "linkgraph.h"
-#include <list>
+#include <vector>
+#include <memory>
 #include <atomic>
 
 class LinkGraphJob;
 class Path;
-typedef std::list<Path *> PathList;
+class LinkGraphJobGroup;
+typedef std::vector<Path *> PathList;
 
 /** Type of the pool for link graph jobs. */
 typedef Pool<LinkGraphJob, LinkGraphJobID, 32, 0xFFFF> LinkGraphJobPool;
@@ -28,88 +31,64 @@ extern LinkGraphJobPool _link_graph_job_pool;
  * Class for calculation jobs to be run on link graphs.
  */
 class LinkGraphJob : public LinkGraphJobPool::PoolItem<&_link_graph_job_pool>{
-private:
-	/**
-	 * Annotation for a link graph edge.
-	 */
-	struct EdgeAnnotation {
-		uint demand;             ///< Transport demand between the nodes.
-		uint unsatisfied_demand; ///< Demand over this edge that hasn't been satisfied yet.
-		uint flow;               ///< Planned flow over this edge.
-		void Init();
-	};
-
-	/**
-	 * Annotation for a link graph node.
-	 */
-	struct NodeAnnotation {
-		uint undelivered_supply; ///< Amount of supply that hasn't been distributed yet.
-		PathList paths;          ///< Paths through this node, sorted so that those with flow == 0 are in the back.
-		FlowStatMap flows;       ///< Planned flows to other nodes.
-		void Init(uint supply);
-	};
-
-	typedef std::vector<NodeAnnotation> NodeAnnotationVector;
-	typedef SmallMatrix<EdgeAnnotation> EdgeAnnotationMatrix;
-
-	friend SaveLoadTable GetLinkGraphJobDesc();
-	friend class LinkGraphSchedule;
-
-protected:
-	const LinkGraph link_graph;       ///< Link graph to by analyzed. Is copied when job is started and mustn't be modified later.
-	const LinkGraphSettings settings; ///< Copy of _settings_game.linkgraph at spawn time.
-	std::thread thread;               ///< Thread the job is running in or a default-constructed thread if it's running in the main thread.
-	Date join_date;                   ///< Date when the job is to be joined.
-	NodeAnnotationVector nodes;       ///< Extra node data necessary for link graph calculation.
-	EdgeAnnotationMatrix edges;       ///< Extra edge data necessary for link graph calculation.
-	std::atomic<bool> job_completed;  ///< Is the job still running. This is accessed by multiple threads and reads may be stale.
-	std::atomic<bool> job_aborted;    ///< Has the job been aborted. This is accessed by multiple threads and reads may be stale.
-
-	void EraseFlows(NodeID from);
-	void JoinThread();
-	void SpawnThread();
-
 public:
+	/**
+	 * Annotation for a link graph demand edge.
+	 */
+	struct DemandAnnotation {
+		NodeID dest;                 ///< Target node
+		uint demand = 0;             ///< Transport demand between the nodes.
+		uint unsatisfied_demand = 0; ///< Demand over this edge that hasn't been satisfied yet.
+	};
 
 	/**
-	 * A job edge. Wraps a link graph edge and an edge annotation. The
-	 * annotation can be modified, the edge is constant.
+	 * Annotation for a link graph flow edge.
 	 */
-	class Edge : public LinkGraph::ConstEdge {
+	struct Edge {
 	private:
-		EdgeAnnotation &anno; ///< Annotation being wrapped.
+		NodeID from;             ///< From Node.
+		NodeID to;               ///< To Node.
+		uint capacity;           ///< Capacity of the link.
+		uint distance_anno;      ///< Pre-computed distance annotation.
+
+		uint flow;               ///< Planned flow over this edge.
+
 	public:
 		/**
-		 * Constructor.
-		 * @param edge Link graph edge to be wrapped.
-		 * @param anno Annotation to be wrapped.
+		 * Get edge's from node.
+		 * @return from NodeID.
 		 */
-		Edge(const LinkGraph::BaseEdge &edge, EdgeAnnotation &anno) :
-				LinkGraph::ConstEdge(edge), anno(anno) {}
+		NodeID From() const { return this->from; }
 
 		/**
-		 * Get the transport demand between end the points of the edge.
-		 * @return Demand.
+		 * Get edge's to node.
+		 * @return to NodeID.
 		 */
-		uint Demand() const { return this->anno.demand; }
+		NodeID To() const { return this->to; }
 
 		/**
-		 * Get the transport demand that hasn't been satisfied by flows, yet.
-		 * @return Unsatisfied demand.
+		 * Get edge's capacity.
+		 * @return Capacity.
 		 */
-		uint UnsatisfiedDemand() const { return this->anno.unsatisfied_demand; }
+		uint Capacity() const { return this->capacity; }
+
+		/**
+		 * Get edge's distance annotation.
+		 * @return Distance annotation.
+		 */
+		uint DistanceAnno() const { return this->distance_anno; }
 
 		/**
 		 * Get the total flow on the edge.
 		 * @return Flow.
 		 */
-		uint Flow() const { return this->anno.flow; }
+		uint Flow() const { return this->flow; }
 
 		/**
 		 * Add some flow.
 		 * @param flow Flow to be added.
 		 */
-		void AddFlow(uint flow) { this->anno.flow += flow; }
+		void AddFlow(uint flow) { this->flow += flow; }
 
 		/**
 		 * Remove some flow.
@@ -117,66 +96,66 @@ public:
 		 */
 		void RemoveFlow(uint flow)
 		{
-			assert(flow <= this->anno.flow);
-			this->anno.flow -= flow;
+			dbg_assert(flow <= this->flow);
+			this->flow -= flow;
 		}
 
-		/**
-		 * Add some (not yet satisfied) demand.
-		 * @param demand Demand to be added.
-		 */
-		void AddDemand(uint demand)
+		void InitEdge(NodeID from, NodeID to, uint capacity, uint distance_anno)
 		{
-			this->anno.demand += demand;
-			this->anno.unsatisfied_demand += demand;
-		}
-
-		/**
-		 * Satisfy some demand.
-		 * @param demand Demand to be satisfied.
-		 */
-		void SatisfyDemand(uint demand)
-		{
-			assert(demand <= this->anno.unsatisfied_demand);
-			this->anno.unsatisfied_demand -= demand;
+			this->from = from;
+			this->to = to;
+			this->capacity = capacity;
+			this->distance_anno = distance_anno;
+			this->flow = 0;
 		}
 	};
 
+	typedef std::vector<Edge> EdgeAnnotationVector;
+
+private:
 	/**
-	 * Iterator for job edges.
+	 * Annotation for a link graph node.
 	 */
-	class EdgeIterator : public LinkGraph::BaseEdgeIterator<const LinkGraph::BaseEdge, Edge, EdgeIterator> {
-		EdgeAnnotation *base_anno; ///< Array of annotations to be (indirectly) iterated.
-	public:
-		/**
-		 * Constructor.
-		 * @param base Array of edges to be iterated.
-		 * @param base_anno Array of annotations to be iterated.
-		 * @param current Start offset of iteration.
-		 */
-		EdgeIterator(const LinkGraph::BaseEdge *base, EdgeAnnotation *base_anno, NodeID current) :
-				LinkGraph::BaseEdgeIterator<const LinkGraph::BaseEdge, Edge, EdgeIterator>(base, current),
-				base_anno(base_anno) {}
-
-		/**
-		 * Dereference.
-		 * @return Pair of the edge currently pointed to and the ID of its
-		 *         other end.
-		 */
-		std::pair<NodeID, Edge> operator*() const
-		{
-			return std::pair<NodeID, Edge>(this->current, Edge(this->base[this->current], this->base_anno[this->current]));
-		}
-
-		/**
-		 * Dereference. Has to be repeated here as operator* is different than
-		 * in LinkGraph::EdgeWrapper.
-		 * @return Fake pointer to pair of NodeID/Edge.
-		 */
-		FakePointer operator->() const {
-			return FakePointer(this->operator*());
-		}
+	struct NodeAnnotation {
+		uint undelivered_supply; ///< Amount of supply that hasn't been distributed yet.
+		uint received_demand;    ///< Received demand towards this node.
+		PathList paths;          ///< Paths through this node, sorted so that those with flow == 0 are in the back.
+		FlowStatMap flows;       ///< Planned flows to other nodes.
+		span<DemandAnnotation> demands; ///< Demand annotations belonging to this node.
+		span<Edge> edges;        ///< Edges with annotations belonging to this node.
+		void Init(uint supply);
 	};
+
+	typedef std::vector<NodeAnnotation> NodeAnnotationVector;
+
+	friend SaveLoadTable GetLinkGraphJobDesc();
+	friend upstream_sl::SaveLoadTable upstream_sl::GetLinkGraphJobDesc();
+	friend void GetLinkGraphJobDayLengthScaleAfterLoad(LinkGraphJob *lgj);
+	friend class LinkGraphSchedule;
+	friend class LinkGraphJobGroup;
+
+protected:
+	const LinkGraph link_graph;       ///< Link graph to by analyzed. Is copied when job is started and mustn't be modified later.
+
+	std::shared_ptr<LinkGraphJobGroup> group; ///< Job group thread the job is running in or nullptr if it's running in the main thread.
+	const LinkGraphSettings settings; ///< Copy of _settings_game.linkgraph at spawn time.
+	DateTicks join_date_ticks;        ///< Date when the job is to be joined.
+	DateTicks start_date_ticks;       ///< Date when the job was started.
+	NodeAnnotationVector nodes;       ///< Extra node data necessary for link graph calculation.
+	EdgeAnnotationVector edges;       ///< Edge data necessary for link graph calculation.
+	std::atomic<bool> job_completed;  ///< Is the job still running. This is accessed by multiple threads and reads may be stale.
+	std::atomic<bool> job_aborted;    ///< Has the job been aborted. This is accessed by multiple threads and reads may be stale.
+
+	void EraseFlows(NodeID from);
+	void JoinThread();
+	void SetJobGroup(std::shared_ptr<LinkGraphJobGroup> group);
+
+public:
+
+	btree::btree_map<std::pair<NodeID, NodeID>, uint> demand_map; ///< Demand map.
+	std::vector<DemandAnnotation> demand_annotation_store;        ///< Demand annotation store.
+
+	DynUniformArenaAllocator path_allocator; ///< Arena allocator used for paths
 
 	/**
 	 * Link graph job node. Wraps a constant link graph node and a modifiable
@@ -185,7 +164,6 @@ public:
 	class Node : public LinkGraph::ConstNode {
 	private:
 		NodeAnnotation &node_anno;  ///< Annotation being wrapped.
-		EdgeAnnotation *edge_annos; ///< Edge annotations belonging to this node.
 	public:
 
 		/**
@@ -195,36 +173,20 @@ public:
 		 */
 		Node (LinkGraphJob *lgj, NodeID node) :
 			LinkGraph::ConstNode(&lgj->link_graph, node),
-			node_anno(lgj->nodes[node]), edge_annos(lgj->edges[node])
+			node_anno(lgj->nodes[node])
 		{}
-
-		/**
-		 * Retrieve an edge starting at this node. Mind that this returns an
-		 * object, not a reference.
-		 * @param to Remote end of the edge.
-		 * @return Edge between this node and "to".
-		 */
-		Edge operator[](NodeID to) const { return Edge(this->edges[to], this->edge_annos[to]); }
-
-		/**
-		 * Iterator for the "begin" of the edge array. Only edges with capacity
-		 * are iterated. The others are skipped.
-		 * @return Iterator pointing to the first edge.
-		 */
-		EdgeIterator Begin() const { return EdgeIterator(this->edges, this->edge_annos, index); }
-
-		/**
-		 * Iterator for the "end" of the edge array. Only edges with capacity
-		 * are iterated. The others are skipped.
-		 * @return Iterator pointing beyond the last edge.
-		 */
-		EdgeIterator End() const { return EdgeIterator(this->edges, this->edge_annos, INVALID_NODE); }
 
 		/**
 		 * Get amount of supply that hasn't been delivered, yet.
 		 * @return Undelivered supply.
 		 */
 		uint UndeliveredSupply() const { return this->node_anno.undelivered_supply; }
+
+		/**
+		 * Get amount of supply that hasn't been delivered, yet.
+		 * @return Undelivered supply.
+		 */
+		uint ReceivedDemand() const { return this->node_anno.received_demand; }
 
 		/**
 		 * Get the flows running through this node.
@@ -253,13 +215,45 @@ public:
 
 		/**
 		 * Deliver some supply, adding demand to the respective edge.
-		 * @param to Destination for supply.
 		 * @param amount Amount of supply to be delivered.
 		 */
-		void DeliverSupply(NodeID to, uint amount)
+		void DeliverSupply(uint amount)
 		{
 			this->node_anno.undelivered_supply -= amount;
-			(*this)[to].AddDemand(amount);
+		}
+
+		/**
+		 * Receive some demand, adding demand to the respective edge.
+		 * @param amount Amount of demand to be received.
+		 */
+		void ReceiveDemand(uint amount)
+		{
+			this->node_anno.received_demand += amount;
+		}
+
+		span<DemandAnnotation> GetDemandAnnotations() const
+		{
+			return this->node_anno.demands;
+		}
+
+		void SetDemandAnnotations(span<DemandAnnotation> demands)
+		{
+			this->node_anno.demands = demands;
+		}
+
+		Edge &GetEdgeTo(NodeID to)
+		{
+			for (Edge &edge : this->node_anno.edges) {
+				if (edge.To() == to) return edge;
+			}
+
+			static Edge empty_edge = {};
+			return empty_edge;
+		}
+
+		span<Edge> GetEdges()
+		{
+			return this->node_anno.edges;
 		}
 	};
 
@@ -268,12 +262,13 @@ public:
 	 * settings have to be brutally const-casted in order to populate them.
 	 */
 	LinkGraphJob() : settings(_settings_game.linkgraph),
-			join_date(INVALID_DATE), job_completed(false), job_aborted(false) {}
+			join_date_ticks(INVALID_DATE), start_date_ticks(INVALID_DATE), job_completed(false), job_aborted(false) {}
 
-	LinkGraphJob(const LinkGraph &orig);
+	LinkGraphJob(const LinkGraph &orig, uint duration_multiplier);
 	~LinkGraphJob();
 
 	void Init();
+	void FinaliseJob();
 
 	/**
 	 * Check if job has actually finished.
@@ -299,21 +294,28 @@ public:
 
 	/**
 	 * Check if job is supposed to be finished.
+	 * @param tick_offset Optional number of ticks to add to the current date
 	 * @return True if job should be finished by now, false if not.
 	 */
-	inline bool IsScheduledToBeJoined() const { return this->join_date <= _date; }
+	inline bool IsScheduledToBeJoined(int tick_offset = 0) const { return this->join_date_ticks <= (_date * DAY_TICKS) + _date_fract + tick_offset; }
 
 	/**
 	 * Get the date when the job should be finished.
 	 * @return Join date.
 	 */
-	inline Date JoinDate() const { return join_date; }
+	inline DateTicks JoinDateTicks() const { return join_date_ticks; }
+
+	/**
+	 * Get the date when the job was started.
+	 * @return Start date.
+	 */
+	inline DateTicks StartDateTicks() const { return start_date_ticks; }
 
 	/**
 	 * Change the join date on date cheating.
 	 * @param interval Number of days to add.
 	 */
-	inline void ShiftJoinDate(int interval) { this->join_date += interval; }
+	inline void ShiftJoinDate(int interval) { this->join_date_ticks += interval * DAY_TICKS; }
 
 	/**
 	 * Get the link graph settings for this component.
@@ -376,7 +378,7 @@ public:
 	inline NodeID GetOrigin() const { return this->origin; }
 
 	/** Get the parent leg of this one. */
-	inline Path *GetParent() { return this->parent; }
+	inline Path *GetParent() { return reinterpret_cast<Path *>(this->parent_storage & ~1); }
 
 	/** Get the overall capacity of the path. */
 	inline uint GetCapacity() const { return this->capacity; }
@@ -425,14 +427,17 @@ public:
 	 */
 	inline void Detach()
 	{
-		if (this->parent != nullptr) {
-			this->parent->num_children--;
-			this->parent = nullptr;
+		if (this->GetParent() != nullptr) {
+			this->GetParent()->num_children--;
+			this->SetParent(nullptr);
 		}
 	}
 
 	uint AddFlow(uint f, LinkGraphJob &job, uint max_saturation);
 	void Fork(Path *base, uint cap, int free_cap, uint dist);
+
+	inline bool GetAnnosSetFlag() const { return HasBit(this->parent_storage, 0); }
+	inline void SetAnnosSetFlag(bool flag) { SB(this->parent_storage, 0, 1, flag ? 1 : 0); }
 
 protected:
 
@@ -452,7 +457,18 @@ protected:
 	NodeID node;       ///< Link graph node this leg passes.
 	NodeID origin;     ///< Link graph node this path originates from.
 	uint num_children; ///< Number of child legs that have been forked from this path.
-	Path *parent;      ///< Parent leg of this one.
+
+	uintptr_t parent_storage; ///< Parent leg of this one, flag in LSB of pointer
+
+	/** Get the parent leg of this one. */
+	inline void SetParent(Path *parent) { this->parent_storage = reinterpret_cast<uintptr_t>(parent) | (this->parent_storage & 1); }
 };
+
+inline bool IsLinkGraphCargoExpress(CargoID cargo)
+{
+	return IsCargoInClass(cargo, CC_PASSENGERS) ||
+			IsCargoInClass(cargo, CC_MAIL) ||
+			IsCargoInClass(cargo, CC_EXPRESS);
+}
 
 #endif /* LINKGRAPHJOB_H */

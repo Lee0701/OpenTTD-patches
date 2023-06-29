@@ -105,9 +105,8 @@ bool DriverFactoryBase::SelectDriverImpl(const std::string &name, Driver::Type t
 	if (name.empty()) {
 		/* Probe for this driver, but do not fall back to dedicated/null! */
 		for (int priority = 10; priority > 0; priority--) {
-			Drivers::iterator it = GetDrivers().begin();
-			for (; it != GetDrivers().end(); ++it) {
-				DriverFactoryBase *d = (*it).second;
+			for (auto &it : GetDrivers()) {
+				DriverFactoryBase *d = it.second;
 
 				/* Check driver type */
 				if (d->type != type) continue;
@@ -121,13 +120,13 @@ bool DriverFactoryBase::SelectDriverImpl(const std::string &name, Driver::Type t
 
 				const char *err = newd->Start({});
 				if (err == nullptr) {
-					Debug(driver, 1, "Successfully probed {} driver '{}'", GetDriverTypeName(type), d->name);
+					DEBUG(driver, 1, "Successfully probed %s driver '%s'", GetDriverTypeName(type), d->name);
 					delete oldd;
 					return true;
 				}
 
 				*GetActiveDriver(type) = oldd;
-				Debug(driver, 1, "Probing {} driver '{}' failed with error: {}", GetDriverTypeName(type), d->name, err);
+				DEBUG(driver, 1, "Probing %s driver '%s' failed with error: %s", GetDriverTypeName(type), d->name, err);
 				delete newd;
 
 				if (type == Driver::DT_VIDEO && _video_hw_accel && d->UsesHardwareAcceleration()) {
@@ -151,15 +150,14 @@ bool DriverFactoryBase::SelectDriverImpl(const std::string &name, Driver::Type t
 		}
 
 		/* Find this driver */
-		Drivers::iterator it = GetDrivers().begin();
-		for (; it != GetDrivers().end(); ++it) {
-			DriverFactoryBase *d = (*it).second;
+		for (auto &it : GetDrivers()) {
+			DriverFactoryBase *d = it.second;
 
 			/* Check driver type */
 			if (d->type != type) continue;
 
 			/* Check driver name */
-			if (strcasecmp(dname.c_str(), d->name) != 0) continue;
+			if (!StrEqualsIgnoreCase(dname, d->name)) continue;
 
 			/* Found our driver, let's try it */
 			Driver *newd = d->CreateInstance();
@@ -170,7 +168,7 @@ bool DriverFactoryBase::SelectDriverImpl(const std::string &name, Driver::Type t
 				usererror("Unable to load driver '%s'. The error was: %s", d->name, err);
 			}
 
-			Debug(driver, 1, "Successfully loaded {} driver '{}'", GetDriverTypeName(type), d->name);
+			DEBUG(driver, 1, "Successfully loaded %s driver '%s'", GetDriverTypeName(type), d->name);
 			delete *GetActiveDriver(type);
 			*GetActiveDriver(type) = newd;
 			return true;
@@ -191,9 +189,8 @@ char *DriverFactoryBase::GetDriversInfo(char *p, const char *last)
 		p += seprintf(p, last, "List of %s drivers:\n", GetDriverTypeName(type));
 
 		for (int priority = 10; priority >= 0; priority--) {
-			Drivers::iterator it = GetDrivers().begin();
-			for (; it != GetDrivers().end(); it++) {
-				DriverFactoryBase *d = (*it).second;
+			for (auto &it : GetDrivers()) {
+				DriverFactoryBase *d = it.second;
 				if (d->type != type) continue;
 				if (d->priority != priority) continue;
 				p += seprintf(p, last, "%18s: %s\n", d->name, d->GetDescription());

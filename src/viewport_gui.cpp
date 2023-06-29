@@ -12,8 +12,13 @@
 #include "window_gui.h"
 #include "viewport_func.h"
 #include "strings_func.h"
+#include "tunnelbridge.h"
+#include "tilehighlight_func.h"
 #include "zoom_func.h"
 #include "window_func.h"
+#include "gfx_func.h"
+#include "industry.h"
+#include "town_map.h"
 
 #include "widgets/viewport_widget.h"
 
@@ -63,7 +68,7 @@ public:
 		Point pt;
 		if (tile == INVALID_TILE) {
 			/* No tile? Use center of main viewport. */
-			const Window *w = FindWindowById(WC_MAIN_WINDOW, 0);
+			const Window *w = GetMainWindow();
 
 			/* center on same place as main window (zoom is maximum, no adjustment needed) */
 			pt.x = w->viewport->scrollpos_x + w->viewport->virtual_width / 2;
@@ -76,6 +81,7 @@ public:
 		this->viewport->scrollpos_y = pt.y - this->viewport->virtual_height / 2;
 		this->viewport->dest_scrollpos_x = this->viewport->scrollpos_x;
 		this->viewport->dest_scrollpos_y = this->viewport->scrollpos_y;
+		this->viewport->map_type = (ViewportMapType) _settings_client.gui.default_viewport_map_mode;
 	}
 
 	void SetStringParameters(int widget) const override
@@ -95,7 +101,7 @@ public:
 			case WID_EV_ZOOM_OUT: DoZoomInOutWindow(ZOOM_OUT, this); break;
 
 			case WID_EV_MAIN_TO_VIEW: { // location button (move main view to same spot as this view) 'Paste Location'
-				Window *w = FindWindowById(WC_MAIN_WINDOW, 0);
+				Window *w = GetMainWindow();
 				int x = this->viewport->scrollpos_x; // Where is the main looking at
 				int y = this->viewport->scrollpos_y;
 
@@ -107,7 +113,7 @@ public:
 			}
 
 			case WID_EV_VIEW_TO_MAIN: { // inverse location button (move this view to same spot as main view) 'Copy Location'
-				const Window *w = FindWindowById(WC_MAIN_WINDOW, 0);
+				const Window *w = GetMainWindow();
 				int x = w->viewport->scrollpos_x;
 				int y = w->viewport->scrollpos_y;
 
@@ -134,10 +140,29 @@ public:
 		this->viewport->dest_scrollpos_y = this->viewport->scrollpos_y;
 	}
 
+	bool OnRightClick(Point pt, int widget) override
+	{
+		return widget == WID_EV_VIEWPORT;
+	}
+
 	void OnMouseWheel(int wheel) override
 	{
-		if (_settings_client.gui.scrollwheel_scrolling != 2) {
+		if (_ctrl_pressed) {
+			/* Cycle through the drawing modes */
+			ChangeRenderMode(this->viewport, wheel < 0);
+			this->SetDirty();
+		} else if (_settings_client.gui.scrollwheel_scrolling != 2) {
 			ZoomInOrOutToCursorWindow(wheel < 0, this);
+		}
+	}
+
+	virtual void OnMouseOver(Point pt, int widget) override
+	{
+		if (pt.x != -1 && (_settings_client.gui.hover_delay_ms == 0 ? _right_button_down : _mouse_hovering)) {
+			/* Show tooltip with last month production or town name */
+			const Point p = GetTileBelowCursor();
+			const TileIndex tile = TileVirtXY(p.x, p.y);
+			if (tile < MapSize()) ShowTooltipForTile(this, tile);
 		}
 	}
 
@@ -177,13 +202,57 @@ void ShowExtraViewportWindow(TileIndex tile)
 
 /**
  * Show a new Extra Viewport window.
- * Center it on the tile under the cursor, if the cursor is inside a viewport.
+ * When building a tunnel, the tunnel end-tile is used as center for new viewport.
+ * Otherwise center it on the tile under the cursor, if the cursor is inside a viewport.
  * If that fails, center it on main viewport center.
  */
 void ShowExtraViewportWindowForTileUnderCursor()
 {
+	if (_build_tunnel_endtile != 0 && _thd.place_mode & HT_TUNNEL) {
+		ShowExtraViewportWindow(_build_tunnel_endtile);
+		return;
+	}
+
 	/* Use tile under mouse as center for new viewport.
 	 * Do this before creating the window, it might appear just below the mouse. */
 	Point pt = GetTileBelowCursor();
 	ShowExtraViewportWindow(pt.x != -1 ? TileVirtXY(pt.x, pt.y) : INVALID_TILE);
+}
+
+void ShowTooltipForTile(Window *w, const TileIndex tile)
+{
+	switch (GetTileType(tile)) {
+		case MP_ROAD:
+			if (IsRoadDepot(tile)) return;
+			/* FALL THROUGH */
+		case MP_HOUSE: {
+			if (HasBit(_display_opt, DO_SHOW_TOWN_NAMES)) return; // No need for a town name tooltip when it is already displayed
+			SetDParam(0, GetTownIndex(tile));
+			GuiShowTooltips(w, STR_TOWN_NAME_TOOLTIP, 0, nullptr, TCC_HOVER_VIEWPORT);
+			break;
+		}
+		case MP_INDUSTRY: {
+			static char buffer[1024];
+			const Industry *ind = Industry::GetByTile(tile);
+			const IndustrySpec *indsp = GetIndustrySpec(ind->type);
+
+			buffer[0] = 0;
+			char *buf_pos = buffer;
+
+			for (byte i = 0; i < lengthof(ind->produced_cargo); i++) {
+				if (ind->produced_cargo[i] != CT_INVALID) {
+					SetDParam(0, ind->produced_cargo[i]);
+					SetDParam(1, ind->last_month_production[i]);
+					SetDParam(2, ToPercent8(ind->last_month_pct_transported[i]));
+					buf_pos = GetString(buf_pos, STR_INDUSTRY_VIEW_TRANSPORTED_TOOLTIP_EXTENSION, lastof(buffer));
+				}
+			}
+			SetDParam(0, indsp->name);
+			SetDParamStr(1, buffer);
+			GuiShowTooltips(w, STR_INDUSTRY_VIEW_TRANSPORTED_TOOLTIP, 0, nullptr, TCC_HOVER_VIEWPORT);
+			break;
+		}
+		default:
+			return;
+	}
 }

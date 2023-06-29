@@ -34,11 +34,12 @@ enum ConsoleHookResult {
 typedef bool IConsoleCmdProc(byte argc, char *argv[]);
 typedef ConsoleHookResult IConsoleHook(bool echo);
 struct IConsoleCmd {
-	IConsoleCmd(const std::string &name, IConsoleCmdProc *proc, IConsoleHook *hook) : name(name), proc(proc), hook(hook) {}
+	IConsoleCmd(const std::string &name, IConsoleCmdProc *proc, IConsoleHook *hook, bool unlisted) : name(name), proc(proc), hook(hook), unlisted(unlisted) {}
 
 	std::string name;         ///< name of command
 	IConsoleCmdProc *proc;    ///< process executed when command is typed
 	IConsoleHook *hook;       ///< any special trigger action that needs executing
+	bool unlisted;
 };
 
 /**
@@ -70,7 +71,7 @@ struct IConsole
 	static AliasList &Aliases();
 
 	/* Commands */
-	static void CmdRegister(const std::string &name, IConsoleCmdProc *proc, IConsoleHook *hook = nullptr);
+	static void CmdRegister(const std::string &name, IConsoleCmdProc *proc, IConsoleHook *hook = nullptr, bool unlisted = false);
 	static IConsoleCmd *CmdGet(const std::string &name);
 	static void AliasRegister(const std::string &name, const std::string &cmd);
 	static IConsoleAlias *AliasGet(const std::string &name);

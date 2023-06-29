@@ -12,14 +12,13 @@
 
 #include "window_type.h"
 #include "vehicle_type.h"
-#include "vehicle_gui_base.h"
-#include "vehiclelist.h"
 #include "order_type.h"
 #include "station_type.h"
 #include "engine_type.h"
 #include "company_type.h"
+#include "widgets/dropdown_func.h"
 
-void ShowVehicleRefitWindow(const Vehicle *v, VehicleOrderID order, Window *parent, bool auto_refit = false);
+void ShowVehicleRefitWindow(const Vehicle *v, VehicleOrderID order, Window *parent, bool auto_refit = false, bool is_virtual_train = false);
 
 /** The tabs in the train details window */
 enum TrainDetailsWindowTabs {
@@ -43,6 +42,9 @@ struct TestedEngineDetails {
 	CargoID cargo;        ///< Cargo type
 	uint capacity;        ///< Cargo capacity
 	uint16 mail_capacity; ///< Mail capacity if available
+	CargoArray all_capacities; ///< Capacities for all cargoes
+
+	void FillDefaultCapacities(const Engine *e);
 };
 
 int DrawVehiclePurchaseInfo(int left, int right, int y, EngineID engine_number, TestedEngineDetails &te);
@@ -61,6 +63,8 @@ void ShowVehicleListWindow(const Vehicle *v);
 void ShowVehicleListWindow(CompanyID company, VehicleType vehicle_type);
 void ShowVehicleListWindow(CompanyID company, VehicleType vehicle_type, StationID station);
 void ShowVehicleListWindow(CompanyID company, VehicleType vehicle_type, TileIndex depot_tile);
+
+void DirtyVehicleListWindowForVehicle(const Vehicle *v);
 
 /**
  * Get the height of a single vehicle in the GUIs.
@@ -101,6 +105,9 @@ static inline WindowClass GetWindowClassForVehicleType(VehicleType vt)
 	}
 }
 
+typedef std::vector<const Vehicle *> VehicleList;
+struct GUIVehicleGroup;
+
 /* Unified window procedure */
 void ShowVehicleViewWindow(const Vehicle *v);
 bool VehicleClicked(const Vehicle *v);
@@ -109,8 +116,40 @@ bool VehicleClicked(const GUIVehicleGroup &vehgroup);
 void StartStopVehicle(const Vehicle *v, bool texteffect);
 
 Vehicle *CheckClickOnVehicle(const struct Viewport *vp, int x, int y);
+void StopGlobalFollowVehicle(const Vehicle *v);
 
 void DrawVehicleImage(const Vehicle *v, const Rect &r, VehicleID selection, EngineImageType image_type, int skip);
 void SetMouseCursorVehicle(const Vehicle *v, EngineImageType image_type);
+
+/**
+ * Tell if the focused window concerns the specified vehicle.
+ * @param vid Vehicle id to check.
+ * @param ref_window The window to check against.
+ * @return True if the focused window is about specified vehicle.
+ */
+static inline bool HasFocusedVehicleChanged(const VehicleID vid, Window *ref_window)
+{
+	if (ref_window) {
+		WindowClass wc = ref_window->window_class;
+		WindowNumber wn = ref_window->window_number;
+
+		if (wc == WC_DROPDOWN_MENU) GetParentWindowInfo(ref_window, wc, wn);
+
+		switch (wc) {
+			default:
+				break;
+			case WC_VEHICLE_DETAILS:
+			case WC_VEHICLE_REFIT:
+			case WC_VEHICLE_ORDERS:
+			case WC_VEHICLE_TIMETABLE:
+			case WC_VEHICLE_VIEW:
+			case WC_VEHICLE_CARGO_TYPE_LOAD_ORDERS:
+			case WC_VEHICLE_CARGO_TYPE_UNLOAD_ORDERS:
+				return ((uint32) wn != vid);
+		}
+	}
+
+	return true;
+}
 
 #endif /* VEHICLE_GUI_H */

@@ -12,12 +12,15 @@
 #include "saveload.h"
 #include "compat/engine_sl_compat.h"
 
-#include "saveload_internal.h"
 #include "../engine_base.h"
 #include "../string_func.h"
 #include <vector>
 
 #include "../safeguards.h"
+
+Engine *GetTempDataEngine(EngineID index);
+
+namespace upstream_sl {
 
 static const SaveLoad _engine_desc[] = {
 	 SLE_CONDVAR(Engine, intro_date,          SLE_FILE_U16 | SLE_VAR_I32,  SL_MIN_VERSION,  SLV_31),
@@ -39,46 +42,8 @@ static const SaveLoad _engine_desc[] = {
 	 SLE_CONDVAR(Engine, company_avail,       SLE_FILE_U8  | SLE_VAR_U16,  SL_MIN_VERSION, SLV_104),
 	 SLE_CONDVAR(Engine, company_avail,       SLE_UINT16,                SLV_104, SL_MAX_VERSION),
 	 SLE_CONDVAR(Engine, company_hidden,      SLE_UINT16,                SLV_193, SL_MAX_VERSION),
-	SLE_CONDSSTR(Engine, name,                SLE_STR,                    SLV_84, SL_MAX_VERSION),
+	 SLE_CONDSTR(Engine, name,                SLE_STR, 0,                SLV_84, SL_MAX_VERSION),
 };
-
-static std::vector<Engine*> _temp_engine;
-
-/**
- * Allocate an Engine structure, but not using the pools.
- * The allocated Engine must be freed using FreeEngine;
- * @return Allocated engine.
- */
-static Engine* CallocEngine()
-{
-	uint8 *zero = CallocT<uint8>(sizeof(Engine));
-	Engine *engine = new (zero) Engine();
-	return engine;
-}
-
-/**
- * Deallocate an Engine constructed by CallocEngine.
- * @param e Engine to free.
- */
-static void FreeEngine(Engine *e)
-{
-	if (e != nullptr) {
-		e->~Engine();
-		free(e);
-	}
-}
-
-Engine *GetTempDataEngine(EngineID index)
-{
-	if (index < _temp_engine.size()) {
-		return _temp_engine[index];
-	} else if (index == _temp_engine.size()) {
-		_temp_engine.push_back(CallocEngine());
-		return _temp_engine[index];
-	} else {
-		NOT_REACHED();
-	}
-}
 
 struct ENGNChunkHandler : ChunkHandler {
 	ENGNChunkHandler() : ChunkHandler('ENGN', CH_TABLE) {}
@@ -110,67 +75,8 @@ struct ENGNChunkHandler : ChunkHandler {
 				 * Just cancel any previews. */
 				e->flags &= ~4; // ENGINE_OFFER_WINDOW_OPEN
 				e->preview_company = INVALID_COMPANY;
-				e->preview_asked = (CompanyMask)-1;
+				e->preview_asked = MAX_UVALUE(CompanyMask);
 			}
-		}
-	}
-};
-
-/**
- * Copy data from temporary engine array into the real engine pool.
- */
-void CopyTempEngineData()
-{
-	for (Engine *e : Engine::Iterate()) {
-		if (e->index >= _temp_engine.size()) break;
-
-		const Engine *se = GetTempDataEngine(e->index);
-		e->intro_date          = se->intro_date;
-		e->age                 = se->age;
-		e->reliability         = se->reliability;
-		e->reliability_spd_dec = se->reliability_spd_dec;
-		e->reliability_start   = se->reliability_start;
-		e->reliability_max     = se->reliability_max;
-		e->reliability_final   = se->reliability_final;
-		e->duration_phase_1    = se->duration_phase_1;
-		e->duration_phase_2    = se->duration_phase_2;
-		e->duration_phase_3    = se->duration_phase_3;
-		e->flags               = se->flags;
-		e->preview_asked       = se->preview_asked;
-		e->preview_company     = se->preview_company;
-		e->preview_wait        = se->preview_wait;
-		e->company_avail       = se->company_avail;
-		e->company_hidden      = se->company_hidden;
-		e->name                = se->name;
-	}
-
-	ResetTempEngineData();
-}
-
-void ResetTempEngineData()
-{
-	/* Get rid of temporary data */
-	for (std::vector<Engine*>::iterator it = _temp_engine.begin(); it != _temp_engine.end(); ++it) {
-		FreeEngine(*it);
-	}
-	_temp_engine.clear();
-}
-
-struct ENGSChunkHandler : ChunkHandler {
-	ENGSChunkHandler() : ChunkHandler('ENGS', CH_READONLY) {}
-
-	void Load() const override
-	{
-		/* Load old separate String ID list into a temporary array. This
-		 * was always 256 entries. */
-		StringID names[256];
-
-		SlCopy(names, lengthof(names), SLE_STRINGID);
-
-		/* Copy each string into the temporary engine array. */
-		for (EngineID engine = 0; engine < lengthof(names); engine++) {
-			Engine *e = GetTempDataEngine(engine);
-			e->name = CopyFromOldName(names[engine]);
 		}
 	}
 };
@@ -213,11 +119,11 @@ struct EIDSChunkHandler : ChunkHandler {
 
 static const EIDSChunkHandler EIDS;
 static const ENGNChunkHandler ENGN;
-static const ENGSChunkHandler ENGS;
 static const ChunkHandlerRef engine_chunk_handlers[] = {
 	EIDS,
 	ENGN,
-	ENGS,
 };
 
 extern const ChunkHandlerTable _engine_chunk_handlers(engine_chunk_handlers);
+
+}

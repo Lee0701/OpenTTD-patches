@@ -22,6 +22,10 @@
 
 #include "../safeguards.h"
 
+extern GameStrings *_current_data;
+
+namespace upstream_sl {
+
 static std::string _game_saveload_name;
 static int         _game_saveload_version;
 static std::string _game_saveload_settings;
@@ -69,7 +73,7 @@ struct GSDTChunkHandler : ChunkHandler {
 		_game_saveload_version = -1;
 		SlObject(nullptr, slt);
 
-		if (_networking && !_network_server) {
+		if (_game_mode == GM_MENU || (_networking && !_network_server)) {
 			GameInstance::LoadEmpty();
 			if (SlIterateArray() != -1) SlErrorCorrupt("Too many GameScript configs");
 			return;
@@ -84,15 +88,15 @@ struct GSDTChunkHandler : ChunkHandler {
 				config->Change(_game_saveload_name.c_str(), -1, false, _game_saveload_is_random);
 				if (!config->HasScript()) {
 					if (_game_saveload_name.compare("%_dummy") != 0) {
-						Debug(script, 0, "The savegame has an GameScript by the name '{}', version {} which is no longer available.", _game_saveload_name, _game_saveload_version);
-						Debug(script, 0, "This game will continue to run without GameScript.");
+						DEBUG(script, 0, "The savegame has an GameScript by the name '%s', version %u which is no longer available.", _game_saveload_name.c_str(), _game_saveload_version);
+						DEBUG(script, 0, "This game will continue to run without GameScript.");
 					} else {
-						Debug(script, 0, "The savegame had no GameScript available at the time of saving.");
-						Debug(script, 0, "This game will continue to run without GameScript.");
+						DEBUG(script, 0, "The savegame had no GameScript available at the time of saving.");
+						DEBUG(script, 0, "This game will continue to run without GameScript.");
 					}
 				} else {
-					Debug(script, 0, "The savegame has an GameScript by the name '{}', version {} which is no longer available.", _game_saveload_name, _game_saveload_version);
-					Debug(script, 0, "The latest version of that GameScript has been loaded instead, but it'll not get the savegame data as it's incompatible.");
+					DEBUG(script, 0, "The savegame has an GameScript by the name '%s', version %u which is no longer available.", _game_saveload_name.c_str(), _game_saveload_version);
+					DEBUG(script, 0, "The latest version of that GameScript has been loaded instead, but it'll not get the savegame data as it's incompatible.");
 				}
 				/* Make sure the GameScript doesn't get the saveload data, as it was not the
 				 *  writer of the saveload data in the first place */
@@ -102,9 +106,8 @@ struct GSDTChunkHandler : ChunkHandler {
 
 		config->StringToSettings(_game_saveload_settings);
 
-		/* Start the GameScript directly if it was active in the savegame */
-		Game::StartNew();
-		Game::Load(_game_saveload_version);
+		/* Load the GameScript saved data */
+		config->SetToLoadData(GameInstance::Load(_game_saveload_version));
 
 		if (SlIterateArray() != -1) SlErrorCorrupt("Too many GameScript configs");
 	}
@@ -116,8 +119,6 @@ struct GSDTChunkHandler : ChunkHandler {
 		SlAutolength((AutolengthProc *)SaveReal_GSDT, nullptr);
 	}
 };
-
-extern GameStrings *_current_data;
 
 static std::string _game_saveload_string;
 static uint32 _game_saveload_strings;
@@ -204,3 +205,5 @@ static const ChunkHandlerRef game_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _game_chunk_handlers(game_chunk_handlers);
+
+}

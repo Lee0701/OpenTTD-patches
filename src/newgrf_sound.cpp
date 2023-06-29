@@ -86,14 +86,14 @@ bool LoadNewGRFSound(SoundEntry *sound)
 
 	/* Test string termination */
 	if (name[name_len] != 0) {
-		Debug(grf, 2, "LoadNewGRFSound [{}]: Name not properly terminated", file.GetSimplifiedFilename());
+		DEBUG(grf, 2, "LoadNewGRFSound [%s]: Name not properly terminated", file.GetSimplifiedFilename().c_str());
 		return false;
 	}
 
-	Debug(grf, 2, "LoadNewGRFSound [{}]: Sound name '{}'...", file.GetSimplifiedFilename(), name);
+	DEBUG(grf, 2, "LoadNewGRFSound [%s]: Sound name '%s'...", file.GetSimplifiedFilename().c_str(), name);
 
 	if (file.ReadDword() != BSWAP32('RIFF')) {
-		Debug(grf, 1, "LoadNewGRFSound [{}]: Missing RIFF header", file.GetSimplifiedFilename());
+		DEBUG(grf, 1, "LoadNewGRFSound [%s]: Missing RIFF header", file.GetSimplifiedFilename().c_str());
 		return false;
 	}
 
@@ -101,12 +101,12 @@ bool LoadNewGRFSound(SoundEntry *sound)
 	uint header_size = 11;
 	if (sound->grf_container_ver >= 2) header_size++; // The first FF in the sprite is only counted for container version >= 2.
 	if (total_size + name_len + header_size > num) {
-		Debug(grf, 1, "LoadNewGRFSound [{}]: RIFF was truncated", file.GetSimplifiedFilename());
+		DEBUG(grf, 1, "LoadNewGRFSound [%s]: RIFF was truncated", file.GetSimplifiedFilename().c_str());
 		return false;
 	}
 
 	if (file.ReadDword() != BSWAP32('WAVE')) {
-		Debug(grf, 1, "LoadNewGRFSound [{}]: Invalid RIFF type", file.GetSimplifiedFilename());
+		DEBUG(grf, 1, "LoadNewGRFSound [%s]: Invalid RIFF type", file.GetSimplifiedFilename().c_str());
 		return false;
 	}
 
@@ -115,7 +115,7 @@ bool LoadNewGRFSound(SoundEntry *sound)
 		uint32 size = file.ReadDword();
 		total_size -= 8;
 		if (total_size < size) {
-			Debug(grf, 1, "LoadNewGRFSound [{}]: Invalid RIFF", file.GetSimplifiedFilename());
+			DEBUG(grf, 1, "LoadNewGRFSound [%s]: Invalid RIFF", file.GetSimplifiedFilename().c_str());
 			return false;
 		}
 		total_size -= size;
@@ -124,7 +124,7 @@ bool LoadNewGRFSound(SoundEntry *sound)
 			case ' tmf': // 'fmt '
 				/* Audio format, must be 1 (PCM) */
 				if (size < 16 || file.ReadWord() != 1) {
-					Debug(grf, 1, "LoadGRFSound [{}]: Invalid audio format", file.GetSimplifiedFilename());
+					DEBUG(grf, 1, "LoadGRFSound [%s]: Invalid audio format", file.GetSimplifiedFilename().c_str());
 					return false;
 				}
 				sound->channels = file.ReadWord();
@@ -141,7 +141,7 @@ bool LoadNewGRFSound(SoundEntry *sound)
 				sound->file_size   = size;
 				sound->file_offset = file.GetPos();
 
-				Debug(grf, 2, "LoadNewGRFSound [{}]: channels {}, sample rate {}, bits per sample {}, length {}", file.GetSimplifiedFilename(), sound->channels, sound->rate, sound->bits_per_sample, size);
+				DEBUG(grf, 2, "LoadNewGRFSound [%s]: channels %u, sample rate %u, bits per sample %u, length %u", file.GetSimplifiedFilename().c_str(), sound->channels, sound->rate, sound->bits_per_sample, size);
 				return true; // the fmt chunk has to appear before data, so we are finished
 
 			default:
@@ -153,7 +153,7 @@ bool LoadNewGRFSound(SoundEntry *sound)
 		if (size > 0) file.SkipBytes(size);
 	}
 
-	Debug(grf, 1, "LoadNewGRFSound [{}]: RIFF does not contain any sound data", file.GetSimplifiedFilename());
+	DEBUG(grf, 1, "LoadNewGRFSound [%s]: RIFF does not contain any sound data", file.GetSimplifiedFilename().c_str());
 
 	/* Clear everything that was read */
 	MemSetT(sound, 0);
@@ -186,7 +186,7 @@ SoundID GetNewGRFSoundID(const GRFFile *file, SoundID sound_id)
  */
 bool PlayVehicleSound(const Vehicle *v, VehicleSoundEvent event, bool force)
 {
-	if (!_settings_client.sound.vehicle && !force) return true;
+	if ((!_settings_client.sound.vehicle || _settings_client.music.effect_vol == 0) && !force) return true;
 
 	const GRFFile *file = v->GetGRF();
 	uint16 callback;

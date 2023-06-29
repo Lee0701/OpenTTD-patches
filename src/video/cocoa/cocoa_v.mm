@@ -72,7 +72,6 @@
 #endif
 
 bool _cocoa_video_started = false;
-static Palette _local_palette; ///< Current palette to use for drawing.
 
 extern bool _tab_is_down;
 
@@ -216,7 +215,7 @@ bool VideoDriver_Cocoa::ToggleFullscreen(bool full_screen)
 		[ NSMenu setMenuBarVisible:!full_screen ];
 
 		this->UpdateVideoModes();
-		InvalidateWindowClassesData(WC_GAME_OPTIONS, 3);
+		this->InvalidateGameOptionsWindow();
 		return true;
 	}
 
@@ -394,7 +393,7 @@ bool VideoDriver_Cocoa::MakeWindow(int width, int height)
 #endif
 	this->window = [ [ OTTD_CocoaWindow alloc ] initWithContentRect:contentRect styleMask:style backing:NSBackingStoreBuffered defer:NO driver:this ];
 	if (this->window == nil) {
-		Debug(driver, 0, "Could not create the Cocoa window.");
+		DEBUG(driver, 0, "Could not create the Cocoa window.");
 		this->setup = false;
 		return false;
 	}
@@ -422,7 +421,7 @@ bool VideoDriver_Cocoa::MakeWindow(int width, int height)
 	NSRect view_frame = [ this->window contentRectForFrameRect:[ this->window frame ] ];
 	this->cocoaview = [ [ OTTD_CocoaView alloc ] initWithFrame:view_frame ];
 	if (this->cocoaview == nil) {
-		Debug(driver, 0, "Could not create the event wrapper view.");
+		DEBUG(driver, 0, "Could not create the event wrapper view.");
 		this->setup = false;
 		return false;
 	}
@@ -431,7 +430,7 @@ bool VideoDriver_Cocoa::MakeWindow(int width, int height)
 	/* Create content view. */
 	NSView *draw_view = this->AllocateDrawView();
 	if (draw_view == nil) {
-		Debug(driver, 0, "Could not create the drawing view.");
+		DEBUG(driver, 0, "Could not create the drawing view.");
 		this->setup = false;
 		return false;
 	}
@@ -480,17 +479,15 @@ void VideoDriver_Cocoa::InputLoop()
 	NSUInteger cur_mods = [ NSEvent modifierFlags ];
 
 	bool old_ctrl_pressed = _ctrl_pressed;
+	bool old_shift_pressed = _shift_pressed;
 
-	_ctrl_pressed = (cur_mods & ( _settings_client.gui.right_mouse_btn_emulation != RMBE_CONTROL ? NSEventModifierFlagControl : NSEventModifierFlagCommand)) != 0;
-	_shift_pressed = (cur_mods & NSEventModifierFlagShift) != 0;
+	_ctrl_pressed = ((cur_mods & ( _settings_client.gui.right_mouse_btn_emulation != RMBE_CONTROL ? NSEventModifierFlagControl : NSEventModifierFlagCommand)) != 0) != _invert_ctrl;
+	_shift_pressed = ((cur_mods & NSEventModifierFlagShift) != 0) != _invert_shift;
 
-#if defined(_DEBUG)
-	this->fast_forward_key_pressed = _shift_pressed;
-#else
 	this->fast_forward_key_pressed = _tab_is_down;
-#endif
 
 	if (old_ctrl_pressed != _ctrl_pressed) HandleCtrlChanged();
+	if (old_shift_pressed != _shift_pressed) HandleShiftChanged();
 }
 
 /** Main game loop. */
@@ -730,9 +727,9 @@ void VideoDriver_CocoaQuartz::UpdatePalette(uint first_color, uint num_colors)
 
 	for (uint i = first_color; i < first_color + num_colors; i++) {
 		uint32 clr = 0xff000000;
-		clr |= (uint32)_local_palette.palette[i].r << 16;
-		clr |= (uint32)_local_palette.palette[i].g << 8;
-		clr |= (uint32)_local_palette.palette[i].b;
+		clr |= (uint32)_cur_palette.palette[i].r << 16;
+		clr |= (uint32)_cur_palette.palette[i].g << 8;
+		clr |= (uint32)_cur_palette.palette[i].b;
 		this->palette[i] = clr;
 	}
 
@@ -741,24 +738,25 @@ void VideoDriver_CocoaQuartz::UpdatePalette(uint first_color, uint num_colors)
 
 void VideoDriver_CocoaQuartz::CheckPaletteAnim()
 {
-	if (!CopyPalette(_local_palette)) return;
+	if (_cur_palette.count_dirty != 0) {
+		Blitter *blitter = BlitterFactory::GetCurrentBlitter();
 
-	Blitter *blitter = BlitterFactory::GetCurrentBlitter();
+		switch (blitter->UsePaletteAnimation()) {
+			case Blitter::PALETTE_ANIMATION_VIDEO_BACKEND:
+				this->UpdatePalette(_cur_palette.first_dirty, _cur_palette.count_dirty);
+				break;
 
-	switch (blitter->UsePaletteAnimation()) {
-		case Blitter::PALETTE_ANIMATION_VIDEO_BACKEND:
-			this->UpdatePalette(_local_palette.first_dirty, _local_palette.count_dirty);
-			break;
+			case Blitter::PALETTE_ANIMATION_BLITTER:
+				blitter->PaletteAnimate(_cur_palette);
+				break;
 
-		case Blitter::PALETTE_ANIMATION_BLITTER:
-			blitter->PaletteAnimate(_local_palette);
-			break;
+			case Blitter::PALETTE_ANIMATION_NONE:
+				break;
 
-		case Blitter::PALETTE_ANIMATION_NONE:
-			break;
-
-		default:
-			NOT_REACHED();
+			default:
+				NOT_REACHED();
+		}
+		_cur_palette.count_dirty = 0;
 	}
 }
 

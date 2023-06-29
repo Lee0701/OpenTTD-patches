@@ -16,6 +16,8 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 static const SaveLoad _cheats_desc[] = {
 	SLE_VAR(Cheats, magic_bulldozer.been_used, SLE_BOOL),
 	SLE_VAR(Cheats, magic_bulldozer.value, SLE_BOOL),
@@ -80,3 +82,5 @@ static const ChunkHandlerRef cheat_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _cheat_chunk_handlers(cheat_chunk_handlers);
+
+}

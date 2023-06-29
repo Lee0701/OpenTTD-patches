@@ -18,11 +18,11 @@
 
 /* virtual */ uint32 RoadTypeScopeResolver::GetRandomBits() const
 {
-	uint tmp = CountBits(static_cast<uint32>(this->tile + (TileX(this->tile) + TileY(this->tile)) * TILE_SIZE));
+	uint tmp = CountBits(this->tile + (TileX(this->tile) + TileY(this->tile)) * TILE_SIZE);
 	return GB(tmp, 0, 2);
 }
 
-/* virtual */ uint32 RoadTypeScopeResolver::GetVariable(byte variable, uint32 parameter, bool *available) const
+/* virtual */ uint32 RoadTypeScopeResolver::GetVariable(uint16 variable, uint32 parameter, GetVariableExtra *extra) const
 {
 	if (this->tile == INVALID_TILE) {
 		switch (variable) {
@@ -52,9 +52,9 @@
 		}
 	}
 
-	Debug(grf, 1, "Unhandled road type tile variable 0x{:X}", variable);
+	DEBUG(grf, 1, "Unhandled road type tile variable 0x%X", variable);
 
-	*available = false;
+	extra->available = false;
 	return UINT_MAX;
 }
 
@@ -165,4 +165,41 @@ uint8 GetReverseRoadTypeTranslation(RoadType roadtype, const GRFFile *grffile)
 
 	/* If not found, return as invalid */
 	return 0xFF;
+}
+
+void DumpRoadTypeSpriteGroup(RoadType rt, DumpSpriteGroupPrinter print)
+{
+	char buffer[64];
+	const RoadTypeInfo *rti = GetRoadTypeInfo(rt);
+
+	static const char *sprite_group_names[] =  {
+		"ROTSG_CURSORS",
+		"ROTSG_OVERLAY",
+		"ROTSG_GROUND",
+		"ROTSG_TUNNEL",
+		"ROTSG_CATENARY_FRONT",
+		"ROTSG_CATENARY_BACK",
+		"ROTSG_BRIDGE",
+		"ROTSG_reserved2",
+		"ROTSG_DEPOT",
+		"ROTSG_reserved3",
+		"ROTSG_ROADSTOP",
+		"ROTSG_ONEWAY"
+	};
+	static_assert(lengthof(sprite_group_names) == ROTSG_END);
+
+	SpriteGroupDumper dumper(print);
+
+	for (RoadTypeSpriteGroup rtsg = (RoadTypeSpriteGroup)0; rtsg < ROTSG_END; rtsg = (RoadTypeSpriteGroup)(rtsg + 1)) {
+		if (rti->group[rtsg] != nullptr) {
+			char *b = buffer;
+			b += seprintf(b, lastof(buffer), "%s: %s", RoadTypeIsTram(rt) ? "Tram" : "Road", sprite_group_names[rtsg]);
+			if (rti->grffile[rtsg] != nullptr) {
+				b += seprintf(b, lastof(buffer), ", GRF: %08X", BSWAP32(rti->grffile[rtsg]->grfid));
+			}
+			print(nullptr, DSGPO_PRINT, 0, buffer);
+			dumper.DumpSpriteGroup(rti->group[rtsg], 0);
+			print(nullptr, DSGPO_PRINT, 0, "");
+		}
+	}
 }

@@ -26,9 +26,12 @@
  * @return the height of the tile
  * @pre tile < MapSize()
  */
-static inline uint TileHeight(TileIndex tile)
+debug_inline static uint TileHeight(TileIndex tile)
 {
-	assert(tile < MapSize());
+	/* this method is inlined in many places and is performance-critical, drop assertion in non-debug builds */
+#ifdef _DEBUG
+	dbg_assert_msg(tile < MapSize(), "tile: 0x%X, size: 0x%X", tile, MapSize());
+#endif
 	return _m[tile].height;
 }
 
@@ -56,8 +59,8 @@ static inline uint TileHeightOutsideMap(int x, int y)
  */
 static inline void SetTileHeight(TileIndex tile, uint height)
 {
-	assert(tile < MapSize());
-	assert(height <= MAX_TILE_HEIGHT);
+	dbg_assert_msg(tile < MapSize(), "tile: 0x%X, size: 0x%X", tile, MapSize());
+	dbg_assert(height <= MAX_TILE_HEIGHT);
 	_m[tile].height = height;
 }
 
@@ -93,9 +96,12 @@ static inline uint TilePixelHeightOutsideMap(int x, int y)
  * @return The tiletype of the tile
  * @pre tile < MapSize()
  */
-static inline TileType GetTileType(TileIndex tile)
+debug_inline static TileType GetTileType(TileIndex tile)
 {
-	assert(tile < MapSize());
+	/* this method is inlined in many places and is performance-critical, drop assertion in non-debug builds */
+#ifdef _DEBUG
+	dbg_assert_msg(tile < MapSize(), "tile: 0x%X, size: 0x%X", tile, MapSize());
+#endif
 	return (TileType)GB(_m[tile].type, 4, 4);
 }
 
@@ -108,7 +114,7 @@ static inline TileType GetTileType(TileIndex tile)
  */
 static inline bool IsInnerTile(TileIndex tile)
 {
-	assert(tile < MapSize());
+	dbg_assert_msg(tile < MapSize(), "tile: 0x%X, size: 0x%X", tile, MapSize());
 
 	uint x = TileX(tile);
 	uint y = TileY(tile);
@@ -130,11 +136,11 @@ static inline bool IsInnerTile(TileIndex tile)
  */
 static inline void SetTileType(TileIndex tile, TileType type)
 {
-	assert(tile < MapSize());
+	dbg_assert_msg(tile < MapSize(), "tile: 0x%X, size: 0x%X, type: %d", tile, MapSize(), type);
 	/* VOID tiles (and no others) are exactly allowed at the lower left and right
 	 * edges of the map. If _settings_game.construction.freeform_edges is true,
 	 * the upper edges of the map are also VOID tiles. */
-	assert(IsInnerTile(tile) == (type != MP_VOID));
+	dbg_assert_msg(IsInnerTile(tile) == (type != MP_VOID), "tile: 0x%X (%d), type: %d", tile, IsInnerTile(tile), type);
 	SB(_m[tile].type, 4, 4, type);
 }
 
@@ -147,7 +153,7 @@ static inline void SetTileType(TileIndex tile, TileType type)
  * @param type The type to check against
  * @return true If the type matches against the type of the tile
  */
-static inline bool IsTileType(TileIndex tile, TileType type)
+debug_inline static bool IsTileType(TileIndex tile, TileType type)
 {
 	return GetTileType(tile) == type;
 }
@@ -177,9 +183,8 @@ static inline bool IsValidTile(TileIndex tile)
  */
 static inline Owner GetTileOwner(TileIndex tile)
 {
-	assert(IsValidTile(tile));
-	assert(!IsTileType(tile, MP_HOUSE));
-	assert(!IsTileType(tile, MP_INDUSTRY));
+	dbg_assert_msg(IsValidTile(tile), "tile: 0x%X, size: 0x%X", tile, MapSize());
+	dbg_assert_msg(!IsTileType(tile, MP_HOUSE) && !IsTileType(tile, MP_INDUSTRY), "tile: 0x%X (%d)", tile, GetTileType(tile));
 
 	return (Owner)GB(_m[tile].m1, 0, 5);
 }
@@ -197,9 +202,8 @@ static inline Owner GetTileOwner(TileIndex tile)
  */
 static inline void SetTileOwner(TileIndex tile, Owner owner)
 {
-	assert(IsValidTile(tile));
-	assert(!IsTileType(tile, MP_HOUSE));
-	assert(!IsTileType(tile, MP_INDUSTRY));
+	dbg_assert_msg(IsValidTile(tile), "tile: 0x%X, size: 0x%X, owner: %d", tile, MapSize(), owner);
+	dbg_assert_msg(!IsTileType(tile, MP_HOUSE) && !IsTileType(tile, MP_INDUSTRY), "tile: 0x%X (%d), owner: %d", tile, GetTileType(tile), owner);
 
 	SB(_m[tile].m1, 0, 5, owner);
 }
@@ -224,8 +228,8 @@ static inline bool IsTileOwner(TileIndex tile, Owner owner)
  */
 static inline void SetTropicZone(TileIndex tile, TropicZone type)
 {
-	assert(tile < MapSize());
-	assert(!IsTileType(tile, MP_VOID) || type == TROPICZONE_NORMAL);
+	dbg_assert_msg(tile < MapSize(), "tile: 0x%X, size: 0x%X, type: %d", tile, MapSize(), type);
+	dbg_assert_msg(!IsTileType(tile, MP_VOID) || type == TROPICZONE_NORMAL, "tile: 0x%X (%d), type: %d", tile, GetTileType(tile), type);
 	SB(_m[tile].type, 0, 2, type);
 }
 
@@ -237,19 +241,19 @@ static inline void SetTropicZone(TileIndex tile, TropicZone type)
  */
 static inline TropicZone GetTropicZone(TileIndex tile)
 {
-	assert(tile < MapSize());
+	dbg_assert_msg(tile < MapSize(), "tile: 0x%X, size: 0x%X", tile, MapSize());
 	return (TropicZone)GB(_m[tile].type, 0, 2);
 }
 
 /**
  * Get the current animation frame
  * @param t the tile
- * @pre IsTileType(t, MP_HOUSE) || IsTileType(t, MP_OBJECT) || IsTileType(t, MP_INDUSTRY) ||IsTileType(t, MP_STATION)
+ * @pre IsTileType(t, MP_HOUSE) || IsTileType(t, MP_OBJECT) || IsTileType(t, MP_INDUSTRY) || IsTileType(t, MP_STATION)
  * @return frame number
  */
 static inline byte GetAnimationFrame(TileIndex t)
 {
-	assert(IsTileType(t, MP_HOUSE) || IsTileType(t, MP_OBJECT) || IsTileType(t, MP_INDUSTRY) ||IsTileType(t, MP_STATION));
+	dbg_assert_msg(IsTileType(t, MP_HOUSE) || IsTileType(t, MP_OBJECT) || IsTileType(t, MP_INDUSTRY) || IsTileType(t, MP_STATION), "tile: 0x%X (%d)", t, GetTileType(t));
 	return _me[t].m7;
 }
 
@@ -257,11 +261,11 @@ static inline byte GetAnimationFrame(TileIndex t)
  * Set a new animation frame
  * @param t the tile
  * @param frame the new frame number
- * @pre IsTileType(t, MP_HOUSE) || IsTileType(t, MP_OBJECT) || IsTileType(t, MP_INDUSTRY) ||IsTileType(t, MP_STATION)
+ * @pre IsTileType(t, MP_HOUSE) || IsTileType(t, MP_OBJECT) || IsTileType(t, MP_INDUSTRY) || IsTileType(t, MP_STATION)
  */
 static inline void SetAnimationFrame(TileIndex t, byte frame)
 {
-	assert(IsTileType(t, MP_HOUSE) || IsTileType(t, MP_OBJECT) || IsTileType(t, MP_INDUSTRY) ||IsTileType(t, MP_STATION));
+	dbg_assert_msg(IsTileType(t, MP_HOUSE) || IsTileType(t, MP_OBJECT) || IsTileType(t, MP_INDUSTRY) || IsTileType(t, MP_STATION), "tile: 0x%X (%d)", t, GetTileType(t));
 	_me[t].m7 = frame;
 }
 

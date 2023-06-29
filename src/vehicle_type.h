@@ -61,25 +61,57 @@ enum VehiclePathFinders {
 	VPF_YAPF = 2, ///< Yet Another PathFinder
 };
 
-/** Flags for goto depot commands. */
-enum class DepotCommand : byte {
-	None         = 0,         ///< No special flags.
-	Service      = (1U << 0), ///< The vehicle will leave the depot right after arrival (service only)
-	MassSend     = (1U << 1), ///< Tells that it's a mass send to depot command (type in VLW flag)
-	DontCancel   = (1U << 2), ///< Don't cancel current goto depot command if any
-	LocateHangar = (1U << 3), ///< Find another airport if the target one lacks a hangar
+/** Flags to add to p1 for goto depot commands. */
+enum DepotCommand {
+	DEPOT_SELL          = (1U << 25), ///< Go to depot and sell order
+	DEPOT_CANCEL        = (1U << 26), ///< Cancel depot/service order
+	DEPOT_SPECIFIC      = (1U << 27), ///< Send vehicle to specific depot
+	DEPOT_SERVICE       = (1U << 28), ///< The vehicle will leave the depot right after arrival (service only)
+	DEPOT_MASS_SEND     = (1U << 29), ///< Tells that it's a mass send to depot command (type in VLW flag)
+	DEPOT_DONT_CANCEL   = (1U << 30), ///< Don't cancel current goto depot command if any
+	DEPOT_LOCATE_HANGAR = (1U << 31), ///< Find another airport if the target one lacks a hangar
+	DEPOT_COMMAND_MASK  = 0x7FU << 25,
 };
-DECLARE_ENUM_AS_BIT_SET(DepotCommand)
 
-static const uint MAX_LENGTH_VEHICLE_NAME_CHARS = 32; ///< The maximum length of a vehicle name in characters including '\0'
+static const uint MAX_LENGTH_VEHICLE_NAME_CHARS = 128; ///< The maximum length of a vehicle name in characters including '\0'
 
 /** The length of a vehicle in tile units. */
 static const uint VEHICLE_LENGTH = 8;
+
+/**
+ * The different types of breakdowns
+ *
+ * Aircraft have totally different breakdowns, so we use aliases to make things clearer
+ */
+enum BreakdownType {
+	BREAKDOWN_CRITICAL  = 0, ///< Old style breakdown (black smoke)
+	BREAKDOWN_EM_STOP   = 1, ///< Emergency stop
+	BREAKDOWN_LOW_SPEED = 2, ///< Lower max speed
+	BREAKDOWN_LOW_POWER = 3, ///< Power reduction
+	BREAKDOWN_RV_CRASH  = 4, ///< Train hit road vehicle
+	BREAKDOWN_BRAKE_OVERHEAT = 5, ///< Train brakes overheated due to excessive slope or speed change
+
+	BREAKDOWN_AIRCRAFT_SPEED      = BREAKDOWN_CRITICAL,  ///< Lower speed until the next airport
+	BREAKDOWN_AIRCRAFT_DEPOT      = BREAKDOWN_EM_STOP,   ///< We have to visit a depot at the next airport
+	BREAKDOWN_AIRCRAFT_EM_LANDING = BREAKDOWN_LOW_SPEED, ///< Emergency landing at the closest airport (with hangar!) we can find
+};
 
 /** Vehicle acceleration models. */
 enum AccelerationModel {
 	AM_ORIGINAL,
 	AM_REALISTIC,
+};
+
+/** Train braking models. */
+enum TrainBrakingModel {
+	TBM_ORIGINAL,
+	TBM_REALISTIC,
+};
+
+/** Train realistic braking aspect limited mode. */
+enum TrainRealisticBrakingAspectLimitedMode {
+	TRBALM_OFF,
+	TRBALM_ON,
 };
 
 /** Visualisation contexts of vehicles and engines. */
@@ -91,5 +123,7 @@ enum EngineImageType {
 	EIT_PURCHASE   = 0x20,  ///< Vehicle drawn in purchase list, autoreplace gui, ...
 	EIT_PREVIEW    = 0x21,  ///< Vehicle drawn in preview window, news, ...
 };
+
+static const uint32 VEHICLE_NAME_NO_GROUP = 0x80000000; ///< String constant to not include the vehicle's group name, if using the long name format
 
 #endif /* VEHICLE_TYPE_H */

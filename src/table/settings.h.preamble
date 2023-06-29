@@ -43,7 +43,9 @@ static size_t ConvertLandscape(const char *value);
  * These are actually normal numbers, only bitmasked. In MMANY several bits can
  * be set, in the other only one.
  * If nothing fits you, you can use the GENERAL macros, but it exposes the
- * internal structure somewhat so it needs a little looking.
+ * internal structure somewhat so it needs a little looking. There are _NULL()
+ * macros as well, these fill up space so you can add more settings there (in
+ * place) and you DON'T have to increase the savegame version.
  *
  * While reading values from openttd.cfg, some values may not be converted
  * properly, for any kind of reasons.  In order to allow a process of self-cleaning
@@ -52,60 +54,80 @@ static size_t ConvertLandscape(const char *value);
  * on the appropriate macro.
  */
 
-#define NSD(type, ...) SettingVariant { std::in_place_type<type##SettingDesc>, __VA_ARGS__ }
+#define NSD(type, ...) std::unique_ptr<const SettingDesc>(new type##SettingDesc(__VA_ARGS__))
 
 /* Macros for various objects to go in the configuration file.
  * This section is for global variables */
-#define SDTG_VAR(name, type, flags, var, def, min, max, interval, str, strhelp, strval, pre_check, post_callback, from, to, cat, extra, startup)\
-	NSD(Int, SLEG_GENERAL(name, SL_VAR, var, type, 1, from, to, extra), flags, startup, def, min, max, interval, str, strhelp, strval, cat, pre_check, post_callback)
+#define SDTG_VAR(name, type, flags, var, def, min, max, interval, str, strhelp, strval, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+	NSD(Int, SLEG_GENERAL_X(SL_VAR, var, type, 1, from, to, extver), name, flags, guiproc, startup, patxname, def, min, max, interval, str, strhelp, strval, cat, pre_check, post_callback, nullptr)
 
-#define SDTG_BOOL(name, flags, var, def, str, strhelp, strval, pre_check, post_callback, from, to, cat, extra, startup)\
-	NSD(Bool, SLEG_GENERAL(name, SL_VAR, var, SLE_BOOL, 1, from, to, extra), flags, startup, def, str, strhelp, strval, cat, pre_check, post_callback)
+#define SDTG_ENUM(name, type, flags, var, def, str, strhelp, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname, enumlist)\
+	NSD(Int, SLEG_GENERAL_X(SL_VAR, var, type, 1, from, to, extver), name, flags | SF_ENUM, guiproc, startup, patxname, def, 0, 0, 0, str, strhelp, STR_NULL, cat, pre_check, post_callback, enumlist)
 
-#define SDTG_LIST(name, type, flags, var, def, length, from, to, cat, extra, startup)\
-	NSD(List, SLEG_GENERAL(name, SL_ARR, var, type, length, from, to, extra),flags, startup, def)
+#define SDTG_BOOL(name, flags, var, def, str, strhelp, strval, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+	NSD(Bool, SLEG_GENERAL_X(SL_VAR, var, SLE_BOOL, 1, from, to, extver), name, flags, guiproc, startup, patxname, def, str, strhelp, strval, cat, pre_check, post_callback)
 
-#define SDTG_SSTR(name, type, flags, var, def, max_length, pre_check, post_callback, from, to, cat, extra, startup)\
-	NSD(String, SLEG_GENERAL(name, SL_STDSTR, var, type, sizeof(var), from, to, extra), flags, startup, def, max_length, pre_check, post_callback)
+#define SDTG_LIST(name, type, flags, var, def, length, from, to, extver, cat, guiproc, startup, patxname)\
+	NSD(List, SLEG_GENERAL_X(SL_ARR, var, type, length, from, to, extver), name, flags, guiproc, startup, patxname, def)
 
-#define SDTG_OMANY(name, type, flags, var, def, max, full, str, strhelp, strval, pre_check, post_callback, from, to, cat, extra, startup)\
-	NSD(OneOfMany, SLEG_GENERAL(name, SL_VAR, var, type, 1, from, to, extra), flags, startup, def, max, str, strhelp, strval, cat, pre_check, post_callback, full, nullptr)
+#define SDTG_SSTR(name, type, flags, var, def, max_length, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+	NSD(String, SLEG_GENERAL_X(SL_STDSTR, var, type, sizeof(var), from, to, extver), name, flags, guiproc, startup, patxname, def, max_length, pre_check, post_callback)
 
-#define SDTG_MMANY(name, type, flags, var, def, full, str, strhelp, strval, pre_check, post_callback, from, to, cat, extra, startup)\
-	NSD(ManyOfMany, SLEG_GENERAL(name, SL_VAR, var, type, 1, from, to, extra), flags, startup, def, str, strhelp, strval, cat, pre_check, post_callback, full, nullptr)
+#define SDTG_OMANY(name, type, flags, var, def, max, full, str, strhelp, strval, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+	NSD(OneOfMany, SLEG_GENERAL_X(SL_VAR, var, type, 1, from, to, extver), name, flags, guiproc, startup, patxname, def, max, str, strhelp, strval, cat, pre_check, post_callback, full, nullptr)
+
+#define SDTG_MMANY(name, type, flags, var, def, full, str, strhelp, strval, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+	NSD(ManyOfMany, SLEG_GENERAL_X(SL_VAR, var, type, 1, from, to, extver), name, flags, guiproc, startup, patxname, def, str, strhelp, strval, cat, pre_check, post_callback, full, nullptr)
+
+#define SDTG_NULL(length, from, to, extver)\
+	NSD(Null, SLE_CONDNULL_X(length, from, to, extver))
 
 /* Macros for various objects to go in the configuration file.
  * This section is for structures where their various members are saved */
-#define SDT_VAR(base, var, type, flags, def, min, max, interval, str, strhelp, strval, pre_check, post_callback, from, to, cat, extra, startup)\
-	NSD(Int, SLE_GENERAL(SL_VAR, base, var, type, 1, from, to, extra), flags, startup, def, min, max, interval, str, strhelp, strval, cat, pre_check, post_callback)
+#define SDT_VAR(base, var, type, flags, def, min, max, interval, str, strhelp, strval, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+	NSD(Int, SLE_GENERAL_X(SL_VAR, base, var, type, 1, from, to, extver), #var, flags, guiproc, startup, patxname, def, min, max, interval, str, strhelp, strval, cat, pre_check, post_callback, nullptr)
 
-#define SDT_BOOL(base, var, flags, def, str, strhelp, strval, pre_check, post_callback, from, to, cat, extra, startup)\
-	NSD(Bool, SLE_GENERAL(SL_VAR, base, var, SLE_BOOL, 1, from, to, extra), flags, startup, def, str, strhelp, strval, cat, pre_check, post_callback)
+#define SDT_ENUM(base, var, type, flags, def, str, strhelp, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname, enumlist)\
+	NSD(Int, SLE_GENERAL_X(SL_VAR, base, var, type, 1, from, to, extver), #var, flags | SF_ENUM, guiproc, startup, patxname, def, 0, 0, 0, str, strhelp, STR_NULL, cat, pre_check, post_callback, enumlist)
 
-#define SDT_LIST(base, var, type, flags, def, from, to, cat, extra, startup)\
-	NSD(List, SLE_GENERAL(SL_ARR, base, var, type, lengthof(((base*)8)->var), from, to, extra), flags, startup, def)
+#define SDT_BOOL(base, var, flags, def, str, strhelp, strval, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+	NSD(Bool, SLE_GENERAL_X(SL_VAR, base, var, SLE_BOOL, 1, from, to, extver), #var, flags, guiproc, startup, patxname, def, str, strhelp, strval, cat, pre_check, post_callback)
 
-#define SDT_SSTR(base, var, type, flags, def, pre_check, post_callback, from, to, cat, extra, startup)\
-	NSD(String, SLE_GENERAL(SL_STDSTR, base, var, type, sizeof(((base*)8)->var), from, to, extra), flags, startup, def, 0, pre_check, post_callback)
+#define SDT_LIST(base, var, type, flags, def, from, to, extver, cat, guiproc, startup, patxname)\
+	NSD(List, SLE_GENERAL_X(SL_ARR, base, var, type, lengthof(((base*)8)->var), from, to, extver), #var, flags, guiproc, startup, patxname, def)
 
-#define SDT_OMANY(base, var, type, flags, def, max, full, str, strhelp, strval, pre_check, post_callback, from, to, load, cat, extra, startup)\
-	NSD(OneOfMany, SLE_GENERAL(SL_VAR, base, var, type, 1, from, to, extra), flags, startup, def, max, str, strhelp, strval, cat, pre_check, post_callback, full, load)
+#define SDT_SSTR(base, var, type, flags, def, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+	NSD(String, SLE_GENERAL_X(SL_STDSTR, base, var, type, sizeof(((base*)8)->var), from, to, extver), #var, flags, guiproc, startup, patxname, def, 0, pre_check, post_callback)
 
-#define SDT_MMANY(base, var, type, flags, def, full, str, pre_check, post_callback, strhelp, strval, from, to, cat, extra, startup)\
-	NSD(ManyOfMany, SLE_GENERAL(SL_VAR, base, var, type, 1, from, to, extra), flags, startup, def, str, strhelp, strval, cat, pre_check, post_callback, full, nullptr)
+#define SDT_OMANY(base, var, type, flags, def, max, full, str, strhelp, strval, pre_check, post_callback, from, to, extver, load, cat, guiproc, startup, patxname)\
+	NSD(OneOfMany, SLE_GENERAL_X(SL_VAR, base, var, type, 1, from, to, extver), #var, flags, guiproc, startup, patxname, def, max, str, strhelp, strval, cat, pre_check, post_callback, full, load)
 
+#define SDT_MMANY(base, var, type, flags, def, full, str, pre_check, post_callback, strhelp, strval, from, to, extver, cat, guiproc, startup, patxname)\
+	NSD(ManyOfMany, SLE_GENERAL_X(SL_VAR, base, var, type, 1, from, to, extver), #var, flags, guiproc, startup, patxname, def, str, strhelp, strval, cat, pre_check, post_callback, full, nullptr)
 
-#define SDTC_VAR(var, type, flags, def, min, max, interval, str, strhelp, strval, pre_check, post_callback, from, to, cat, extra, startup)\
-	SDTG_VAR(#var, type, flags, _settings_client.var, def, min, max, interval, str, strhelp, strval, pre_check, post_callback, from, to, cat, extra, startup)
+#define SDT_NULL(length, from, to, extver)\
+	NSD(Null, SLE_CONDNULL_X(length, from, to, extver))
 
-#define SDTC_BOOL(var, flags, def, str, strhelp, strval, pre_check, post_callback, from, to, cat, extra, startup)\
-	SDTG_BOOL(#var, flags, _settings_client.var, def, str, strhelp, strval, pre_check, post_callback, from, to, cat, extra, startup)
+#define SDT_NAMED_NULL(name, length, from, to, extver, patxname)\
+	NSD(Null, SLE_CONDNULL_X(length, from, to, extver), name, patxname)
 
-#define SDTC_LIST(var, type, flags, def, from, to, cat, extra, startup)\
-	SDTG_LIST(#var, type, flags, _settings_client.var, def, lengthof(_settings_client.var), from, to, cat, extra, startup)
+#define SDTC_VAR(var, type, flags, def, min, max, interval, str, strhelp, strval, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+	SDTG_VAR(#var, type, flags, _settings_client.var, def, min, max, interval, str, strhelp, strval, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)
 
-#define SDTC_SSTR(var, type, flags, def, max_length, pre_check, post_callback, from, to, cat, extra, startup)\
-	SDTG_SSTR(#var, type, flags, _settings_client.var, def, max_length, pre_check, post_callback, from, to, cat, extra, startup)\
+#define SDTC_ENUM(var, type, flags, def, str, strhelp, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname, enumlist)\
+	SDTG_ENUM(#var, type, flags, _settings_client.var, def, str, strhelp, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname, enumlist)
 
-#define SDTC_OMANY(var, type, flags, def, max, full, str, strhelp, strval, pre_check, post_callback, from, to, cat, extra, startup)\
-	SDTG_OMANY(#var, type, flags, _settings_client.var, def, max, full, str, strhelp, strval, pre_check, post_callback, from, to, cat, extra, startup)
+#define SDTC_BOOL(var, flags, def, str, strhelp, strval, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+	SDTG_BOOL(#var, flags, _settings_client.var, def, str, strhelp, strval, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)
+
+#define SDTC_LIST(var, type, flags, def, from, to, extver, cat, guiproc, startup, patxname)\
+	SDTG_LIST(#var, type, flags, _settings_client.var, def, lengthof(_settings_client.var), from, to, extver, cat, guiproc, startup, patxname)
+
+#define SDTC_SSTR(var, type, flags, def, max_length, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+	SDTG_SSTR(#var, type, flags, _settings_client.var, def, max_length, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+
+#define SDTC_OMANY(var, type, flags, def, max, full, str, strhelp, strval, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)\
+	SDTG_OMANY(#var, type, flags, _settings_client.var, def, max, full, str, strhelp, strval, pre_check, post_callback, from, to, extver, cat, guiproc, startup, patxname)
+
+#define SDT_XREF(from, to, extver, xref, xrefcvt)\
+	NSD(Xref, SLE_CONDNULL_X(0, from, to, extver), SettingsXref(xref, xrefcvt))

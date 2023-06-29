@@ -12,16 +12,16 @@
 
 #include "../cargo_type.h"
 #include "../vehicle_base.h"
+#include "../3rdparty/cpp-btree/btree_set.h"
 #include <vector>
 #include <map>
-#include <set>
 
 /**
  * Utility to refresh links a consist will visit.
  */
 class LinkRefresher {
 public:
-	static void Run(Vehicle *v, bool allow_merge = true, bool is_full_loading = false);
+	static void Run(Vehicle *v, bool allow_merge = true, bool is_full_loading = false, CargoTypes cargo_mask = ALL_CARGOTYPES);
 
 protected:
 	/**
@@ -34,6 +34,7 @@ protected:
 		WAS_REFIT,    ///< Consist was refit since the last stop where it could interact with cargo.
 		RESET_REFIT,  ///< Consist had a chance to load since the last refit and the refit capacities can be reset.
 		IN_AUTOREFIT, ///< Currently doing an autorefit loop. Ignore the first autorefit order.
+		AIRCRAFT,     ///< Vehicle is an aircraft.
 	};
 
 	/**
@@ -60,12 +61,13 @@ protected:
 		OrderID from;  ///< Last order where vehicle could interact with cargo or absolute first order.
 		OrderID to;    ///< Next order to be processed.
 		CargoID cargo; ///< Cargo the consist is probably carrying or CT_INVALID if unknown.
+		uint8 flags;   ///< Flags, for branches
 
 		/**
 		 * Default constructor should not be called but has to be visible for
 		 * usage in std::set.
 		 */
-		Hop() {NOT_REACHED();}
+		Hop() {}
 
 		/**
 		 * Real constructor, only use this one.
@@ -73,12 +75,14 @@ protected:
 		 * @param to Second order of the hop.
 		 * @param cargo Cargo the consist is probably carrying when passing the hop.
 		 */
-		Hop(OrderID from, OrderID to, CargoID cargo) : from(from), to(to), cargo(cargo) {}
-		bool operator<(const Hop &other) const;
+		Hop(OrderID from, OrderID to, CargoID cargo, uint8 flags = 0) : from(from), to(to), cargo(cargo), flags(flags) {}
+		bool operator<(const Hop &other) const { return std::tie(this->from, this->to, this->cargo, this->flags) < std::tie(other.from, other.to, other.cargo, other.flags); }
+		bool operator==(const Hop &other) const { return std::tie(this->from, this->to, this->cargo, this->flags) == std::tie(other.from, other.to, other.cargo, other.flags); }
+		bool operator!=(const Hop &other) const { return !(*this == other); }
 	};
 
 	typedef std::vector<RefitDesc> RefitList;
-	typedef std::set<Hop> HopSet;
+	typedef btree::btree_set<Hop> HopSet;
 
 	Vehicle *vehicle;           ///< Vehicle for which the links should be refreshed.
 	uint capacities[NUM_CARGO]; ///< Current added capacities per cargo ID in the consist.
@@ -87,12 +91,13 @@ protected:
 	CargoID cargo;              ///< Cargo given in last refit order.
 	bool allow_merge;           ///< If the refresher is allowed to merge or extend link graphs.
 	bool is_full_loading;       ///< If the vehicle is full loading.
+	CargoTypes cargo_mask;      ///< Bit-mask of cargo IDs to refresh.
 
-	LinkRefresher(Vehicle *v, HopSet *seen_hops, bool allow_merge, bool is_full_loading);
+	LinkRefresher(Vehicle *v, HopSet *seen_hops, bool allow_merge, bool is_full_loading, CargoTypes cargo_mask);
 
 	bool HandleRefit(CargoID refit_cargo);
 	void ResetRefit();
-	void RefreshStats(const Order *cur, const Order *next);
+	void RefreshStats(const Order *cur, const Order *next, uint8 flags);
 	const Order *PredictNextOrder(const Order *cur, const Order *next, uint8 flags, uint num_hops = 0);
 
 	void RefreshLinks(const Order *cur, const Order *next, uint8 flags, uint num_hops = 0);

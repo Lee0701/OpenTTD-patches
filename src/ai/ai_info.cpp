@@ -25,19 +25,19 @@
  */
 static bool CheckAPIVersion(const char *api_version)
 {
-	static const std::set<std::string> versions = { "0.7", "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "1.11", "12", "13" };
+	static const std::set<std::string> versions = { "0.7", "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "1.11", "12", "13", "14" };
 	return versions.find(api_version) != versions.end();
 }
 
 #if defined(_WIN32)
 #undef GetClassName
 #endif /* _WIN32 */
-template <> const char *GetClassName<AIInfo, ST_AI>() { return "AIInfo"; }
+template <> const char *GetClassName<AIInfo, ScriptType::AI>() { return "AIInfo"; }
 
 /* static */ void AIInfo::RegisterAPI(Squirrel *engine)
 {
 	/* Create the AIInfo class, and add the RegisterAI function */
-	DefSQClass<AIInfo, ST_AI> SQAIInfo("AIInfo");
+	DefSQClass<AIInfo, ScriptType::AI> SQAIInfo("AIInfo");
 	SQAIInfo.PreRegister(engine);
 	SQAIInfo.AddConstructor<void (AIInfo::*)(), 1>(engine, "x");
 	SQAIInfo.DefSQAdvancedMethod(engine, &AIInfo::AddSetting, "AddSetting");
@@ -69,11 +69,6 @@ template <> const char *GetClassName<AIInfo, ST_AI>() { return "AIInfo"; }
 	SQInteger res = ScriptInfo::Constructor(vm, info);
 	if (res != 0) return res;
 
-	ScriptConfigItem config = _start_date_config;
-	config.name = stredup(config.name);
-	config.description = stredup(config.description);
-	info->config_list.push_front(config);
-
 	if (info->engine->MethodExists(*info->SQ_instance, "MinVersionToLoad")) {
 		if (!info->engine->CallIntegerMethod(*info->SQ_instance, "MinVersionToLoad", &info->min_loadable_version, MAX_GET_OPS)) return SQ_ERROR;
 	} else {
@@ -89,7 +84,7 @@ template <> const char *GetClassName<AIInfo, ST_AI>() { return "AIInfo"; }
 	if (info->engine->MethodExists(*info->SQ_instance, "GetAPIVersion")) {
 		if (!info->engine->CallStringMethodStrdup(*info->SQ_instance, "GetAPIVersion", &info->api_version, MAX_GET_OPS)) return SQ_ERROR;
 		if (!CheckAPIVersion(info->api_version)) {
-			Debug(script, 1, "Loading info.nut from ({}.{}): GetAPIVersion returned invalid version", info->GetName(), info->GetVersion());
+			DEBUG(script, 1, "Loading info.nut from (%s.%d): GetAPIVersion returned invalid version", info->GetName(), info->GetVersion());
 			return SQ_ERROR;
 		}
 	} else {

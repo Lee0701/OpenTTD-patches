@@ -20,15 +20,227 @@
 #include "../core/geometry_func.hpp"
 #include "../fileio_func.h"
 #include "../framerate_type.h"
-#include "../window_func.h"
+#include "../scope.h"
 #include "sdl2_v.h"
 #include <SDL.h>
+#include <algorithm>
 #ifdef __EMSCRIPTEN__
 #	include <emscripten.h>
 #	include <emscripten/html5.h>
 #endif
 
+#if defined(WITH_FCITX)
+#include <fcitx/frontend.h>
+#include <dbus/dbus.h>
+#include <SDL_syswm.h>
+#include <X11/Xlib.h>
+#include <X11/keysym.h>
+#include <X11/Xutil.h>
+#include <unistd.h>
+#endif
+
 #include "../safeguards.h"
+
+static std::string _editing_text;
+
+static void SetTextInputRect();
+
+bool IsWindowFocused();
+Point GetFocusedWindowCaret();
+Point GetFocusedWindowTopLeft();
+bool FocusedWindowIsConsole();
+bool EditBoxInGlobalFocus();
+void InputLoop();
+
+#if defined(WITH_FCITX)
+static SDL_Window *_fcitx_sdl_window;
+static bool _fcitx_mode = false;
+static char _fcitx_service_name[64];
+static char _fcitx_ic_name[64];
+static DBusConnection *_fcitx_dbus_session_conn = nullptr;
+static bool _suppress_text_event = false;
+
+static void FcitxICMethod(const char *method)
+{
+	DBusMessage *msg = dbus_message_new_method_call(_fcitx_service_name, _fcitx_ic_name, "org.fcitx.Fcitx.InputContext", method);
+	if (!msg) return;
+	dbus_connection_send(_fcitx_dbus_session_conn, msg, NULL);
+	dbus_connection_flush(_fcitx_dbus_session_conn);
+	dbus_message_unref(msg);
+}
+
+static int GetXDisplayNum()
+{
+	const char *display = getenv("DISPLAY");
+	if (!display) return 0;
+	const char *colon = strchr(display, ':');
+	if (!colon) return 0;
+	return atoi(colon + 1);
+}
+
+static void FcitxDeinit() {
+	if (_fcitx_mode) {
+		FcitxICMethod("DestroyIC");
+		_fcitx_mode = false;
+	}
+	if (_fcitx_dbus_session_conn) {
+		dbus_connection_close(_fcitx_dbus_session_conn);
+		_fcitx_dbus_session_conn = nullptr;
+	}
+}
+
+static DBusHandlerResult FcitxDBusMessageFilter(DBusConnection *connection, DBusMessage *message, void *user_data)
+{
+	if (dbus_message_is_signal(message, "org.fcitx.Fcitx.InputContext", "CommitString")) {
+		DBusMessageIter iter;
+		const char *text = nullptr;
+		dbus_message_iter_init(message, &iter);
+		dbus_message_iter_get_basic(&iter, &text);
+
+		if (text != nullptr && EditBoxInGlobalFocus()) {
+			HandleTextInput(nullptr, true);
+			HandleTextInput(text);
+			SetTextInputRect();
+		}
+
+		return DBUS_HANDLER_RESULT_HANDLED;
+	}
+
+	if (dbus_message_is_signal(message, "org.fcitx.Fcitx.InputContext", "UpdatePreedit")) {
+		const char *text = nullptr;
+		int32 cursor;
+		if (!dbus_message_get_args(message, nullptr, DBUS_TYPE_STRING, &text, DBUS_TYPE_INT32, &cursor, DBUS_TYPE_INVALID)) return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+
+		if (text != nullptr && EditBoxInGlobalFocus()) {
+			HandleTextInput(text, true, text + std::min<uint>(cursor, strlen(text)));
+		}
+		return DBUS_HANDLER_RESULT_HANDLED;
+	}
+	return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+}
+
+static void FcitxInit()
+{
+	DBusError err;
+	dbus_error_init(&err);
+	_fcitx_dbus_session_conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);
+	if (dbus_error_is_set(&err)) {
+		dbus_error_free(&err);
+		return;
+	}
+	dbus_connection_set_exit_on_disconnect(_fcitx_dbus_session_conn, false);
+	seprintf(_fcitx_service_name, lastof(_fcitx_service_name), "org.fcitx.Fcitx-%d", GetXDisplayNum());
+
+	auto guard = scope_guard([]() {
+		if (!_fcitx_mode) FcitxDeinit();
+	});
+
+	int pid = getpid();
+	int id = -1;
+	uint32 enable, hk1sym, hk1state, hk2sym, hk2state;
+	DBusMessage *msg = dbus_message_new_method_call(_fcitx_service_name, "/inputmethod", "org.fcitx.Fcitx.InputMethod", "CreateICv3");
+	if (!msg) return;
+	auto guard1 = scope_guard([&]() {
+		dbus_message_unref(msg);
+	});
+	const char *name = "OpenTTD";
+	if (!dbus_message_append_args(msg, DBUS_TYPE_STRING, &name, DBUS_TYPE_INT32, &pid, DBUS_TYPE_INVALID)) return;
+	DBusMessage *reply = dbus_connection_send_with_reply_and_block(_fcitx_dbus_session_conn, msg, 100, nullptr);
+	if (!reply) return;
+	auto guard2 = scope_guard([&]() {
+		dbus_message_unref(reply);
+	});
+	if (!dbus_message_get_args(reply, nullptr, DBUS_TYPE_INT32, &id, DBUS_TYPE_BOOLEAN, &enable, DBUS_TYPE_UINT32, &hk1sym, DBUS_TYPE_UINT32, &hk1state, DBUS_TYPE_UINT32, &hk2sym, DBUS_TYPE_UINT32, &hk2state, DBUS_TYPE_INVALID)) return;
+
+	if (id < 0) return;
+
+	seprintf(_fcitx_ic_name, lastof(_fcitx_ic_name), "/inputcontext_%d", id);
+	dbus_bus_add_match(_fcitx_dbus_session_conn, "type='signal', interface='org.fcitx.Fcitx.InputContext'", nullptr);
+	dbus_connection_add_filter(_fcitx_dbus_session_conn, &FcitxDBusMessageFilter, nullptr, nullptr);
+	dbus_connection_flush(_fcitx_dbus_session_conn);
+
+	uint32 caps = CAPACITY_PREEDIT;
+	DBusMessage *msg2 = dbus_message_new_method_call(_fcitx_service_name, _fcitx_ic_name, "org.fcitx.Fcitx.InputContext", "SetCapacity");
+	if (!msg2) return;
+	auto guard3 = scope_guard([&]() {
+		dbus_message_unref(msg2);
+	});
+	if (!dbus_message_append_args(msg2, DBUS_TYPE_UINT32, &caps, DBUS_TYPE_INVALID)) return;
+	dbus_connection_send(_fcitx_dbus_session_conn, msg2, NULL);
+	dbus_connection_flush(_fcitx_dbus_session_conn);
+
+	setenv("SDL_IM_MODULE", "N/A", true);
+	setenv("IBUS_ADDRESS", "/dev/null/invalid", true);
+
+	_fcitx_mode = true;
+}
+
+static uint32 _fcitx_last_keycode = 0;
+static uint32 _fcitx_last_keysym = 0;
+static uint16 _last_sdl_key_mod;
+static bool FcitxProcessKey()
+{
+	uint32 fcitx_mods = 0;
+	if (_last_sdl_key_mod & KMOD_SHIFT) fcitx_mods |= FcitxKeyState_Shift;
+	if (_last_sdl_key_mod & KMOD_CAPS)  fcitx_mods |= FcitxKeyState_CapsLock;
+	if (_last_sdl_key_mod & KMOD_CTRL)  fcitx_mods |= FcitxKeyState_Ctrl;
+	if (_last_sdl_key_mod & KMOD_ALT)   fcitx_mods |= FcitxKeyState_Alt;
+	if (_last_sdl_key_mod & KMOD_NUM)   fcitx_mods |= FcitxKeyState_NumLock;
+	if (_last_sdl_key_mod & KMOD_LGUI)  fcitx_mods |= FcitxKeyState_Super;
+	if (_last_sdl_key_mod & KMOD_RGUI)  fcitx_mods |= FcitxKeyState_Meta;
+
+	int type = FCITX_PRESS_KEY;
+	uint32 event_time = 0;
+
+	DBusMessage *msg = dbus_message_new_method_call(_fcitx_service_name, _fcitx_ic_name, "org.fcitx.Fcitx.InputContext", "ProcessKeyEvent");
+	if (!msg) return false;
+	auto guard1 = scope_guard([&]() {
+		dbus_message_unref(msg);
+	});
+	if (!dbus_message_append_args(msg, DBUS_TYPE_UINT32, &_fcitx_last_keysym, DBUS_TYPE_UINT32, &_fcitx_last_keycode, DBUS_TYPE_UINT32, &fcitx_mods,
+			DBUS_TYPE_INT32, &type, DBUS_TYPE_UINT32, &event_time, DBUS_TYPE_INVALID)) return false;
+	DBusMessage *reply = dbus_connection_send_with_reply_and_block(_fcitx_dbus_session_conn, msg, 300, nullptr);
+	if (!reply) return false;
+	auto guard2 = scope_guard([&]() {
+		dbus_message_unref(reply);
+	});
+	uint32 handled = 0;
+	if (!dbus_message_get_args(reply, nullptr, DBUS_TYPE_INT32, &handled, DBUS_TYPE_INVALID)) return false;
+	return handled;
+}
+
+static void FcitxPoll()
+{
+	dbus_connection_read_write(_fcitx_dbus_session_conn, 0);
+	while (dbus_connection_dispatch(_fcitx_dbus_session_conn) == DBUS_DISPATCH_DATA_REMAINS) {}
+}
+
+static void FcitxFocusChange(bool focused)
+{
+	FcitxICMethod(focused ? "FocusIn" : "FocusOut");
+}
+
+static void FcitxSYSWMEVENT(const SDL_SysWMEvent &event)
+{
+	if (_fcitx_last_keycode != 0 || _fcitx_last_keysym != 0) {
+		DEBUG(misc, 0, "Passing pending keypress to Fcitx");
+		FcitxProcessKey();
+	}
+	_fcitx_last_keycode = _fcitx_last_keysym = 0;
+	if (event.msg->subsystem != SDL_SYSWM_X11) return;
+	XEvent &xevent = event.msg->msg.x11.event;
+	if (xevent.type == KeyPress) {
+		char text[8];
+		KeySym keysym = 0;
+		XLookupString(&xevent.xkey, text, lengthof(text), &keysym, nullptr);
+		_fcitx_last_keycode = xevent.xkey.keycode;
+		_fcitx_last_keysym = keysym;
+	}
+}
+#else
+const static bool _fcitx_mode = false;
+const static bool _suppress_text_event = false;
+#endif
 
 void VideoDriver_SDL_Base::MakeDirty(int left, int top, int width, int height)
 {
@@ -38,7 +250,10 @@ void VideoDriver_SDL_Base::MakeDirty(int left, int top, int width, int height)
 
 void VideoDriver_SDL_Base::CheckPaletteAnim()
 {
-	if (!CopyPalette(this->local_palette)) return;
+	if (_cur_palette.count_dirty == 0) return;
+
+	this->local_palette = _cur_palette;
+	_cur_palette.count_dirty = 0;
 	this->MakeDirty(0, 0, _screen.width, _screen.height);
 }
 
@@ -112,7 +327,7 @@ static uint FindStartupDisplay(uint startup_display)
 	for (int display = 0; display < num_displays; ++display) {
 		SDL_Rect r;
 		if (SDL_GetDisplayBounds(display, &r) == 0 && IsInsideBS(mx, r.x, r.w) && IsInsideBS(my, r.y, r.h)) {
-			Debug(driver, 1, "SDL2: Mouse is at ({}, {}), use display {} ({}, {}, {}, {})", mx, my, display, r.x, r.y, r.w, r.h);
+			DEBUG(driver, 1, "SDL2: Mouse is at (%d, %d), use display %d (%d, %d, %d, %d)", mx, my, display, r.x, r.y, r.w, r.h);
 			return display;
 		}
 	}
@@ -124,7 +339,10 @@ void VideoDriver_SDL_Base::ClientSizeChanged(int w, int h, bool force)
 {
 	/* Allocate backing store of the new size. */
 	if (this->AllocateBackingStore(w, h, force)) {
-		CopyPalette(this->local_palette, true);
+		/* Mark all palette colours dirty. */
+		_cur_palette.first_dirty = 0;
+		_cur_palette.count_dirty = 256;
+		this->local_palette = _cur_palette;
 
 		BlitterFactory::GetCurrentBlitter()->PostResize();
 
@@ -156,9 +374,12 @@ bool VideoDriver_SDL_Base::CreateMainWindow(uint w, uint h, uint flags)
 		x, y,
 		w, h,
 		flags);
+#if defined(WITH_FCITX)
+	_fcitx_sdl_window = this->sdl_window;
+#endif
 
 	if (this->sdl_window == nullptr) {
-		Debug(driver, 0, "SDL2: Couldn't allocate a window to draw on: {}", SDL_GetError());
+		DEBUG(driver, 0, "SDL2: Couldn't allocate a window to draw on: %s", SDL_GetError());
 		return false;
 	}
 
@@ -182,7 +403,7 @@ bool VideoDriver_SDL_Base::CreateMainWindow(uint w, uint h, uint flags)
 bool VideoDriver_SDL_Base::CreateMainSurface(uint w, uint h, bool resize)
 {
 	GetAvailableVideoMode(&w, &h);
-	Debug(driver, 1, "SDL2: using mode {}x{}", w, h);
+	DEBUG(driver, 1, "SDL2: using mode %ux%u", w, h);
 
 	if (!this->CreateMainWindow(w, h)) return false;
 	if (resize) SDL_SetWindowSize(this->sdl_window, w, h);
@@ -205,6 +426,55 @@ bool VideoDriver_SDL_Base::ClaimMousePointer()
 	return true;
 }
 
+static void SetTextInputRect()
+{
+	if (!IsWindowFocused()) return;
+
+	SDL_Rect winrect;
+	Point caret = GetFocusedWindowCaret();
+	Point win = GetFocusedWindowTopLeft();
+	winrect.x = win.x + caret.x;
+	winrect.y = win.y + caret.y;
+	winrect.w = 1;
+	winrect.h = FONT_HEIGHT_NORMAL;
+
+#if defined(WITH_FCITX)
+	if (_fcitx_mode) {
+		SDL_SysWMinfo info;
+		SDL_VERSION(&info.version);
+		if (!SDL_GetWindowWMInfo(_fcitx_sdl_window, &info)) {
+			return;
+		}
+		int x = 0;
+		int y = 0;
+		if (info.subsystem == SDL_SYSWM_X11) {
+			Display *x_disp = info.info.x11.display;
+			Window x_win = info.info.x11.window;
+			XWindowAttributes attrib;
+			XGetWindowAttributes(x_disp, x_win, &attrib);
+			Window unused;
+			XTranslateCoordinates(x_disp, x_win, attrib.root, 0, 0, &x, &y, &unused);
+		} else {
+			SDL_GetWindowPosition(_fcitx_sdl_window, &x, &y);
+		}
+		x += winrect.x;
+		y += winrect.y;
+		DBusMessage *msg = dbus_message_new_method_call(_fcitx_service_name, _fcitx_ic_name, "org.fcitx.Fcitx.InputContext", "SetCursorRect");
+		if (!msg) return;
+		auto guard = scope_guard([&]() {
+			dbus_message_unref(msg);
+		});
+		if (!dbus_message_append_args(msg, DBUS_TYPE_INT32, &x, DBUS_TYPE_INT32, &y, DBUS_TYPE_INT32, &winrect.w,
+				DBUS_TYPE_INT32, &winrect.h, DBUS_TYPE_INVALID)) return;
+		dbus_connection_send(_fcitx_dbus_session_conn, msg, NULL);
+		dbus_connection_flush(_fcitx_dbus_session_conn);
+		return;
+	}
+#endif
+
+	SDL_SetTextInputRect(&winrect);
+}
+
 /**
  * This is called to indicate that an edit box has gained focus, text input mode should be enabled.
  */
@@ -214,6 +484,7 @@ void VideoDriver_SDL_Base::EditBoxGainedFocus()
 		SDL_StartTextInput();
 		this->edit_box_focused = true;
 	}
+	SetTextInputRect();
 }
 
 /**
@@ -222,9 +493,17 @@ void VideoDriver_SDL_Base::EditBoxGainedFocus()
 void VideoDriver_SDL_Base::EditBoxLostFocus()
 {
 	if (this->edit_box_focused) {
+		if (_fcitx_mode) {
+#if defined(WITH_FCITX)
+			FcitxICMethod("Reset");
+			FcitxICMethod("CloseIC");
+#endif
+		}
 		SDL_StopTextInput();
 		this->edit_box_focused = false;
 	}
+	/* Clear any marked string from the current edit box. */
+	HandleTextInput(nullptr, true);
 }
 
 std::vector<int> VideoDriver_SDL_Base::GetListOfMonitorRefreshRates()
@@ -237,7 +516,6 @@ std::vector<int> VideoDriver_SDL_Base::GetListOfMonitorRefreshRates()
 	}
 	return rates;
 }
-
 
 struct SDLVkMapping {
 	SDL_Keycode vk_from;
@@ -301,7 +579,8 @@ static const SDLVkMapping _vk_mapping[] = {
 	AS(SDLK_QUOTE,   WKC_SINGLEQUOTE),
 	AS(SDLK_COMMA,   WKC_COMMA),
 	AS(SDLK_MINUS,   WKC_MINUS),
-	AS(SDLK_PERIOD,  WKC_PERIOD)
+	AS(SDLK_PERIOD,  WKC_PERIOD),
+	AS(SDLK_HASH,    WKC_HASH),
 };
 
 static uint ConvertSdlKeyIntoMy(SDL_Keysym *sym, WChar *character)
@@ -366,8 +645,11 @@ static uint ConvertSdlKeycodeIntoMy(SDL_Keycode kc)
 
 bool VideoDriver_SDL_Base::PollEvent()
 {
-	SDL_Event ev;
+#if defined(WITH_FCITX)
+	if (_fcitx_mode) FcitxPoll();
+#endif
 
+	SDL_Event ev;
 	if (!SDL_PollEvent(&ev)) return false;
 
 	switch (ev.type) {
@@ -425,6 +707,20 @@ bool VideoDriver_SDL_Base::PollEvent()
 			break;
 
 		case SDL_KEYDOWN: // Toggle full-screen on ALT + ENTER/F
+#if defined(WITH_FCITX)
+			_suppress_text_event = false;
+			_last_sdl_key_mod = ev.key.keysym.mod;
+			if (_fcitx_mode && EditBoxInGlobalFocus() && !(FocusedWindowIsConsole() &&
+					ev.key.keysym.scancode == SDL_SCANCODE_GRAVE) && (_fcitx_last_keycode != 0 || _fcitx_last_keysym != 0)) {
+				if (FcitxProcessKey()) {
+					/* key press handled by Fcitx */
+					_suppress_text_event = true;
+					_fcitx_last_keycode = _fcitx_last_keysym = 0;
+					break;
+				}
+			}
+			_fcitx_last_keycode = _fcitx_last_keysym = 0;
+#endif
 			if ((ev.key.keysym.mod & (KMOD_ALT | KMOD_GUI)) &&
 					(ev.key.keysym.sym == SDLK_RETURN || ev.key.keysym.sym == SDLK_f)) {
 				if (ev.key.repeat == 0) ToggleFullScreen(!_fullscreen);
@@ -447,13 +743,15 @@ bool VideoDriver_SDL_Base::PollEvent()
 					keycode & WKC_CTRL ||
 					keycode & WKC_ALT ||
 					(keycode >= WKC_F1 && keycode <= WKC_F12) ||
-					!IsValidChar(character, CS_ALPHANUMERAL)) {
+					!IsValidChar(character, CS_ALPHANUMERAL) ||
+					!this->edit_box_focused) {
 					HandleKeypress(keycode, character);
 				}
 			}
 			break;
 
 		case SDL_TEXTINPUT: {
+			if (_suppress_text_event) break;
 			if (!this->edit_box_focused) break;
 			SDL_Keycode kc = SDL_GetKeyFromName(ev.text.text);
 			uint keycode = ConvertSdlKeycodeIntoMy(kc);
@@ -463,10 +761,24 @@ bool VideoDriver_SDL_Base::PollEvent()
 				Utf8Decode(&character, ev.text.text);
 				HandleKeypress(keycode, character);
 			} else {
+				HandleTextInput(nullptr, true);
 				HandleTextInput(ev.text.text);
+				SetTextInputRect();
 			}
 			break;
 		}
+
+		case SDL_TEXTEDITING: {
+			if (!EditBoxInGlobalFocus()) break;
+			if (ev.edit.start == 0) {
+				_editing_text = ev.edit.text;
+			} else {
+				_editing_text += ev.edit.text;
+			}
+			HandleTextInput(_editing_text.c_str(), true, _editing_text.c_str() + _editing_text.size());
+			break;
+		}
+
 		case SDL_WINDOWEVENT: {
 			if (ev.window.event == SDL_WINDOWEVENT_EXPOSED) {
 				// Force a redraw of the entire screen.
@@ -486,8 +798,24 @@ bool VideoDriver_SDL_Base::PollEvent()
 				// mouse left the window, undraw cursor
 				UndrawMouseCursor();
 				_cursor.in_window = false;
+			} else if (ev.window.event == SDL_WINDOWEVENT_MOVED) {
+				if (_fcitx_mode) SetTextInputRect();
+			} else if (ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+#if defined(WITH_FCITX)
+				if (_fcitx_mode) FcitxFocusChange(true);
+#endif
+			} else if (ev.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+#if defined(WITH_FCITX)
+				if (_fcitx_mode) FcitxFocusChange(false);
+#endif
 			}
 			break;
+		}
+
+		case SDL_SYSWMEVENT: {
+#if defined(WITH_FCITX)
+				if (_fcitx_mode) FcitxSYSWMEVENT(ev.syswm);
+#endif
 		}
 	}
 
@@ -496,6 +824,10 @@ bool VideoDriver_SDL_Base::PollEvent()
 
 static const char *InitializeSDL()
 {
+#if defined(WITH_FCITX)
+	FcitxInit();
+#endif
+
 	/* Explicitly disable hardware acceleration. Enabling this causes
 	 * UpdateWindowSurface() to update the window's texture instead of
 	 * its surface. */
@@ -519,7 +851,7 @@ const char *VideoDriver_SDL_Base::Initialize()
 	if (error != nullptr) return error;
 
 	FindResolutions();
-	Debug(driver, 2, "Resolution for display: {}x{}", _cur_resolution.width, _cur_resolution.height);
+	DEBUG(driver, 2, "Resolution for display: %ux%u", _cur_resolution.width, _cur_resolution.height);
 
 	return nullptr;
 }
@@ -538,7 +870,7 @@ const char *VideoDriver_SDL_Base::Start(const StringList &param)
 	}
 
 	const char *dname = SDL_GetCurrentVideoDriver();
-	Debug(driver, 1, "SDL2: using driver '{}'", dname);
+	DEBUG(driver, 1, "SDL2: using driver '%s'", dname);
 
 	this->driver_info = this->GetName();
 	this->driver_info += " (";
@@ -550,6 +882,9 @@ const char *VideoDriver_SDL_Base::Start(const StringList &param)
 	SDL_StopTextInput();
 	this->edit_box_focused = false;
 
+#if defined(WITH_FCITX)
+	if (_fcitx_mode) SDL_EventState(SDL_SYSWMEVENT, 1);
+#endif
 #ifdef __EMSCRIPTEN__
 	this->is_game_threaded = false;
 #else
@@ -561,6 +896,9 @@ const char *VideoDriver_SDL_Base::Start(const StringList &param)
 
 void VideoDriver_SDL_Base::Stop()
 {
+#if defined(WITH_FCITX)
+	FcitxDeinit();
+#endif
 	SDL_QuitSubSystem(SDL_INIT_VIDEO);
 	if (SDL_WasInit(SDL_INIT_EVERYTHING) == 0) {
 		SDL_Quit(); // If there's nothing left, quit SDL
@@ -573,17 +911,14 @@ void VideoDriver_SDL_Base::InputLoop()
 	const Uint8 *keys = SDL_GetKeyboardState(nullptr);
 
 	bool old_ctrl_pressed = _ctrl_pressed;
+	bool old_shift_pressed = _shift_pressed;
 
-	_ctrl_pressed  = !!(mod & KMOD_CTRL);
-	_shift_pressed = !!(mod & KMOD_SHIFT);
+	_ctrl_pressed  = !!(mod & KMOD_CTRL) != _invert_ctrl;
+	_shift_pressed = !!(mod & KMOD_SHIFT) != _invert_shift;
 
-#if defined(_DEBUG)
-	this->fast_forward_key_pressed = _shift_pressed;
-#else
 	/* Speedup when pressing tab, except when using ALT+TAB
 	 * to switch to another application. */
 	this->fast_forward_key_pressed = keys[SDL_SCANCODE_TAB] && (mod & KMOD_ALT) == 0;
-#endif /* defined(_DEBUG) */
 
 	/* Determine which directional keys are down. */
 	_dirkeys =
@@ -593,6 +928,7 @@ void VideoDriver_SDL_Base::InputLoop()
 		(keys[SDL_SCANCODE_DOWN]  ? 8 : 0);
 
 	if (old_ctrl_pressed != _ctrl_pressed) HandleCtrlChanged();
+	if (old_shift_pressed != _shift_pressed) HandleShiftChanged();
 }
 
 void VideoDriver_SDL_Base::LoopOnce()
@@ -648,32 +984,31 @@ bool VideoDriver_SDL_Base::ChangeResolution(int w, int h)
 
 bool VideoDriver_SDL_Base::ToggleFullscreen(bool fullscreen)
 {
-	int w, h;
-
 	/* Remember current window size */
-	if (fullscreen) {
-		SDL_GetWindowSize(this->sdl_window, &w, &h);
+	int w, h;
+	SDL_GetWindowSize(this->sdl_window, &w, &h);
 
+	if (fullscreen) {
 		/* Find fullscreen window size */
 		SDL_DisplayMode dm;
 		if (SDL_GetCurrentDisplayMode(0, &dm) < 0) {
-			Debug(driver, 0, "SDL_GetCurrentDisplayMode() failed: {}", SDL_GetError());
+			DEBUG(driver, 0, "SDL_GetCurrentDisplayMode() failed: %s", SDL_GetError());
 		} else {
 			SDL_SetWindowSize(this->sdl_window, dm.w, dm.h);
 		}
 	}
 
-	Debug(driver, 1, "SDL2: Setting {}", fullscreen ? "fullscreen" : "windowed");
+	DEBUG(driver, 1, "SDL2: Setting %s", fullscreen ? "fullscreen" : "windowed");
 	int ret = SDL_SetWindowFullscreen(this->sdl_window, fullscreen ? SDL_WINDOW_FULLSCREEN : 0);
 	if (ret == 0) {
 		/* Switching resolution succeeded, set fullscreen value of window. */
 		_fullscreen = fullscreen;
 		if (!fullscreen) SDL_SetWindowSize(this->sdl_window, w, h);
 	} else {
-		Debug(driver, 0, "SDL_SetWindowFullscreen() failed: {}", SDL_GetError());
+		DEBUG(driver, 0, "SDL_SetWindowFullscreen() failed: %s", SDL_GetError());
 	}
 
-	InvalidateWindowClassesData(WC_GAME_OPTIONS, 3);
+	this->InvalidateGameOptionsWindow();
 	return ret == 0;
 }
 

@@ -18,8 +18,9 @@
  * @param w the window that sends the callback
  * @param date the date that has been chosen
  */
-typedef void SetDateCallback(const Window *w, Date date, void *data);
+typedef void SetDateCallback(const Window *w, DateTicksScaled date);
 
-void ShowSetDateWindow(Window *parent, int window_number, Date initial_date, Year min_year, Year max_year, SetDateCallback *callback, void *callback_data);
+void ShowSetDateWindow(Window *parent, int window_number, DateTicksScaled initial_date, Year min_year, Year max_year, SetDateCallback *callback,
+		StringID button_text = STR_NULL, StringID button_tooltip = STR_NULL);
 
 #endif /* DATE_GUI_H */

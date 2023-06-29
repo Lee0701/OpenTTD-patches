@@ -168,7 +168,7 @@ bool ClientNetworkCoordinatorSocketHandler::Receive_GC_ERROR(Packet *p)
 			return false;
 
 		default:
-			Debug(net, 0, "Invalid error type {} received from Game Coordinator", error);
+			DEBUG(net, 0, "Invalid error type %u received from Game Coordinator", error);
 			this->CloseConnection();
 			return false;
 	}
@@ -217,14 +217,14 @@ bool ClientNetworkCoordinatorSocketHandler::Receive_GC_REGISTER_ACK(Packet *p)
 			default: game_type = "Unknown"; break; // Should never happen, but don't fail if it does.
 		}
 
-		Debug(net, 3, "----------------------------------------");
-		Debug(net, 3, "Your server is now registered with the Game Coordinator:");
-		Debug(net, 3, "  Game type:       {}", game_type);
-		Debug(net, 3, "  Connection type: {}", connection_type);
-		Debug(net, 3, "  Invite code:     {}", _network_server_invite_code);
-		Debug(net, 3, "----------------------------------------");
+		DEBUG(net, 3, "----------------------------------------");
+		DEBUG(net, 3, "Your server is now registered with the Game Coordinator:");
+		DEBUG(net, 3, "  Game type:       %s", game_type.c_str());
+		DEBUG(net, 3, "  Connection type: %s", connection_type.c_str());
+		DEBUG(net, 3, "  Invite code:     %s", _network_server_invite_code.c_str());
+		DEBUG(net, 3, "----------------------------------------");
 	} else {
-		Debug(net, 3, "Game Coordinator registered our server with invite code '{}'", _network_server_invite_code);
+		DEBUG(net, 3, "Game Coordinator registered our server with invite code '%s'", _network_server_invite_code.c_str());
 	}
 
 	return true;
@@ -478,7 +478,7 @@ void ClientNetworkCoordinatorSocketHandler::Register()
  */
 void ClientNetworkCoordinatorSocketHandler::SendServerUpdate()
 {
-	Debug(net, 6, "Sending server update to Game Coordinator");
+	DEBUG(net, 6, "Sending server update to Game Coordinator");
 
 	Packet *p = new Packet(PACKET_COORDINATOR_SERVER_UPDATE, TCP_MTU);
 	p->Send_uint8(NETWORK_COORDINATOR_VERSION);
@@ -573,7 +573,7 @@ void ClientNetworkCoordinatorSocketHandler::ConnectSuccess(const std::string &to
 
 	if (_network_server) {
 		if (!ServerNetworkGameSocketHandler::ValidateClient(sock, address)) return;
-		Debug(net, 3, "[{}] Client connected from {} on frame {}", ServerNetworkGameSocketHandler::GetName(), address.GetHostname(), _frame_counter);
+		DEBUG(net, 3, "[%s] Client connected from %s on frame %u", ServerNetworkGameSocketHandler::GetName(), address.GetHostname(), _frame_counter);
 		ServerNetworkGameSocketHandler::AcceptConnection(sock, address);
 	} else {
 		/* The client informs the Game Coordinator about the success. The server
@@ -648,7 +648,7 @@ void ClientNetworkCoordinatorSocketHandler::CloseStunHandler(const std::string &
  */
 void ClientNetworkCoordinatorSocketHandler::CloseTurnHandler(const std::string &token)
 {
-	CloseWindowByClass(WC_NETWORK_ASK_RELAY);
+	DeleteWindowByClass(WC_NETWORK_ASK_RELAY);
 
 	auto turn_it = this->turn_handlers.find(token);
 	if (turn_it == this->turn_handlers.end()) return;
@@ -752,7 +752,7 @@ void ClientNetworkCoordinatorSocketHandler::SendReceive()
 			return;
 		}
 
-		Debug(net, 1, "Connection with Game Coordinator lost; reconnecting...");
+		DEBUG(net, 1, "Connection with Game Coordinator lost; reconnecting...");
 		this->Register();
 		return;
 	}

@@ -52,7 +52,7 @@ static inline bool IsDepotTile(TileIndex tile)
 static inline DepotID GetDepotIndex(TileIndex t)
 {
 	/* Hangars don't have a Depot class, thus store no DepotID. */
-	assert(IsRailDepotTile(t) || IsRoadDepotTile(t) || IsShipDepotTile(t));
+	dbg_assert_tile(IsRailDepotTile(t) || IsRoadDepotTile(t) || IsShipDepotTile(t), t);
 	return _m[t].m2;
 }
 

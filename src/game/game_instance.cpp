@@ -13,8 +13,7 @@
 #include "../script/squirrel_class.hpp"
 
 #include "../script/script_storage.hpp"
-#include "../script/script_cmd.h"
-#include "../ai/ai_gui.hpp"
+#include "../script/script_gui.h"
 #include "game_config.hpp"
 #include "game_info.hpp"
 #include "game_instance.hpp"
@@ -28,7 +27,7 @@
 
 
 GameInstance::GameInstance() :
-	ScriptInstance("GS")
+	ScriptInstance("GS", ScriptType::GS)
 {}
 
 void GameInstance::Initialize(GameInfo *info)
@@ -67,7 +66,7 @@ void GameInstance::Died()
 {
 	ScriptInstance::Died();
 
-	ShowAIDebugWindow(OWNER_DEITY);
+	ShowScriptDebugWindow(OWNER_DEITY);
 
 	const GameInfo *info = Game::GetInfo();
 	if (info != nullptr) {
@@ -82,20 +81,21 @@ void GameInstance::Died()
 
 /**
  * DoCommand callback function for all commands executed by Game Scripts.
- * @param cmd cmd as given to DoCommandPInternal.
  * @param result The result of the command.
  * @param tile The tile on which the command was executed.
- * @param data Command data as given to Command<>::Post.
- * @param result_data Additional returned data from the command.
+ * @param p1 p1 as given to DoCommandPInternal.
+ * @param p2 p2 as given to DoCommandPInternal.
+ * @param p3 p3 as given to DoCommandPInternal.
+ * @param cmd cmd as given to DoCommandPInternal.
  */
-void CcGame(Commands cmd, const CommandCost &result, TileIndex tile, const CommandDataBuffer &data, CommandDataBuffer result_data)
+void CcGame(const CommandCost &result, TileIndex tile, uint32 p1, uint32 p2, uint64 p3, uint32 cmd)
 {
-	if (Game::GetGameInstance()->DoCommandCallback(result, tile, data, std::move(result_data), cmd)) {
+	if (Game::GetGameInstance()->DoCommandCallback(result, tile, p1, p2, p3, cmd)) {
 		Game::GetGameInstance()->Continue();
 	}
 }
 
-CommandCallbackData *GameInstance::GetDoCommandCallback()
+CommandCallback *GameInstance::GetDoCommandCallback()
 {
 	return &CcGame;
 }

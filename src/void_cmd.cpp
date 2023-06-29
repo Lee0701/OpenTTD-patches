@@ -12,19 +12,20 @@
 #include "command_func.h"
 #include "viewport_func.h"
 #include "slope_func.h"
+#include "water.h"
 
 #include "table/strings.h"
 #include "table/sprites.h"
 
 #include "safeguards.h"
 
-static void DrawTile_Void(TileInfo *ti)
+static void DrawTile_Void(TileInfo *ti, DrawTileProcParams params)
 {
 	DrawGroundSprite(SPR_FLAT_BARE_LAND + SlopeToSpriteOffset(ti->tileh), PALETTE_ALL_BLACK);
 }
 
 
-static int GetSlopePixelZ_Void(TileIndex tile, uint x, uint y)
+static int GetSlopePixelZ_Void(TileIndex tile, uint x, uint y, bool ground_vehicle)
 {
 	/* This function may be called on tiles outside the map, don't assume
 	 * that 'tile' is a valid tile index. See GetSlopePixelZOutsideMap. */
@@ -53,7 +54,8 @@ static void GetTileDesc_Void(TileIndex tile, TileDesc *td)
 
 static void TileLoop_Void(TileIndex tile)
 {
-	/* not used */
+	/* Floods adjacent edge tile to prevent maps without water. */
+	TileLoop_Water(tile);
 }
 
 static void ChangeTileOwner_Void(TileIndex tile, Owner old_owner, Owner new_owner)

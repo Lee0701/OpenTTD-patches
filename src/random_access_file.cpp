@@ -86,7 +86,7 @@ void RandomAccessFile::SeekTo(size_t pos, int mode)
 
 	this->pos = pos;
 	if (fseek(this->file_handle, this->pos, SEEK_SET) < 0) {
-		Debug(misc, 0, "Seeking in {} failed", this->filename);
+		DEBUG(misc, 0, "Seeking in %s failed", this->filename.c_str());
 	}
 
 	/* Reset the buffer, so the next ReadByte will read bytes from the file. */
@@ -97,7 +97,7 @@ void RandomAccessFile::SeekTo(size_t pos, int mode)
  * Read a byte from the file.
  * @return Read byte.
  */
-byte RandomAccessFile::ReadByte()
+byte RandomAccessFile::ReadByteIntl()
 {
 	if (this->buffer == this->buffer_end) {
 		this->buffer = this->buffer_start;
@@ -114,20 +114,20 @@ byte RandomAccessFile::ReadByte()
  * Read a word (16 bits) from the file (in low endian format).
  * @return Read word.
  */
-uint16 RandomAccessFile::ReadWord()
+uint16 RandomAccessFile::ReadWordIntl()
 {
-	byte b = this->ReadByte();
-	return (this->ReadByte() << 8) | b;
+	byte b = this->ReadByteIntl();
+	return (this->ReadByteIntl() << 8) | b;
 }
 
 /**
  * Read a double word (32 bits) from the file (in low endian format).
  * @return Read word.
  */
-uint32 RandomAccessFile::ReadDword()
+uint32 RandomAccessFile::ReadDwordIntl()
 {
-	uint b = this->ReadWord();
-	return (this->ReadWord() << 16) | b;
+	uint b = this->ReadWordIntl();
+	return (this->ReadWordIntl() << 16) | b;
 }
 
 /**

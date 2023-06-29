@@ -10,6 +10,9 @@
 #ifndef TOOLBAR_GUI_H
 #define TOOLBAR_GUI_H
 
+#include "company_type.h"
+#include "widgets/dropdown_type.h"
+
 enum MainToolbarHotkeys {
 	MTHK_PAUSE,
 	MTHK_FASTFORWARD,
@@ -27,6 +30,7 @@ enum MainToolbarHotkeys {
 	MTHK_GRAPHS,
 	MTHK_LEAGUE,
 	MTHK_INDUSTRIES,
+	MTHK_INDUSTRY_CHAINS,
 	MTHK_TRAIN_LIST,
 	MTHK_ROADVEH_LIST,
 	MTHK_SHIP_LIST,
@@ -41,7 +45,8 @@ enum MainToolbarHotkeys {
 	MTHK_BUILD_TREES,
 	MTHK_MUSIC,
 	MTHK_LANDINFO,
-	MTHK_AI_DEBUG,
+	MTHK_PICKER,
+	MTHK_SCRIPT_DEBUG,
 	MTHK_SMALL_SCREENSHOT,
 	MTHK_ZOOMEDIN_SCREENSHOT,
 	MTHK_DEFAULTZOOM_SCREENSHOT,
@@ -50,13 +55,29 @@ enum MainToolbarHotkeys {
 	MTHK_TERRAFORM,
 	MTHK_EXTRA_VIEWPORT,
 	MTHK_CLIENT_LIST,
-	MTHK_SIGN_LIST
+	MTHK_SIGN_LIST,
+	MTHK_PLAN_LIST,
+	MTHK_LINK_GRAPH_LEGEND,
+	MTHK_MESSAGE_HISTORY,
+	MTHK_TEMPLATE_REPLACEMENT,
+	MTHK_TRAIN_SLOTS,
+	MTHK_TRAIN_COUNTERS,
 };
 
 void AllocateToolbar();
 void ToggleBoundingBoxes();
 void ToggleDirtyBlocks();
 
+DropDownListItem *MakeCompanyDropDownListItem(CompanyID cid);
+
 extern uint _toolbar_width;
+
+struct MainToolbarScaleAdjuster {
+	ZoomLevel old_gui_zoom;
+	int old_gui_scale;
+
+	MainToolbarScaleAdjuster();
+	~MainToolbarScaleAdjuster();
+};
 
 #endif /* TOOLBAR_GUI_H */

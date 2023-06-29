@@ -30,12 +30,11 @@ static void ClearCargoMonitoring(CargoMonitorMap &cargo_monitor_map, CompanyID c
 		return;
 	}
 
-	CargoMonitorMap::iterator next;
-	for (CargoMonitorMap::iterator it = cargo_monitor_map.begin(); it != cargo_monitor_map.end(); it = next) {
-		next = it;
-		next++;
+	for (CargoMonitorMap::iterator it = cargo_monitor_map.begin(); it != cargo_monitor_map.end();) {
 		if (DecodeMonitorCompany(it->first) == company) {
-			cargo_monitor_map.erase(it);
+			it = cargo_monitor_map.erase(it);
+		} else {
+			++it;
 		}
 	}
 }
@@ -124,13 +123,13 @@ void AddCargoDelivery(CargoID cargo_type, CompanyID company, uint32 amount, Sour
 	if (src != INVALID_SOURCE) {
 		/* Handle pickup update. */
 		switch (src_type) {
-			case ST_INDUSTRY: {
+			case SourceType::Industry: {
 				CargoMonitorID num = EncodeCargoIndustryMonitor(company, cargo_type, src);
 				CargoMonitorMap::iterator iter = _cargo_pickups.find(num);
 				if (iter != _cargo_pickups.end()) iter->second += amount;
 				break;
 			}
-			case ST_TOWN: {
+			case SourceType::Town: {
 				CargoMonitorID num = EncodeCargoTownMonitor(company, cargo_type, src);
 				CargoMonitorMap::iterator iter = _cargo_pickups.find(num);
 				if (iter != _cargo_pickups.end()) iter->second += amount;

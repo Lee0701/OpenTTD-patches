@@ -16,13 +16,14 @@
 #include "vehicle_base.h"
 #include "window_func.h"
 #include "station_map.h"
-#include "order_cmd.h"
-#include "group_cmd.h"
+#include "vehicle_func.h"
 
 #include "safeguards.h"
 
 OrderBackupPool _order_backup_pool("BackupOrder");
 INSTANTIATE_POOL_METHODS(OrderBackup)
+
+uint OrderBackup::update_counter;
 
 /** Free everything that is allocated. */
 OrderBackup::~OrderBackup()
@@ -35,6 +36,8 @@ OrderBackup::~OrderBackup()
 		delete o;
 		o = next;
 	}
+
+	OrderBackup::update_counter++;
 }
 
 /**
@@ -64,7 +67,14 @@ OrderBackup::OrderBackup(const Vehicle *v, uint32 user)
 			*tail = copy;
 			tail = &copy->next;
 		}
+
+		if (v->orders != nullptr && HasBit(v->vehicle_flags, VF_SCHEDULED_DISPATCH)) {
+			SetBit(this->vehicle_flags, VF_SCHEDULED_DISPATCH);
+			this->dispatch_schedules = v->orders->GetScheduledDispatchScheduleSet();
+		}
 	}
+
+	OrderBackup::update_counter++;
 }
 
 /**
@@ -75,22 +85,32 @@ void OrderBackup::DoRestore(Vehicle *v)
 {
 	/* If we had shared orders, recover that */
 	if (this->clone != nullptr) {
-		Command<CMD_CLONE_ORDER>::Do(DC_EXEC, CO_SHARE, v->index, this->clone->index);
+		DoCommand(0, v->index | CO_SHARE << 30, this->clone->index, DC_EXEC, CMD_CLONE_ORDER);
 	} else if (this->orders != nullptr && OrderList::CanAllocateItem()) {
 		v->orders = new OrderList(this->orders, v);
 		this->orders = nullptr;
+
+		if (HasBit(this->vehicle_flags, VF_SCHEDULED_DISPATCH)) {
+			SetBit(v->vehicle_flags, VF_SCHEDULED_DISPATCH);
+			v->orders->GetScheduledDispatchScheduleSet() = std::move(this->dispatch_schedules);
+		}
+
 		/* Make sure buoys/oil rigs are updated in the station list. */
 		InvalidateWindowClassesData(WC_STATION_LIST, 0);
 	}
+
+	/* Remove backed up name if it's no longer unique. */
+	if (!this->name.empty() && !IsUniqueVehicleName(this->name.c_str())) this->name.clear();
 
 	v->CopyConsistPropertiesFrom(this);
 
 	/* Make sure orders are in range */
 	v->UpdateRealOrderIndex();
 	if (v->cur_implicit_order_index >= v->GetNumOrders()) v->cur_implicit_order_index = v->cur_real_order_index;
+	if (v->cur_timetable_order_index >= v->GetNumOrders()) v->cur_timetable_order_index = INVALID_VEH_ORDER_ID;
 
 	/* Restore vehicle group */
-	Command<CMD_ADD_VEHICLE_GROUP>::Do(DC_EXEC, this->group, v->index, false);
+	DoCommand(0, this->group, v->index, DC_EXEC, CMD_ADD_VEHICLE_GROUP);
 }
 
 /**
@@ -142,15 +162,17 @@ void OrderBackup::DoRestore(Vehicle *v)
 
 /**
  * Clear an OrderBackup
- * @param flags For command.
  * @param tile  Tile related to the to-be-cleared OrderBackup.
- * @param user_id User that had the OrderBackup.
+ * @param flags For command.
+ * @param p1    Unused.
+ * @param p2    User that had the OrderBackup.
+ * @param text  Unused.
  * @return The cost of this operation or an error.
  */
-CommandCost CmdClearOrderBackup(DoCommandFlag flags, TileIndex tile, ClientID user_id)
+CommandCost CmdClearOrderBackup(TileIndex tile, DoCommandFlag flags, uint32 p1, uint32 p2, const char *text)
 {
 	/* No need to check anything. If the tile or user don't exist we just ignore it. */
-	if (flags & DC_EXEC) OrderBackup::ResetOfUser(tile == 0 ? INVALID_TILE : tile, user_id);
+	if (flags & DC_EXEC) OrderBackup::ResetOfUser(tile == 0 ? INVALID_TILE : tile, p2);
 
 	return CommandCost();
 }
@@ -169,7 +191,7 @@ CommandCost CmdClearOrderBackup(DoCommandFlag flags, TileIndex tile, ClientID us
 		/* If it's not a backup of us, ignore it. */
 		if (ob->user != user) continue;
 
-		Command<CMD_CLEAR_ORDER_BACKUP>::Post(0, static_cast<ClientID>(user));
+		DoCommandP(0, 0, user, CMD_CLEAR_ORDER_BACKUP);
 		return;
 	}
 }
@@ -198,7 +220,7 @@ CommandCost CmdClearOrderBackup(DoCommandFlag flags, TileIndex tile, ClientID us
 			/* We need to circumvent the "prevention" from this command being executed
 			 * while the game is paused, so use the internal method. Nor do we want
 			 * this command to get its cost estimated when shift is pressed. */
-			Command<CMD_CLEAR_ORDER_BACKUP>::Unsafe<CommandCallback>(STR_NULL, nullptr, true, false, ob->tile, CommandTraits<CMD_CLEAR_ORDER_BACKUP>::Args{ ob->tile, static_cast<ClientID>(user) });
+			DoCommandPInternal(ob->tile, 0, user, 0, CMD_CLEAR_ORDER_BACKUP, nullptr, nullptr, true, false, 0);
 		} else {
 			/* The command came from the game logic, i.e. the clearing of a tile.
 			 * In that case we have no need to actually sync this, just do it. */

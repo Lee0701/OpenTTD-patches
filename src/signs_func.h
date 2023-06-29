@@ -14,6 +14,7 @@
 #include "tile_type.h"
 
 struct Window;
+extern SignID _new_sign_id;
 
 void UpdateAllSignVirtCoords();
 void PlaceProc_Sign(TileIndex tile);

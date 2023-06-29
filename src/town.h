@@ -15,7 +15,12 @@
 #include "subsidy_type.h"
 #include "newgrf_storage.h"
 #include "cargotype.h"
+#include "openttd.h"
+#include "table/strings.h"
+#include "company_func.h"
+#include "core/tinystring_type.hpp"
 #include <list>
+#include <memory>
 
 template <typename T>
 struct BuildingCounts {
@@ -33,6 +38,14 @@ static const uint TOWN_GROWTH_DESERT = 0xFFFFFFFF; ///< The town needs the cargo
 static const uint16 TOWN_GROWTH_RATE_NONE = 0xFFFF; ///< Special value for Town::growth_rate to disable town growth.
 static const uint16 MAX_TOWN_GROWTH_TICKS = 930; ///< Max amount of original town ticks that still fit into uint16, about equal to UINT16_MAX / TOWN_GROWTH_TICKS but slightly less to simplify calculations
 
+/** Settings for town council attitudes. */
+enum TownCouncilAttitudes {
+	TOWN_COUNCIL_LENIENT    = 0,
+	TOWN_COUNCIL_TOLERANT   = 1,
+	TOWN_COUNCIL_HOSTILE    = 2,
+	TOWN_COUNCIL_PERMISSIVE = 3,
+};
+
 typedef Pool<Town, TownID, 64, 64000> TownPool;
 extern TownPool _town_pool;
 
@@ -46,6 +59,16 @@ struct TownCache {
 	BuildingCounts<uint16> building_counts;   ///< The number of each type of building in the town
 };
 
+/** Town setting override flags */
+enum TownSettingOverrideFlags {
+	TSOF_OVERRIDE_BUILD_ROADS               = 0,
+	TSOF_OVERRIDE_BUILD_LEVEL_CROSSINGS     = 1,
+	TSOF_OVERRIDE_BUILD_TUNNELS             = 2,
+	TSOF_OVERRIDE_BUILD_INCLINED_ROADS      = 3,
+	TSOF_OVERRIDE_GROWTH                    = 4,
+	TSOF_OVERRIDE_BUILD_BRIDGES             = 5,
+};
+
 /** Town data structure. */
 struct Town : TownPool::PoolItem<&_town_pool> {
 	TileIndex xy;                  ///< town center tile
@@ -56,10 +79,18 @@ struct Town : TownPool::PoolItem<&_town_pool> {
 	uint32 townnamegrfid;
 	uint16 townnametype;
 	uint32 townnameparts;
-	std::string name;                ///< Custom town name. If empty, the town was not renamed and uses the generated name.
+	TinyString name;                 ///< Custom town name. If empty, the town was not renamed and uses the generated name.
 	mutable std::string cached_name; ///< NOSAVE: Cache of the resolved name of the town, if not using a custom town name
 
 	byte flags;                    ///< See #TownFlags.
+
+	byte override_flags;           ///< Bitmask of enabled flag overrides. See #TownSettingOverrideFlags.
+	byte override_values;          ///< Bitmask of flag override values. See #TownSettingOverrideFlags.
+	TownTunnelMode build_tunnels;  ///< If/when towns are allowed to build road tunnels (if TSOF_OVERRIDE_BUILD_TUNNELS set in override_flags)
+	uint8 max_road_slope;          ///< Maximum number of consecutive sloped road tiles which towns are allowed to build (if TSOF_OVERRIDE_BUILD_INCLINED_ROADS set in override_flags)
+
+	uint16 church_count;           ///< Number of church buildings in the town.
+	uint16 stadium_count;          ///< Number of stadium buildings in the town.
 
 	uint16 noise_reached;          ///< level of noise that all the airports are generating
 
@@ -71,6 +102,7 @@ struct Town : TownPool::PoolItem<&_town_pool> {
 	CompanyID exclusivity;         ///< which company has exclusivity
 	uint8 exclusive_counter;       ///< months till the exclusivity expires
 	int16 ratings[MAX_COMPANIES];  ///< ratings of each company for this town
+	StringID town_label;           ///< Label dependent on _local_company rating.
 
 	TransportedCargoStat<uint32> supplied[NUM_CARGO]; ///< Cargo statistics about supplied cargo.
 	TransportedCargoStat<uint16> received[NUM_TE];    ///< Cargo statistics about received cargotypes.
@@ -108,6 +140,30 @@ struct Town : TownPool::PoolItem<&_town_pool> {
 
 	void InitializeLayout(TownLayout layout);
 
+	void UpdateLabel();
+
+	/**
+	 * Returns the correct town label, based on rating.
+	 */
+	inline StringID Label() const{
+		if (!(_game_mode == GM_EDITOR) && (_local_company < MAX_COMPANIES)) {
+			return (_settings_client.gui.population_in_label ? STR_VIEWPORT_TOWN_POP_VERY_POOR_RATING : STR_VIEWPORT_TOWN_VERY_POOR_RATING) + this->town_label;
+		} else {
+			return _settings_client.gui.population_in_label ? STR_VIEWPORT_TOWN_POP : STR_VIEWPORT_TOWN;
+		}
+	}
+
+	/**
+	 * Returns the correct town small label, based on rating.
+	 */
+	inline StringID SmallLabel() const{
+		if (!(_game_mode == GM_EDITOR) && (_local_company < MAX_COMPANIES)) {
+			return STR_VIEWPORT_TOWN_TINY_VERY_POOR_RATING + this->town_label;
+		} else {
+			return STR_VIEWPORT_TOWN_TINY_WHITE;
+		}
+	}
+
 	/**
 	 * Calculate the max town noise.
 	 * The value is counted using the population divided by the content of the
@@ -116,6 +172,8 @@ struct Town : TownPool::PoolItem<&_town_pool> {
 	 */
 	inline uint16 MaxTownNoise() const
 	{
+		if (_settings_game.difficulty.town_council_tolerance == TOWN_COUNCIL_PERMISSIVE) return UINT16_MAX;
+
 		if (this->cache.population == 0) return 0; // no population? no noise
 
 		/* 3 is added (the noise of the lowest airport), so the  user can at least build a small airfield. */
@@ -129,6 +187,36 @@ struct Town : TownPool::PoolItem<&_town_pool> {
 		if (!this->name.empty()) return this->name.c_str();
 		if (this->cached_name.empty()) this->FillCachedName();
 		return this->cached_name.c_str();
+	}
+
+	inline bool IsTownGrowthDisabledByOverride() const
+	{
+		return HasBit(this->override_flags, TSOF_OVERRIDE_GROWTH);
+	}
+
+	inline bool GetAllowBuildRoads() const
+	{
+		return HasBit(this->override_flags, TSOF_OVERRIDE_BUILD_ROADS) ? HasBit(this->override_values, TSOF_OVERRIDE_BUILD_ROADS) : _settings_game.economy.allow_town_roads;
+	}
+
+	inline bool GetAllowBuildLevelCrossings() const
+	{
+		return HasBit(this->override_flags, TSOF_OVERRIDE_BUILD_LEVEL_CROSSINGS) ? HasBit(this->override_values, TSOF_OVERRIDE_BUILD_LEVEL_CROSSINGS) : _settings_game.economy.allow_town_level_crossings;
+	}
+
+	inline bool GetAllowBuildBridges() const
+	{
+		return HasBit(this->override_flags, TSOF_OVERRIDE_BUILD_BRIDGES) ? HasBit(this->override_values, TSOF_OVERRIDE_BUILD_BRIDGES) : _settings_game.economy.allow_town_bridges;
+	}
+
+	inline TownTunnelMode GetBuildTunnelMode() const
+	{
+		return HasBit(this->override_flags, TSOF_OVERRIDE_BUILD_TUNNELS) ? this->build_tunnels : _settings_game.economy.town_build_tunnels;
+	}
+
+	inline uint8 GetBuildMaxRoadSlope() const
+	{
+		return HasBit(this->override_flags, TSOF_OVERRIDE_BUILD_INCLINED_ROADS) ? this->max_road_slope : _settings_game.economy.town_max_road_slope;
 	}
 
 	static inline Town *GetByTile(TileIndex tile)
@@ -151,14 +239,6 @@ void ShowTownViewWindow(TownID town);
 void ExpandTown(Town *t);
 
 void RebuildTownKdtree();
-
-/** Settings for town council attitudes. */
-enum TownCouncilAttitudes {
-	TOWN_COUNCIL_LENIENT    = 0,
-	TOWN_COUNCIL_TOLERANT   = 1,
-	TOWN_COUNCIL_HOSTILE    = 2,
-	TOWN_COUNCIL_PERMISSIVE = 3,
-};
 
 /**
  * Action types that a company must ask permission for to a town authority.
@@ -186,8 +266,8 @@ enum TownDirectoryInvalidateWindowData {
  */
 enum TownFlags {
 	TOWN_IS_GROWING     = 0,   ///< Conditions for town growth are met. Grow according to Town::growth_rate.
-	TOWN_HAS_CHURCH     = 1,   ///< There can be only one church by town.
-	TOWN_HAS_STADIUM    = 2,   ///< There can be only one stadium by town.
+//	TOWN_HAS_CHURCH     = 1,   ///< There can be only one church per town. Replaced by church_count.
+//	TOWN_HAS_STADIUM    = 2,   ///< There can be only one stadium per town. Replaced by stadium_count.
 	TOWN_CUSTOM_GROWTH  = 3,   ///< Growth rate is controlled by GS.
 };
 
@@ -199,6 +279,20 @@ TileIndexDiff GetHouseNorthPart(HouseID &house);
 Town *CalcClosestTownFromTile(TileIndex tile, uint threshold = UINT_MAX);
 
 void ResetHouses();
+
+void ClearTownHouse(Town *t, TileIndex tile);
+void UpdateTownMaxPass(Town *t);
+void UpdateTownRadius(Town *t);
+void UpdateTownRadii();
+CommandCost CheckIfAuthorityAllowsNewStation(TileIndex tile, DoCommandFlag flags);
+Town *ClosestTownFromTile(TileIndex tile, uint threshold);
+void ChangeTownRating(Town *t, int add, int max, DoCommandFlag flags);
+HouseZonesBits TryGetTownRadiusGroup(const Town *t, TileIndex tile);
+HouseZonesBits GetTownRadiusGroup(const Town *t, TileIndex tile);
+void SetTownRatingTestMode(bool mode);
+uint GetMaskOfTownActions(int *nump, CompanyID cid, const Town *t);
+bool GenerateTowns(TownLayout layout);
+const CargoSpec *FindFirstCargoWithTownEffect(TownEffect effect);
 
 /** Town actions of a company. */
 enum TownActions {
@@ -222,19 +316,8 @@ enum TownActions {
 };
 DECLARE_ENUM_AS_BIT_SET(TownActions)
 
-void ClearTownHouse(Town *t, TileIndex tile);
-void UpdateTownMaxPass(Town *t);
-void UpdateTownRadius(Town *t);
-CommandCost CheckIfAuthorityAllowsNewStation(TileIndex tile, DoCommandFlag flags);
-Town *ClosestTownFromTile(TileIndex tile, uint threshold);
-void ChangeTownRating(Town *t, int add, int max, DoCommandFlag flags);
-HouseZonesBits GetTownRadiusGroup(const Town *t, TileIndex tile);
-void SetTownRatingTestMode(bool mode);
-TownActions GetMaskOfTownActions(CompanyID cid, const Town *t);
-bool GenerateTowns(TownLayout layout);
-const CargoSpec *FindFirstCargoWithTownEffect(TownEffect effect);
-
 extern const byte _town_action_costs[TACT_COUNT];
+extern TownID _new_town_id;
 
 /**
  * Set the default name for a depot/waypoint
@@ -309,6 +392,7 @@ static inline uint16 TownTicksToGameTicks(uint16 ticks) {
 }
 
 
-RoadType GetTownRoadType(const Town *t);
+RoadType GetTownRoadType();
+bool MayTownModifyRoad(TileIndex tile);
 
 #endif /* TOWN_H */

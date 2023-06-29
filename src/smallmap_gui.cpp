@@ -8,6 +8,7 @@
 /** @file smallmap_gui.cpp GUI that shows a small map of the world with metadata like owner or height. */
 
 #include "stdafx.h"
+#include "core/backup_type.hpp"
 #include "clear_map.h"
 #include "industry.h"
 #include "station_map.h"
@@ -21,9 +22,13 @@
 #include "sound_func.h"
 #include "window_func.h"
 #include "company_base.h"
+#include "screenshot.h"
 #include "guitimer_func.h"
 #include "zoom_func.h"
+#include "object_map.h"
+#include "newgrf_object.h"
 
+#include "smallmap_colours.h"
 #include "smallmap_gui.h"
 
 #include "table/strings.h"
@@ -38,8 +43,6 @@ static int _smallmap_cargo_count;    ///< Number of cargos in the link stats leg
 
 /** Link stat colours shown in legenda. */
 static uint8 _linkstat_colours_in_legenda[] = {0, 1, 3, 5, 7, 9, 11};
-
-static const int NUM_NO_COMPANY_ENTRIES = 4; ///< Number of entries in the owner legend that are not companies.
 
 /** Macro for ordinary entry of LegendAndColour */
 #define MK(a, b) {a, b, INVALID_INDUSTRYTYPE, 0, INVALID_COMPANY, true, false, false}
@@ -129,7 +132,7 @@ static const LegendAndColour _legend_vegetation[] = {
 	MKEND()
 };
 
-static LegendAndColour _legend_land_owners[NUM_NO_COMPANY_ENTRIES + MAX_COMPANIES + 1] = {
+LegendAndColour _legend_land_owners[NUM_NO_COMPANY_ENTRIES + MAX_COMPANIES + 1] = {
 	MO(PC_WATER,           STR_SMALLMAP_LEGENDA_WATER),
 	MO(0x00,               STR_SMALLMAP_LEGENDA_NO_OWNER), // This colour will vary depending on settings.
 	MO(PC_DARK_RED,        STR_SMALLMAP_LEGENDA_TOWNS),
@@ -151,17 +154,44 @@ static LegendAndColour _legend_linkstats[NUM_CARGO + lengthof(_linkstat_colours_
  * Allow room for all industries, plus a terminator entry
  * This is required in order to have the industry slots all filled up
  */
-static LegendAndColour _legend_from_industries[NUM_INDUSTRYTYPES + 1];
+LegendAndColour _legend_from_industries[NUM_INDUSTRYTYPES + 1];
 /** For connecting industry type to position in industries list(small map legend) */
-static uint _industry_to_list_pos[NUM_INDUSTRYTYPES];
+uint _industry_to_list_pos[NUM_INDUSTRYTYPES];
 /** Show heightmap in industry and owner mode of smallmap window. */
-static bool _smallmap_show_heightmap = false;
+bool _smallmap_show_heightmap = false;
 /** Highlight a specific industry type */
 static IndustryType _smallmap_industry_highlight = INVALID_INDUSTRYTYPE;
 /** State of highlight blinking */
 static bool _smallmap_industry_highlight_state;
 /** For connecting company ID to position in owner list (small map legend) */
-static uint _company_to_list_pos[MAX_COMPANIES];
+uint _company_to_list_pos[MAX_COMPANIES];
+
+static void NotifyAllViewports(ViewportMapType map_type)
+{
+	for (Window *w : Window::IterateFromBack()) {
+		if (w->viewport != nullptr) {
+			if (w->viewport->zoom >= ZOOM_LVL_DRAW_MAP && w->viewport->map_type == map_type) {
+				ClearViewportLandPixelCache(w->viewport);
+				w->InvalidateData();
+			}
+		}
+	}
+}
+
+void UpdateSmallMapSelectedIndustries()
+{
+	extern const std::bitset<NUM_INDUSTRYTYPES> &GetIndustryLinkDisplayIndustries();
+	const std::bitset<NUM_INDUSTRYTYPES> &displayed_industries = GetIndustryLinkDisplayIndustries();
+	for (int i = 0; i != _smallmap_industry_count; i++) {
+		_legend_from_industries[i].show_on_map = displayed_industries.test(_legend_from_industries[i].type);
+	}
+
+	NotifyAllViewports(VPMT_INDUSTRY);
+
+	/* Only notify the smallmap window if it exists. In particular, do not
+	 * bring it to the front to prevent messing up any nice layout of the user. */
+	InvalidateWindowClassesData(WC_SMALLMAP, 0);
+}
 
 /**
  * Fills an array for the industries legends.
@@ -236,35 +266,9 @@ static const LegendAndColour * const _legend_table[] = {
 	_legend_land_owners,
 };
 
-#define MKCOLOUR(x)         TO_LE32X(x)
-
-#define MKCOLOUR_XXXX(x)    (MKCOLOUR(0x01010101) * (uint)(x))
-#define MKCOLOUR_X0X0(x)    (MKCOLOUR(0x01000100) * (uint)(x))
-#define MKCOLOUR_0X0X(x)    (MKCOLOUR(0x00010001) * (uint)(x))
-#define MKCOLOUR_0XX0(x)    (MKCOLOUR(0x00010100) * (uint)(x))
-#define MKCOLOUR_X00X(x)    (MKCOLOUR(0x01000001) * (uint)(x))
-
-#define MKCOLOUR_XYXY(x, y) (MKCOLOUR_X0X0(x) | MKCOLOUR_0X0X(y))
-#define MKCOLOUR_XYYX(x, y) (MKCOLOUR_X00X(x) | MKCOLOUR_0XX0(y))
-
-#define MKCOLOUR_0000       MKCOLOUR_XXXX(0x00)
-#define MKCOLOUR_0FF0       MKCOLOUR_0XX0(0xFF)
-#define MKCOLOUR_F00F       MKCOLOUR_X00X(0xFF)
-#define MKCOLOUR_FFFF       MKCOLOUR_XXXX(0xFF)
-
-#include "table/heightmap_colours.h"
-
-/** Colour scheme of the smallmap. */
-struct SmallMapColourScheme {
-	uint32 *height_colours;            ///< Cached colours for each level in a map.
-	const uint32 *height_colours_base; ///< Base table for determining the colours
-	size_t colour_count;               ///< The number of colours.
-	uint32 default_colour;             ///< Default colour of the land.
-};
-
 /** Available colour schemes for height maps. */
-static SmallMapColourScheme _heightmap_schemes[] = {
-	{nullptr, _green_map_heights,      lengthof(_green_map_heights),      MKCOLOUR_XXXX(0x54)}, ///< Green colour scheme.
+SmallMapColourScheme _heightmap_schemes[] = {
+	{nullptr, _green_map_heights,      lengthof(_green_map_heights),      MKCOLOUR_XXXX(0x5B)}, ///< Green colour scheme.
 	{nullptr, _dark_green_map_heights, lengthof(_dark_green_map_heights), MKCOLOUR_XXXX(0x62)}, ///< Dark green colour scheme.
 	{nullptr, _violet_map_heights,     lengthof(_violet_map_heights),     MKCOLOUR_XXXX(0x81)}, ///< Violet colour scheme.
 };
@@ -345,65 +349,40 @@ void BuildOwnerLegend()
 	_smallmap_company_count = i;
 }
 
-struct AndOr {
-	uint32 mor;
-	uint32 mand;
-};
-
-static inline uint32 ApplyMask(uint32 colour, const AndOr *mask)
+static TileType GetSmallMapTileType(TileIndex tile, TileType t)
 {
-	return (colour & mask->mand) | mask->mor;
+	if (t == MP_OBJECT && GetObjectHasViewportMapViewOverride(tile)) {
+		ObjectViewportMapType vmtype = OVMT_DEFAULT;
+		const ObjectSpec *spec = ObjectSpec::GetByTile(tile);
+		if (spec->ctrl_flags & OBJECT_CTRL_FLAG_VPORT_MAP_TYPE) vmtype = spec->vport_map_type;
+		if (vmtype == OVMT_CLEAR && spec->ctrl_flags & OBJECT_CTRL_FLAG_USE_LAND_GROUND) {
+			if (IsTileOnWater(tile) && GetObjectGroundType(tile) != OBJECT_GROUND_SHORE) {
+				vmtype = OVMT_WATER;
+			}
+		}
+		switch (vmtype) {
+			case OVMT_DEFAULT:
+				break;
+
+			case OVMT_TREES:
+				t = MP_TREES;
+				break;
+
+			case OVMT_HOUSE:
+				t = MP_HOUSE;
+				break;
+
+			case OVMT_WATER:
+				t = MP_WATER;
+				break;
+
+			default:
+				t = MP_CLEAR;
+				break;
+		}
+	}
+	return t;
 }
-
-
-/** Colour masks for "Contour" and "Routes" modes. */
-static const AndOr _smallmap_contours_andor[] = {
-	{MKCOLOUR_0000               , MKCOLOUR_FFFF}, // MP_CLEAR
-	{MKCOLOUR_0XX0(PC_GREY      ), MKCOLOUR_F00F}, // MP_RAILWAY
-	{MKCOLOUR_0XX0(PC_BLACK     ), MKCOLOUR_F00F}, // MP_ROAD
-	{MKCOLOUR_0XX0(PC_DARK_RED  ), MKCOLOUR_F00F}, // MP_HOUSE
-	{MKCOLOUR_0000               , MKCOLOUR_FFFF}, // MP_TREES
-	{MKCOLOUR_XXXX(PC_LIGHT_BLUE), MKCOLOUR_0000}, // MP_STATION
-	{MKCOLOUR_XXXX(PC_WATER     ), MKCOLOUR_0000}, // MP_WATER
-	{MKCOLOUR_0000               , MKCOLOUR_FFFF}, // MP_VOID
-	{MKCOLOUR_XXXX(PC_DARK_RED  ), MKCOLOUR_0000}, // MP_INDUSTRY
-	{MKCOLOUR_0000               , MKCOLOUR_FFFF}, // MP_TUNNELBRIDGE
-	{MKCOLOUR_0XX0(PC_DARK_RED  ), MKCOLOUR_F00F}, // MP_OBJECT
-	{MKCOLOUR_0XX0(PC_GREY      ), MKCOLOUR_F00F},
-};
-
-/** Colour masks for "Vehicles", "Industry", and "Vegetation" modes. */
-static const AndOr _smallmap_vehicles_andor[] = {
-	{MKCOLOUR_0000               , MKCOLOUR_FFFF}, // MP_CLEAR
-	{MKCOLOUR_0XX0(PC_BLACK     ), MKCOLOUR_F00F}, // MP_RAILWAY
-	{MKCOLOUR_0XX0(PC_BLACK     ), MKCOLOUR_F00F}, // MP_ROAD
-	{MKCOLOUR_0XX0(PC_DARK_RED  ), MKCOLOUR_F00F}, // MP_HOUSE
-	{MKCOLOUR_0000               , MKCOLOUR_FFFF}, // MP_TREES
-	{MKCOLOUR_0XX0(PC_BLACK     ), MKCOLOUR_F00F}, // MP_STATION
-	{MKCOLOUR_XXXX(PC_WATER     ), MKCOLOUR_0000}, // MP_WATER
-	{MKCOLOUR_0000               , MKCOLOUR_FFFF}, // MP_VOID
-	{MKCOLOUR_XXXX(PC_DARK_RED  ), MKCOLOUR_0000}, // MP_INDUSTRY
-	{MKCOLOUR_0000               , MKCOLOUR_FFFF}, // MP_TUNNELBRIDGE
-	{MKCOLOUR_0XX0(PC_DARK_RED  ), MKCOLOUR_F00F}, // MP_OBJECT
-	{MKCOLOUR_0XX0(PC_BLACK     ), MKCOLOUR_F00F},
-};
-
-/** Mapping of tile type to importance of the tile (higher number means more interesting to show). */
-static const byte _tiletype_importance[] = {
-	2, // MP_CLEAR
-	8, // MP_RAILWAY
-	7, // MP_ROAD
-	5, // MP_HOUSE
-	2, // MP_TREES
-	9, // MP_STATION
-	2, // MP_WATER
-	1, // MP_VOID
-	6, // MP_INDUSTRY
-	8, // MP_TUNNELBRIDGE
-	2, // MP_OBJECT
-	0,
-};
-
 
 /**
  * Return the colour a tile would be displayed with in the small map in mode "Contour".
@@ -414,7 +393,7 @@ static const byte _tiletype_importance[] = {
 static inline uint32 GetSmallMapContoursPixels(TileIndex tile, TileType t)
 {
 	const SmallMapColourScheme *cs = &_heightmap_schemes[_settings_client.gui.smallmap_land_colour];
-	return ApplyMask(cs->height_colours[TileHeight(tile)], &_smallmap_contours_andor[t]);
+	return ApplyMask(cs->height_colours[TileHeight(tile)], &_smallmap_contours_andor[GetSmallMapTileType(tile, t)]);
 }
 
 /**
@@ -427,7 +406,7 @@ static inline uint32 GetSmallMapContoursPixels(TileIndex tile, TileType t)
 static inline uint32 GetSmallMapVehiclesPixels(TileIndex tile, TileType t)
 {
 	const SmallMapColourScheme *cs = &_heightmap_schemes[_settings_client.gui.smallmap_land_colour];
-	return ApplyMask(cs->default_colour, &_smallmap_vehicles_andor[t]);
+	return ApplyMask(cs->default_colour, &_smallmap_vehicles_andor[GetSmallMapTileType(tile, t)]);
 }
 
 /**
@@ -440,7 +419,7 @@ static inline uint32 GetSmallMapVehiclesPixels(TileIndex tile, TileType t)
 static inline uint32 GetSmallMapIndustriesPixels(TileIndex tile, TileType t)
 {
 	const SmallMapColourScheme *cs = &_heightmap_schemes[_settings_client.gui.smallmap_land_colour];
-	return ApplyMask(_smallmap_show_heightmap ? cs->height_colours[TileHeight(tile)] : cs->default_colour, &_smallmap_vehicles_andor[t]);
+	return ApplyMask(_smallmap_show_heightmap ? cs->height_colours[TileHeight(tile)] : cs->default_colour, &_smallmap_vehicles_andor[GetSmallMapTileType(tile, t)]);
 }
 
 /**
@@ -495,7 +474,7 @@ static inline uint32 GetSmallMapRoutesPixels(TileIndex tile, TileType t)
 		default:
 			/* Ground colour */
 			const SmallMapColourScheme *cs = &_heightmap_schemes[_settings_client.gui.smallmap_land_colour];
-			return ApplyMask(cs->default_colour, &_smallmap_contours_andor[t]);
+			return ApplyMask(cs->default_colour, &_smallmap_contours_andor[GetSmallMapTileType(tile, t)]);
 	}
 }
 
@@ -510,17 +489,6 @@ static inline uint32 GetSmallMapLinkStatsPixels(TileIndex tile, TileType t)
 {
 	return _smallmap_show_heightmap ? GetSmallMapContoursPixels(tile, t) : GetSmallMapRoutesPixels(tile, t);
 }
-
-static const uint32 _vegetation_clear_bits[] = {
-	MKCOLOUR_XXXX(PC_GRASS_LAND), ///< full grass
-	MKCOLOUR_XXXX(PC_ROUGH_LAND), ///< rough land
-	MKCOLOUR_XXXX(PC_GREY),       ///< rocks
-	MKCOLOUR_XXXX(PC_FIELDS),     ///< fields
-	MKCOLOUR_XXXX(PC_LIGHT_BLUE), ///< snow
-	MKCOLOUR_XXXX(PC_ORANGE),     ///< desert
-	MKCOLOUR_XXXX(PC_GRASS_LAND), ///< unused
-	MKCOLOUR_XXXX(PC_GRASS_LAND), ///< unused
-};
 
 /**
  * Return the colour a tile would be displayed with in the smallmap in mode "Vegetation".
@@ -548,6 +516,73 @@ static inline uint32 GetSmallMapVegetationPixels(TileIndex tile, TileType t)
 			}
 			return (GetTropicZone(tile) == TROPICZONE_RAINFOREST) ? MKCOLOUR_XYYX(PC_RAINFOREST, PC_TREES) : MKCOLOUR_XYYX(PC_GRASS_LAND, PC_TREES);
 
+		case MP_OBJECT: {
+			if (!GetObjectHasViewportMapViewOverride(tile)) return ApplyMask(MKCOLOUR_XXXX(PC_GRASS_LAND), &_smallmap_vehicles_andor[t]);
+			ObjectViewportMapType vmtype = OVMT_DEFAULT;
+			const ObjectSpec *spec = ObjectSpec::GetByTile(tile);
+			if (spec->ctrl_flags & OBJECT_CTRL_FLAG_VPORT_MAP_TYPE) vmtype = spec->vport_map_type;
+
+			switch (vmtype) {
+				case OVMT_CLEAR:
+					if (spec->ctrl_flags & OBJECT_CTRL_FLAG_USE_LAND_GROUND) {
+						if (IsTileOnWater(tile) && GetObjectGroundType(tile) != OBJECT_GROUND_SHORE) {
+							t = MP_WATER;
+						} else {
+							switch (GetObjectGroundType(tile)) {
+								case OBJECT_GROUND_GRASS:
+									if (GetObjectGroundDensity(tile) < 3) return MKCOLOUR_XXXX(PC_BARE_LAND);
+									if (GetTropicZone(tile) == TROPICZONE_RAINFOREST) return MKCOLOUR_XXXX(PC_RAINFOREST);
+									return _vegetation_clear_bits[CLEAR_GRASS];
+
+								case OBJECT_GROUND_SNOW_DESERT:
+									return _vegetation_clear_bits[_settings_game.game_creation.landscape == LT_TROPIC ? CLEAR_DESERT : CLEAR_SNOW];
+
+								case OBJECT_GROUND_SHORE:
+									t = MP_WATER;
+									break;
+
+								default:
+									/* This should never be reached, just draw as normal as a fallback */
+									break;
+							}
+						}
+					} else {
+						return MKCOLOUR_XXXX(PC_BARE_LAND);
+					}
+					break;
+				case OVMT_GRASS:
+					if (GetTropicZone(tile) == TROPICZONE_RAINFOREST) return MKCOLOUR_XXXX(PC_RAINFOREST);
+					return _vegetation_clear_bits[CLEAR_GRASS];
+				case OVMT_ROUGH:
+					return _vegetation_clear_bits[CLEAR_ROUGH];
+				case OVMT_ROCKS:
+					return _vegetation_clear_bits[CLEAR_ROCKS];
+				case OVMT_FIELDS:
+					return _vegetation_clear_bits[CLEAR_FIELDS];
+				case OVMT_SNOW:
+					return _vegetation_clear_bits[CLEAR_SNOW];
+				case OVMT_DESERT:
+					return _vegetation_clear_bits[CLEAR_DESERT];
+				case OVMT_TREES: {
+					const TreeGround tg = (TreeGround)GB(spec->vport_map_subtype, 0, 4);
+					if (tg == TREE_GROUND_SNOW_DESERT || tg == TREE_GROUND_ROUGH_SNOW) {
+						return (_settings_game.game_creation.landscape == LT_ARCTIC) ? MKCOLOUR_XYYX(PC_LIGHT_BLUE, PC_TREES) : MKCOLOUR_XYYX(PC_ORANGE, PC_TREES);
+					}
+					return (GetTropicZone(tile) == TROPICZONE_RAINFOREST) ? MKCOLOUR_XYYX(PC_RAINFOREST, PC_TREES) : MKCOLOUR_XYYX(PC_GRASS_LAND, PC_TREES);
+				}
+				case OVMT_HOUSE:
+					t = MP_HOUSE;
+					break;
+				case OVMT_WATER:
+					t = MP_WATER;
+					break;
+
+				default:
+					break;
+			}
+			return ApplyMask(MKCOLOUR_XXXX(PC_GRASS_LAND), &_smallmap_vehicles_andor[t]);
+		}
+
 		default:
 			return ApplyMask(MKCOLOUR_XXXX(PC_GRASS_LAND), &_smallmap_vehicles_andor[t]);
 	}
@@ -556,18 +591,15 @@ static inline uint32 GetSmallMapVegetationPixels(TileIndex tile, TileType t)
 /**
  * Return the colour a tile would be displayed with in the small map in mode "Owner".
  *
- * @note If include_heightmap is IH_NEVER, the return value can safely be used as a palette colour (by masking it to a uint8)
- * @param tile              The tile of which we would like to get the colour.
- * @param t                 Effective tile type of the tile (see #SmallMapWindow::GetTileColours).
- * @param include_heightmap Whether to return the heightmap/contour colour of this tile (instead of the default land tile colour)
+ * @param tile The tile of which we would like to get the colour.
+ * @param t    Effective tile type of the tile (see #SmallMapWindow::GetTileColours).
  * @return The colour of tile in the small map in mode "Owner"
  */
-uint32 GetSmallMapOwnerPixels(TileIndex tile, TileType t, IncludeHeightmap include_heightmap)
+static inline uint32 GetSmallMapOwnerPixels(TileIndex tile, TileType t)
 {
 	Owner o;
 
 	switch (t) {
-		case MP_VOID:     return MKCOLOUR_XXXX(PC_BLACK);
 		case MP_INDUSTRY: return MKCOLOUR_XXXX(PC_DARK_GREY);
 		case MP_HOUSE:    return MKCOLOUR_XXXX(PC_DARK_RED);
 		default:          o = GetTileOwner(tile); break;
@@ -580,8 +612,7 @@ uint32 GetSmallMapOwnerPixels(TileIndex tile, TileType t, IncludeHeightmap inclu
 	if ((o < MAX_COMPANIES && !_legend_land_owners[_company_to_list_pos[o]].show_on_map) || o == OWNER_NONE || o == OWNER_WATER) {
 		if (t == MP_WATER) return MKCOLOUR_XXXX(PC_WATER);
 		const SmallMapColourScheme *cs = &_heightmap_schemes[_settings_client.gui.smallmap_land_colour];
-		return ((include_heightmap == IncludeHeightmap::IfEnabled && _smallmap_show_heightmap) || include_heightmap == IncludeHeightmap::Always)
-			? cs->height_colours[TileHeight(tile)] : cs->default_colour;
+		return _smallmap_show_heightmap ? cs->height_colours[TileHeight(tile)] : cs->default_colour;
 	} else if (o == OWNER_TOWN) {
 		return MKCOLOUR_XXXX(PC_DARK_RED);
 	}
@@ -601,32 +632,12 @@ static const byte _vehicle_type_colours[6] = {
 	InvalidateWindowClassesData(WC_INDUSTRY_CARGOES, NUM_INDUSTRYTYPES);
 }
 
-inline Point SmallMapWindow::SmallmapRemapCoords(int x, int y) const
+inline Point SmallMapWindow::TileToPixel(int tx, int ty) const
 {
-	Point pt;
-	pt.x = (y - x) * 2;
-	pt.y = y + x;
-	return pt;
-}
-
-/**
- * Remap tile to location on this smallmap.
- * @param tile_x X coordinate of the tile.
- * @param tile_y Y coordinate of the tile.
- * @return Position to draw on.
- */
-inline Point SmallMapWindow::RemapTile(int tile_x, int tile_y) const
-{
-	int x_offset = tile_x - this->scroll_x / (int)TILE_SIZE;
-	int y_offset = tile_y - this->scroll_y / (int)TILE_SIZE;
-
-	if (this->zoom == 1) return SmallmapRemapCoords(x_offset, y_offset);
-
-	/* For negative offsets, round towards -inf. */
-	if (x_offset < 0) x_offset -= this->zoom - 1;
-	if (y_offset < 0) y_offset -= this->zoom - 1;
-
-	return SmallmapRemapCoords(x_offset / this->zoom, y_offset / this->zoom);
+	return {
+		(ty - tx) * 2 / this->zoom + this->scroll_x,
+		(ty + tx) / this->zoom + this->scroll_y,
+	};
 }
 
 /**
@@ -634,63 +645,16 @@ inline Point SmallMapWindow::RemapTile(int tile_x, int tile_y) const
  * that tile for a point in the smallmap.
  * @param px       Horizontal coordinate of the pixel.
  * @param py       Vertical coordinate of the pixel.
- * @param[out] sub Pixel position at the tile (0..3).
- * @param add_sub  Add current #subscroll to the position.
- * @return Tile being displayed at the given position relative to #scroll_x and #scroll_y.
- * @note The #subscroll offset is already accounted for.
  */
-inline Point SmallMapWindow::PixelToTile(int px, int py, int *sub, bool add_sub) const
+inline Point SmallMapWindow::PixelToTile(int px, int py) const
 {
-	if (add_sub) px += this->subscroll;  // Total horizontal offset.
+	px -= this->scroll_x;
+	py -= this->scroll_y;
 
-	/* For each two rows down, add a x and a y tile, and
-	 * For each four pixels to the right, move a tile to the right. */
-	Point pt = {((py >> 1) - (px >> 2)) * this->zoom, ((py >> 1) + (px >> 2)) * this->zoom};
-	px &= 3;
-
-	if (py & 1) { // Odd number of rows, handle the 2 pixel shift.
-		if (px < 2) {
-			pt.x += this->zoom;
-			px += 2;
-		} else {
-			pt.y += this->zoom;
-			px -= 2;
-		}
-	}
-
-	*sub = px;
-	return pt;
-}
-
-/**
- * Compute base parameters of the smallmap such that tile (\a tx, \a ty) starts at pixel (\a x, \a y).
- * @param tx       Tile x coordinate.
- * @param ty       Tile y coordinate.
- * @param x        Non-negative horizontal position in the display where the tile starts.
- * @param y        Non-negative vertical position in the display where the tile starts.
- * @param[out] sub Value of #subscroll needed.
- * @return #scroll_x, #scroll_y values.
- */
-Point SmallMapWindow::ComputeScroll(int tx, int ty, int x, int y, int *sub)
-{
-	assert(x >= 0 && y >= 0);
-
-	int new_sub;
-	Point tile_xy = PixelToTile(x, y, &new_sub, false);
-	tx -= tile_xy.x;
-	ty -= tile_xy.y;
-
-	Point scroll;
-	if (new_sub == 0) {
-		*sub = 0;
-		scroll.x = (tx + this->zoom) * TILE_SIZE;
-		scroll.y = (ty - this->zoom) * TILE_SIZE;
-	} else {
-		*sub = 4 - new_sub;
-		scroll.x = (tx + 2 * this->zoom) * TILE_SIZE;
-		scroll.y = (ty - 2 * this->zoom) * TILE_SIZE;
-	}
-	return scroll;
+	return {
+		(py * 2 - px) * this->zoom / 4,
+		(py * 2 + px) * this->zoom / 4,
+	};
 }
 
 /**
@@ -701,27 +665,28 @@ Point SmallMapWindow::ComputeScroll(int tx, int ty, int x, int y, int *sub)
  */
 void SmallMapWindow::SetZoomLevel(ZoomLevelChange change, const Point *zoom_pt)
 {
-	static const int zoomlevels[] = {1, 2, 4, 6, 8}; // Available zoom levels. Bigger number means more zoom-out (further away).
+	static const int tile_zoomlevels[] = {1, 1, 1, 2, 4, 6, 8}; // Available zoom levels. Bigger number means more zoom-out (further away).
+	static const int ui_zoomlevels[] = {4, 2, 1, 1, 1, 1, 1};
 	static const int MIN_ZOOM_INDEX = 0;
-	static const int MAX_ZOOM_INDEX = lengthof(zoomlevels) - 1;
+	static const int MAX_ZOOM_INDEX = lengthof(tile_zoomlevels) - 1;
 
-	int new_index, cur_index, sub;
+	int new_index, cur_index;
 	Point tile;
 	switch (change) {
 		case ZLC_INITIALIZE:
 			cur_index = - 1; // Definitely different from new_index.
-			new_index = MIN_ZOOM_INDEX;
+			new_index = Clamp((int)ZOOM_LVL_GUI, MIN_ZOOM_INDEX, MAX_ZOOM_INDEX);
 			tile.x = tile.y = 0;
 			break;
 
 		case ZLC_ZOOM_IN:
 		case ZLC_ZOOM_OUT:
 			for (cur_index = MIN_ZOOM_INDEX; cur_index <= MAX_ZOOM_INDEX; cur_index++) {
-				if (this->zoom == zoomlevels[cur_index]) break;
+				if (this->tile_zoom == tile_zoomlevels[cur_index] && this->ui_zoom == ui_zoomlevels[cur_index]) break;
 			}
 			assert(cur_index <= MAX_ZOOM_INDEX);
 
-			tile = this->PixelToTile(zoom_pt->x, zoom_pt->y, &sub);
+			tile = this->PixelToTile(zoom_pt->x, zoom_pt->y);
 			new_index = Clamp(cur_index + ((change == ZLC_ZOOM_IN) ? -1 : 1), MIN_ZOOM_INDEX, MAX_ZOOM_INDEX);
 			break;
 
@@ -729,16 +694,16 @@ void SmallMapWindow::SetZoomLevel(ZoomLevelChange change, const Point *zoom_pt)
 	}
 
 	if (new_index != cur_index) {
-		this->zoom = zoomlevels[new_index];
+		this->tile_zoom = tile_zoomlevels[new_index];
+		this->ui_zoom = ui_zoomlevels[new_index];
+		this->zoom = this->tile_zoom * TILE_SIZE / this->ui_zoom;
 		if (cur_index >= 0) {
-			Point new_tile = this->PixelToTile(zoom_pt->x, zoom_pt->y, &sub);
-			this->SetNewScroll(this->scroll_x + (tile.x - new_tile.x) * TILE_SIZE,
-					this->scroll_y + (tile.y - new_tile.y) * TILE_SIZE, sub);
-		} else if (this->map_type == SMT_LINKSTATS) {
-			this->overlay->SetDirty();
+			Point new_tile = this->TileToPixel(tile.x, tile.y);
+			this->scroll_x += zoom_pt->x - new_tile.x;
+			this->scroll_y += zoom_pt->y - new_tile.y;
 		}
-		this->SetWidgetDisabledState(WID_SM_ZOOM_IN,  this->zoom == zoomlevels[MIN_ZOOM_INDEX]);
-		this->SetWidgetDisabledState(WID_SM_ZOOM_OUT, this->zoom == zoomlevels[MAX_ZOOM_INDEX]);
+		this->SetWidgetDisabledState(WID_SM_ZOOM_IN,  this->ui_zoom == ui_zoomlevels[MIN_ZOOM_INDEX]);
+		this->SetWidgetDisabledState(WID_SM_ZOOM_OUT, this->tile_zoom == tile_zoomlevels[MAX_ZOOM_INDEX]);
 		this->SetDirty();
 	}
 }
@@ -818,7 +783,7 @@ inline uint32 SmallMapWindow::GetTileColours(const TileArea &ta) const
 			return GetSmallMapVegetationPixels(tile, et);
 
 		case SMT_OWNER:
-			return GetSmallMapOwnerPixels(tile, et, IncludeHeightmap::IfEnabled);
+			return GetSmallMapOwnerPixels(tile, et);
 
 		default: NOT_REACHED();
 	}
@@ -837,10 +802,14 @@ inline uint32 SmallMapWindow::GetTileColours(const TileArea &ta) const
  * @param blitter current blitter
  * @note If pixel position is below \c 0, skip drawing.
  */
-void SmallMapWindow::DrawSmallMapColumn(void *dst, uint xc, uint yc, int pitch, int reps, int start_pos, int end_pos, Blitter *blitter) const
+void SmallMapWindow::DrawSmallMapColumn(void *dst, uint xc, uint yc, int pitch, int reps, int start_pos, int end_pos, int y, int end_y, Blitter *blitter) const
 {
 	void *dst_ptr_abs_end = blitter->MoveTo(_screen.dst_ptr, 0, _screen.height);
 	uint min_xy = _settings_game.construction.freeform_edges ? 1 : 0;
+
+	int hidden_x = std::max(0, -start_pos);
+	int hidden_idx = hidden_x / this->ui_zoom;
+	int hidden_mod = hidden_x % this->ui_zoom;
 
 	do {
 		/* Check if the tile (xc,yc) is within the map range */
@@ -853,23 +822,47 @@ void SmallMapWindow::DrawSmallMapColumn(void *dst, uint xc, uint yc, int pitch, 
 		/* Construct tilearea covered by (xc, yc, xc + this->zoom, yc + this->zoom) such that it is within min_xy limits. */
 		TileArea ta;
 		if (min_xy == 1 && (xc == 0 || yc == 0)) {
-			if (this->zoom == 1) continue; // The tile area is empty, don't draw anything.
-
-			ta = TileArea(TileXY(std::max(min_xy, xc), std::max(min_xy, yc)), this->zoom - (xc == 0), this->zoom - (yc == 0));
+			if (this->tile_zoom == 1) continue; // The tile area is empty, don't draw anything.
+			ta = TileArea(TileXY(std::max(min_xy, xc), std::max(min_xy, yc)), this->tile_zoom - (xc == 0), this->tile_zoom - (yc == 0));
 		} else {
-			ta = TileArea(TileXY(xc, yc), this->zoom, this->zoom);
+			ta = TileArea(TileXY(xc, yc), this->tile_zoom, this->tile_zoom);
 		}
 		ta.ClampToMap(); // Clamp to map boundaries (may contain MP_VOID tiles!).
 
 		uint32 val = this->GetTileColours(ta);
 		uint8 *val8 = (uint8 *)&val;
-		int idx = std::max(0, -start_pos);
-		for (int pos = std::max(0, start_pos); pos < end_pos; pos++) {
-			blitter->SetPixel(dst, idx, 0, val8[idx]);
-			idx++;
+		if (this->ui_zoom == 1) {
+			int idx = std::max(0, -start_pos);
+			if (y >= 0 && y < end_y) {
+				for (int pos = std::max(0, start_pos); pos < end_pos; pos++) {
+					blitter->SetPixel(dst, idx, 0, val8[idx]);
+					idx++;
+				}
+			}
+		} else {
+			auto ndst = dst;
+			auto ny = y;
+			for (auto i = 0; i < this->ui_zoom; i++) {
+				if (ny >= 0 && ny < end_y) {
+					int idx = hidden_idx;
+					int j = hidden_mod;
+					int x = hidden_x;
+					for (int pos = std::max(0, start_pos); pos < end_pos; pos++) {
+						blitter->SetPixel(ndst, x, 0, val8[idx]);
+						j++;
+						x++;
+						if (j == this->ui_zoom) {
+							idx++;
+							j = 0;
+						}
+					}
+				}
+				ndst = blitter->MoveTo(ndst, pitch, 0);
+				ny++;
+			}
 		}
 	/* Switch to next tile in the column */
-	} while (xc += this->zoom, yc += this->zoom, dst = blitter->MoveTo(dst, pitch, 0), --reps != 0);
+	} while (xc += this->tile_zoom, yc += this->tile_zoom, dst = blitter->MoveTo(dst, pitch * this->ui_zoom * 2, 0), y += 2 * this->ui_zoom, --reps != 0);
 }
 
 /**
@@ -884,30 +877,23 @@ void SmallMapWindow::DrawVehicles(const DrawPixelInfo *dpi, Blitter *blitter) co
 		if (v->vehstatus & (VS_HIDDEN | VS_UNCLICKABLE)) continue;
 
 		/* Remap into flat coordinates. */
-		Point pt = this->RemapTile(v->x_pos / (int)TILE_SIZE, v->y_pos / (int)TILE_SIZE);
+		Point pt = this->TileToPixel(v->x_pos & ~TILE_UNIT_MASK, v->y_pos & ~TILE_UNIT_MASK);
 
 		int y = pt.y - dpi->top;
-		if (!IsInsideMM(y, 0, dpi->height)) continue; // y is out of bounds.
-
-		bool skip = false; // Default is to draw both pixels.
-		int x = pt.x - this->subscroll - 3 - dpi->left; // Offset X coordinate.
-		if (x < 0) {
-			/* if x+1 is 0, that means we're on the very left edge,
-			 * and should thus only draw a single pixel */
-			if (++x != 0) continue;
-			skip = true;
-		} else if (x >= dpi->width - 1) {
-			/* Check if we're at the very right edge, and if so draw only a single pixel */
-			if (x != dpi->width - 1) continue;
-			skip = true;
-		}
+		int x = pt.x - 1 * this->ui_zoom - dpi->left; // Offset X coordinate.
+		if (!IsInsideMM(y, -this->ui_zoom + 1, dpi->height)) continue; // y is out of bounds.
 
 		/* Calculate pointer to pixel and the colour */
 		byte colour = (this->map_type == SMT_VEHICLES) ? _vehicle_type_colours[v->type] : PC_WHITE;
 
 		/* And draw either one or two pixels depending on clipping */
-		blitter->SetPixel(dpi->dst_ptr, x, y, colour);
-		if (!skip) blitter->SetPixel(dpi->dst_ptr, x + 1, y, colour);
+		auto min_i = std::max(0, -y);
+		auto max_i = std::min(this->ui_zoom, dpi->height - y);
+		auto min_j = std::max(0, -x);
+		auto max_j = std::min(2 * this->ui_zoom, dpi->width - x);
+		if (min_i < max_i && min_j < max_j) {
+			blitter->DrawRectAt(dpi->dst_ptr, x + min_j, y + min_i, max_j - min_j, max_i - min_i, colour);
+		}
 	}
 }
 
@@ -919,8 +905,8 @@ void SmallMapWindow::DrawTowns(const DrawPixelInfo *dpi) const
 {
 	for (const Town *t : Town::Iterate()) {
 		/* Remap the town coordinate */
-		Point pt = this->RemapTile(TileX(t->xy), TileY(t->xy));
-		int x = pt.x - this->subscroll - (t->cache.sign.width_small >> 1);
+		Point pt = this->TileToPixel(TileX(t->xy) * TILE_SIZE, TileY(t->xy) * TILE_SIZE);
+		int x = pt.x - (t->cache.sign.width_small >> 1);
 		int y = pt.y;
 
 		/* Check if the town sign is within bounds */
@@ -941,16 +927,13 @@ void SmallMapWindow::DrawTowns(const DrawPixelInfo *dpi) const
 void SmallMapWindow::DrawMapIndicators() const
 {
 	/* Find main viewport. */
-	const Viewport *vp = FindWindowById(WC_MAIN_WINDOW, 0)->viewport;
+	const Viewport *vp = GetMainWindow()->viewport;
 
 	Point upper_left_smallmap_coord  = InverseRemapCoords2(vp->virtual_left, vp->virtual_top);
 	Point lower_right_smallmap_coord = InverseRemapCoords2(vp->virtual_left + vp->virtual_width - 1, vp->virtual_top + vp->virtual_height - 1);
 
-	Point upper_left = this->RemapTile(upper_left_smallmap_coord.x / (int)TILE_SIZE, upper_left_smallmap_coord.y / (int)TILE_SIZE);
-	upper_left.x -= this->subscroll;
-
-	Point lower_right = this->RemapTile(lower_right_smallmap_coord.x / (int)TILE_SIZE, lower_right_smallmap_coord.y / (int)TILE_SIZE);
-	lower_right.x -= this->subscroll;
+	Point upper_left = this->TileToPixel(upper_left_smallmap_coord.x, upper_left_smallmap_coord.y);
+	Point lower_right = this->TileToPixel(lower_right_smallmap_coord.x, lower_right_smallmap_coord.y);
 
 	SmallMapWindow::DrawVertMapIndicator(upper_left.x, upper_left.y, lower_right.y);
 	SmallMapWindow::DrawVertMapIndicator(lower_right.x, upper_left.y, lower_right.y);
@@ -970,65 +953,68 @@ void SmallMapWindow::DrawMapIndicators() const
  *
  * @param dpi pointer to pixel to write onto
  */
-void SmallMapWindow::DrawSmallMap(DrawPixelInfo *dpi) const
+void SmallMapWindow::DrawSmallMap(DrawPixelInfo *dpi, bool draw_indicators) const
 {
 	Blitter *blitter = BlitterFactory::GetCurrentBlitter();
-	DrawPixelInfo *old_dpi;
-
-	old_dpi = _cur_dpi;
-	_cur_dpi = dpi;
+	AutoRestoreBackup dpi_backup(_cur_dpi, dpi);
 
 	/* Clear it */
 	GfxFillRect(dpi->left, dpi->top, dpi->left + dpi->width - 1, dpi->top + dpi->height - 1, PC_BLACK);
 
 	/* Which tile is displayed at (dpi->left, dpi->top)? */
-	int dx;
-	Point tile = this->PixelToTile(dpi->left, dpi->top, &dx);
-	int tile_x = this->scroll_x / (int)TILE_SIZE + tile.x;
-	int tile_y = this->scroll_y / (int)TILE_SIZE + tile.y;
+	Point tile = this->PixelToTile(dpi->left, dpi->top);
+	int tile_x = tile.x / (int)TILE_SIZE + this->tile_zoom;
+	int tile_y = tile.y / (int)TILE_SIZE - 2 * this->tile_zoom;
+	tile_x -= tile_x % this->tile_zoom;
+	tile_y -= tile_y % this->tile_zoom;
+	Point tile_pos = this->TileToPixel(tile_x * TILE_SIZE, tile_y * TILE_SIZE);
+	int dx = tile_pos.x - dpi->left;
+	int dy = tile_pos.y - dpi->top;
 
-	void *ptr = blitter->MoveTo(dpi->dst_ptr, -dx - 4, 0);
-	int x = - dx - 4;
-	int y = 0;
+	int x = dx - 2 * this->ui_zoom;
+	int y = dy;
+	void *ptr = blitter->MoveTo(dpi->dst_ptr, x, y);
+	bool even = true;
 
 	for (;;) {
 		/* Distance from left edge */
-		if (x >= -3) {
+		if (x > -4 * this->ui_zoom) {
 			if (x >= dpi->width) break; // Exit the loop.
 
-			int end_pos = std::min(dpi->width, x + 4);
-			int reps = (dpi->height - y + 1) / 2; // Number of lines.
+			int end_pos = std::min(dpi->width, x + 4 * this->ui_zoom);
+			int reps = (dpi->height - y + 3 * this->ui_zoom - 1) / 2 / this->ui_zoom; // Number of lines.
 			if (reps > 0) {
-				this->DrawSmallMapColumn(ptr, tile_x, tile_y, dpi->pitch * 2, reps, x, end_pos, blitter);
+				this->DrawSmallMapColumn(ptr, tile_x, tile_y, dpi->pitch, reps, x, end_pos, y, dpi->height, blitter);
 			}
 		}
-
-		if (y == 0) {
-			tile_y += this->zoom;
-			y++;
-			ptr = blitter->MoveTo(ptr, 0, 1);
+		if (even) {
+			tile_y += this->tile_zoom;
+			y += this->ui_zoom;
+			ptr = blitter->MoveTo(ptr, 0, this->ui_zoom);
 		} else {
-			tile_x -= this->zoom;
-			y--;
-			ptr = blitter->MoveTo(ptr, 0, -1);
+			tile_x -= this->tile_zoom;
+			y -= this->ui_zoom;
+			ptr = blitter->MoveTo(ptr, 0, -this->ui_zoom);
 		}
-		ptr = blitter->MoveTo(ptr, 2, 0);
-		x += 2;
+		even = !even;
+		ptr = blitter->MoveTo(ptr, 2 * this->ui_zoom, 0);
+		x += 2 * this->ui_zoom;
 	}
 
 	/* Draw vehicles */
 	if (this->map_type == SMT_CONTOUR || this->map_type == SMT_VEHICLES) this->DrawVehicles(dpi, blitter);
 
 	/* Draw link stat overlay */
-	if (this->map_type == SMT_LINKSTATS) this->overlay->Draw(dpi);
+	if (this->map_type == SMT_LINKSTATS) {
+		this->overlay->PrepareDraw();
+		this->overlay->Draw(dpi);
+	}
 
 	/* Draw town names */
 	if (this->show_towns) this->DrawTowns(dpi);
 
 	/* Draw map indicators */
-	this->DrawMapIndicators();
-
-	_cur_dpi = old_dpi;
+	if (draw_indicators) this->DrawMapIndicators();
 }
 
 /**
@@ -1076,7 +1062,7 @@ void SmallMapWindow::SetupWidgetData()
 	this->GetWidget<NWidgetStacked>(WID_SM_SELECT_BUTTONS)->SetDisplayedPlane(plane);
 }
 
-SmallMapWindow::SmallMapWindow(WindowDesc *desc, int window_number) : Window(desc), refresh(GUITimer(FORCE_REFRESH_PERIOD))
+SmallMapWindow::SmallMapWindow(WindowDesc *desc, int window_number) : Window(desc), refresh(GUITimer())
 {
 	_smallmap_industry_highlight = INVALID_INDUSTRYTYPE;
 	this->overlay = new LinkGraphOverlay(this, WID_SM_MAP, 0, this->GetOverlayCompanyMask(), 1);
@@ -1094,17 +1080,13 @@ SmallMapWindow::SmallMapWindow(WindowDesc *desc, int window_number) : Window(des
 	this->SetZoomLevel(ZLC_INITIALIZE, nullptr);
 	this->SmallMapCenterOnCurrentPos();
 	this->SetOverlayCargoMask();
+	this->refresh.SetInterval(this->GetRefreshPeriod());
 }
 
 SmallMapWindow::~SmallMapWindow()
 {
 	delete this->overlay;
-}
-
-/* virtual */ void SmallMapWindow::Close()
-{
 	this->BreakIndustryChainLink();
-	this->Window::Close();
 }
 
 /**
@@ -1322,6 +1304,7 @@ void SmallMapWindow::SwitchMapType(SmallMapType map_type)
 	if (map_type == SMT_LINKSTATS) this->overlay->SetDirty();
 	if (map_type != SMT_INDUSTRY) this->BreakIndustryChainLink();
 	this->SetDirty();
+	this->refresh.SetInterval(this->GetRefreshPeriod());
 }
 
 /**
@@ -1420,7 +1403,7 @@ int SmallMapWindow::GetPositionOnLegend(Point pt)
 	}
 	if (new_highlight != _smallmap_industry_highlight) {
 		_smallmap_industry_highlight = new_highlight;
-		this->refresh.SetInterval(_smallmap_industry_highlight != INVALID_INDUSTRYTYPE ? BLINK_PERIOD : FORCE_REFRESH_PERIOD);
+		this->refresh.SetInterval(this->GetRefreshPeriod());
 		_smallmap_industry_highlight_state = true;
 		this->SetDirty();
 	}
@@ -1433,11 +1416,9 @@ int SmallMapWindow::GetPositionOnLegend(Point pt)
 			if (click_count > 0) this->mouse_capture_widget = widget;
 
 			const NWidgetBase *wid = this->GetWidget<NWidgetBase>(WID_SM_MAP);
-			Window *w = FindWindowById(WC_MAIN_WINDOW, 0);
-			int sub;
-			pt = this->PixelToTile(pt.x - wid->pos_x, pt.y - wid->pos_y, &sub);
-			ScrollWindowTo(this->scroll_x + pt.x * TILE_SIZE, this->scroll_y + pt.y * TILE_SIZE, -1, w);
-
+			Window *w = GetMainWindow();
+			pt = this->PixelToTile(pt.x - wid->pos_x, pt.y - wid->pos_y);
+			ScrollWindowTo(pt.x, pt.y, -1, w);
 			this->SetDirty();
 			break;
 		}
@@ -1486,6 +1467,7 @@ int SmallMapWindow::GetPositionOnLegend(Point pt)
 					/* If click on industries label, find right industry type and enable/disable it. */
 					if (click_pos < _smallmap_industry_count) {
 						this->SelectLegendItem(click_pos, _legend_from_industries, _smallmap_industry_count);
+						NotifyAllViewports(VPMT_INDUSTRY);
 					}
 				} else if (this->map_type == SMT_LINKSTATS) {
 					if (click_pos < _smallmap_cargo_count) {
@@ -1495,6 +1477,7 @@ int SmallMapWindow::GetPositionOnLegend(Point pt)
 				} else if (this->map_type == SMT_OWNER) {
 					if (click_pos < _smallmap_company_count) {
 						this->SelectLegendItem(click_pos, _legend_land_owners, _smallmap_company_count, NUM_NO_COMPANY_ENTRIES);
+						NotifyAllViewports(VPMT_OWNER);
 					}
 				}
 				this->SetDirty();
@@ -1507,10 +1490,12 @@ int SmallMapWindow::GetPositionOnLegend(Point pt)
 			switch (this->map_type) {
 				case SMT_INDUSTRY:
 					tbl = _legend_from_industries;
+					NotifyAllViewports(VPMT_INDUSTRY);
 					this->BreakIndustryChainLink();
 					break;
 				case SMT_OWNER:
 					tbl = &(_legend_land_owners[NUM_NO_COMPANY_ENTRIES]);
+					NotifyAllViewports(VPMT_OWNER);
 					break;
 				case SMT_LINKSTATS:
 					tbl = _legend_linkstats;
@@ -1529,7 +1514,12 @@ int SmallMapWindow::GetPositionOnLegend(Point pt)
 		case WID_SM_SHOW_HEIGHT: // Enable/disable showing of heightmap.
 			_smallmap_show_heightmap = !_smallmap_show_heightmap;
 			this->SetWidgetLoweredState(WID_SM_SHOW_HEIGHT, _smallmap_show_heightmap);
+			NotifyAllViewports(VPMT_INDUSTRY);
 			this->SetDirty();
+			break;
+
+		case WID_SM_SCREENSHOT:
+			TakeScreenshot();
 			break;
 	}
 }
@@ -1553,12 +1543,7 @@ int SmallMapWindow::GetPositionOnLegend(Point pt)
 			break;
 
 		case 0: {
-			extern std::bitset<NUM_INDUSTRYTYPES> _displayed_industries;
 			if (this->map_type != SMT_INDUSTRY) this->SwitchMapType(SMT_INDUSTRY);
-
-			for (int i = 0; i != _smallmap_industry_count; i++) {
-				_legend_from_industries[i].show_on_map = _displayed_industries.test(_legend_from_industries[i].type);
-			}
 			break;
 		}
 
@@ -1575,7 +1560,7 @@ int SmallMapWindow::GetPositionOnLegend(Point pt)
 {
 	if (widget != WID_SM_MAP || _scrolling_viewport) return false;
 
-	_scrolling_viewport = true;
+	_scrolling_viewport = this;
 	return true;
 }
 
@@ -1594,11 +1579,13 @@ int SmallMapWindow::GetPositionOnLegend(Point pt)
 
 /* virtual */ void SmallMapWindow::OnRealtimeTick(uint delta_ms)
 {
+	if (_pause_mode != PM_UNPAUSED) delta_ms = this->PausedAdjustRefreshTimeDelta(delta_ms);
+
 	/* Update the window every now and then */
 	if (!this->refresh.Elapsed(delta_ms)) return;
 
 	if (this->map_type == SMT_LINKSTATS) {
-		uint32 company_mask = this->GetOverlayCompanyMask();
+		CompanyMask company_mask = this->GetOverlayCompanyMask();
 		if (this->overlay->GetCompanyMask() != company_mask) {
 			this->overlay->SetCompanyMask(company_mask);
 		} else {
@@ -1607,56 +1594,50 @@ int SmallMapWindow::GetPositionOnLegend(Point pt)
 	}
 	_smallmap_industry_highlight_state = !_smallmap_industry_highlight_state;
 
-	this->refresh.SetInterval(_smallmap_industry_highlight != INVALID_INDUSTRYTYPE ? BLINK_PERIOD : FORCE_REFRESH_PERIOD);
+	this->refresh.SetInterval(this->GetRefreshPeriod());
 	this->SetDirty();
 }
 
-/**
- * Set new #scroll_x, #scroll_y, and #subscroll values after limiting them such that the center
- * of the smallmap always contains a part of the map.
- * @param sx  Proposed new #scroll_x
- * @param sy  Proposed new #scroll_y
- * @param sub Proposed new #subscroll
- */
-void SmallMapWindow::SetNewScroll(int sx, int sy, int sub)
+uint SmallMapWindow::GetRefreshPeriod() const
 {
-	const NWidgetBase *wi = this->GetWidget<NWidgetBase>(WID_SM_MAP);
-	Point hv = InverseRemapCoords(wi->current_x * ZOOM_LVL_BASE * TILE_SIZE / 2, wi->current_y * ZOOM_LVL_BASE * TILE_SIZE / 2);
-	hv.x *= this->zoom;
-	hv.y *= this->zoom;
+	if (_smallmap_industry_highlight != INVALID_INDUSTRYTYPE) return BLINK_PERIOD;
 
-	if (sx < -hv.x) {
-		sx = -hv.x;
-		sub = 0;
-	}
-	if (sx > (int)(MapMaxX() * TILE_SIZE) - hv.x) {
-		sx = MapMaxX() * TILE_SIZE - hv.x;
-		sub = 0;
-	}
-	if (sy < -hv.y) {
-		sy = -hv.y;
-		sub = 0;
-	}
-	if (sy > (int)(MapMaxY() * TILE_SIZE) - hv.y) {
-		sy = MapMaxY() * TILE_SIZE - hv.y;
-		sub = 0;
-	}
+	switch (map_type) {
+		case SMT_CONTOUR:
+		case SMT_VEHICLES:
+			return FORCE_REFRESH_PERIOD_VEH * (1 + (this->tile_zoom / 2));
 
-	this->scroll_x = sx;
-	this->scroll_y = sy;
-	this->subscroll = sub;
-	if (this->map_type == SMT_LINKSTATS) this->overlay->SetDirty();
+		case SMT_LINKSTATS:
+			return FORCE_REFRESH_PERIOD_LINK_GRAPH * (1 + (this->tile_zoom / 6));
+
+		default:
+			return FORCE_REFRESH_PERIOD * (1 + (this->tile_zoom / 6));
+	}
+}
+
+uint SmallMapWindow::PausedAdjustRefreshTimeDelta(uint delta_ms) const
+{
+	if (_smallmap_industry_highlight != INVALID_INDUSTRYTYPE) return delta_ms;
+
+	switch (map_type) {
+		case SMT_CONTOUR:
+		case SMT_VEHICLES:
+			return CeilDivT<uint>(delta_ms, 4);
+
+		case SMT_LINKSTATS:
+			return delta_ms;
+
+		default:
+			return CeilDivT<uint>(delta_ms, 2);
+	}
 }
 
 /* virtual */ void SmallMapWindow::OnScroll(Point delta)
 {
 	if (_settings_client.gui.scroll_mode == VSM_VIEWPORT_RMB_FIXED || _settings_client.gui.scroll_mode == VSM_MAP_RMB_FIXED) _cursor.fix_at = true;
 
-	/* While tile is at (delta.x, delta.y)? */
-	int sub;
-	Point pt = this->PixelToTile(delta.x, delta.y, &sub);
-	this->SetNewScroll(this->scroll_x + pt.x * TILE_SIZE, this->scroll_y + pt.y * TILE_SIZE, sub);
-
+	this->scroll_x -= delta.x;
+	this->scroll_y -= delta.y;
 	this->SetDirty();
 }
 
@@ -1665,14 +1646,13 @@ void SmallMapWindow::SetNewScroll(int sx, int sy, int sub)
  */
 void SmallMapWindow::SmallMapCenterOnCurrentPos()
 {
-	const Viewport *vp = FindWindowById(WC_MAIN_WINDOW, 0)->viewport;
+	const Viewport *vp = GetMainWindow()->viewport;
 	Point viewport_center = InverseRemapCoords2(vp->virtual_left + vp->virtual_width / 2, vp->virtual_top + vp->virtual_height / 2);
 
-	int sub;
 	const NWidgetBase *wid = this->GetWidget<NWidgetBase>(WID_SM_MAP);
-	Point sxy = this->ComputeScroll(viewport_center.x / (int)TILE_SIZE, viewport_center.y / (int)TILE_SIZE,
-			std::max(0, (int)wid->current_x / 2 - 2), wid->current_y / 2, &sub);
-	this->SetNewScroll(sxy.x, sxy.y, sub);
+	auto pt = this->TileToPixel(viewport_center.x, viewport_center.y);
+	this->scroll_x += std::max(0, (int)wid->current_x / 2 - 2) - pt.x;
+	this->scroll_y +=  wid->current_y / 2 - pt.y;
 	this->SetDirty();
 }
 
@@ -1683,15 +1663,68 @@ void SmallMapWindow::SmallMapCenterOnCurrentPos()
  */
 Point SmallMapWindow::GetStationMiddle(const Station *st) const
 {
-	int x = CenterBounds(st->rect.left, st->rect.right, 0);
-	int y = CenterBounds(st->rect.top, st->rect.bottom, 0);
-	Point ret = this->RemapTile(x, y);
+	int x = (st->rect.right + st->rect.left + 1) * TILE_SIZE / 2;
+	int y = (st->rect.bottom + st->rect.top + 1) * TILE_SIZE / 2;
+	Point ret = this->TileToPixel(x, y);
 
 	/* Same magic 3 as in DrawVehicles; that's where I got it from.
 	 * No idea what it is, but without it the result looks bad.
 	 */
-	ret.x -= 3 + this->subscroll;
+	ret.x -= 3;
 	return ret;
+}
+
+/**
+ * Take a screenshot of the contents of the smallmap window, at the current zoom level and mode
+ * This calls MakeSmallMapScreenshot which uses ScreenshotCallbackHandler as the screenshot callback
+ */
+void SmallMapWindow::TakeScreenshot()
+{
+	int32 width = (((MapMaxX() + MapMaxY()) * 2) * this->ui_zoom) / this->tile_zoom;
+	int32 height = ((MapMaxX() + MapMaxY() + 1) * this->ui_zoom) / this->tile_zoom;
+
+	int32 saved_scroll_x = this->scroll_x;
+	int32 saved_scroll_y = this->scroll_y;
+	MakeSmallMapScreenshot(width, height, this);
+	this->scroll_x = saved_scroll_x;
+	this->scroll_y = saved_scroll_y;
+}
+
+/**
+ * Callback called by the screenshot code to draw a section of the smallmap to the output buffer
+ * @param buf Videobuffer with same bitdepth as current blitter
+ * @param y First line to render
+ * @param pitch Pitch of the videobuffer
+ * @param n Number of lines to render
+ */
+void SmallMapWindow::ScreenshotCallbackHandler(void *buf, uint y, uint pitch, uint n)
+{
+	DrawPixelInfo dpi;
+	AutoRestoreBackup dpi_backup(_cur_dpi, &dpi);
+
+	/* We are no longer rendering to the screen */
+	AutoRestoreBackup screen_backup(_screen, AutoRestoreBackupNoNewValueTag{});
+	AutoRestoreBackup screen_disable_anim_backup(_screen_disable_anim, true);
+
+	_screen.dst_ptr = buf;
+	_screen.width = pitch;
+	_screen.height = n;
+	_screen.pitch = pitch;
+
+	dpi.dst_ptr = buf;
+	dpi.height = n;
+	dpi.width = (((MapMaxX() + MapMaxY()) * 2) * this->ui_zoom) / this->tile_zoom;
+	dpi.pitch = pitch;
+	dpi.zoom = ZOOM_LVL_NORMAL;
+	dpi.left = 0;
+	dpi.top = y;
+
+	int32 pos = (((int32)MapMaxX() + 1) * TILE_PIXELS) / 4;
+	this->scroll_x = pos;
+	this->scroll_y = -pos;
+
+	/* make the screenshot */
+	this->DrawSmallMap(&dpi, false);
 }
 
 SmallMapWindow::SmallMapType SmallMapWindow::map_type = SMT_CONTOUR;
@@ -1770,6 +1803,15 @@ public:
 	{
 		for (NWidgetBase *child_wid = this->head; child_wid != nullptr; child_wid = child_wid->next) child_wid->Draw(w);
 	}
+
+	void FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets) override
+	{
+		if (this->base_flags & WBF_DIRTY) {
+			dirty_widgets.push_back(this);
+		} else {
+			for (NWidgetBase *child_wid = this->head; child_wid != nullptr; child_wid = child_wid->next) child_wid->FillDirtyWidgets(dirty_widgets);
+		}
+	}
 };
 
 /** Widget parts of the smallmap display. */
@@ -1842,6 +1884,7 @@ static const NWidgetPart _nested_smallmap_widgets[] = {
 	NWidgetFunction(SmallMapDisplay), // Smallmap display and legend bar + image buttons.
 	/* Bottom button row and resize box. */
 	NWidget(NWID_HORIZONTAL),
+		NWidget(WWT_PUSHTXTBTN, COLOUR_BROWN, WID_SM_SCREENSHOT), SetDataTip(STR_SMALLMAP_SCREENSHOT, STR_NULL),
 		NWidget(NWID_SELECTION, INVALID_COLOUR, WID_SM_SELECT_BUTTONS),
 			NWidget(NWID_HORIZONTAL, NC_EQUALSIZE),
 				NWidget(WWT_PUSHTXTBTN, COLOUR_BROWN, WID_SM_ENABLE_ALL), SetDataTip(STR_SMALLMAP_ENABLE_ALL, STR_NULL),
@@ -1882,7 +1925,7 @@ void ShowSmallMap()
  */
 bool ScrollMainWindowTo(int x, int y, int z, bool instant)
 {
-	bool res = ScrollWindowTo(x, y, z, FindWindowById(WC_MAIN_WINDOW, 0), instant);
+	bool res = ScrollWindowTo(x, y, z, GetMainWindow(), instant);
 
 	/* If a user scrolls to a tile (via what way what so ever) and already is on
 	 * that tile (e.g.: pressed twice), move the smallmap to that location,

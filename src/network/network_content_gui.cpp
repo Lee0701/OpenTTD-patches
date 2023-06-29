@@ -21,6 +21,7 @@
 #include "../querystring_gui.h"
 #include "../core/geometry_func.hpp"
 #include "../textfile_gui.h"
+#include "../fios.h"
 #include "network_content_gui.h"
 
 
@@ -74,7 +75,7 @@ struct ContentTextfileWindow : public TextfileWindow {
 
 void ShowContentTextfileWindow(TextfileType file_type, const ContentInfo *ci)
 {
-	CloseWindowById(WC_TEXTFILE, file_type);
+	DeleteWindowById(WC_TEXTFILE, file_type);
 	new ContentTextfileWindow(file_type, ci);
 }
 
@@ -99,7 +100,7 @@ static WindowDesc _network_content_download_status_window_desc(
 );
 
 BaseNetworkContentDownloadStatusWindow::BaseNetworkContentDownloadStatusWindow(WindowDesc *desc) :
-		Window(desc), cur_id(UINT32_MAX)
+		Window(desc), downloaded_bytes(0), downloaded_files(0), cur_id(UINT32_MAX)
 {
 	_network_content_client.AddCallback(this);
 	_network_content_client.DownloadSelectedContent(this->total_files, this->total_bytes);
@@ -107,10 +108,9 @@ BaseNetworkContentDownloadStatusWindow::BaseNetworkContentDownloadStatusWindow(W
 	this->InitNested(WN_NETWORK_STATUS_WINDOW_CONTENT_DOWNLOAD);
 }
 
-void BaseNetworkContentDownloadStatusWindow::Close()
+BaseNetworkContentDownloadStatusWindow::~BaseNetworkContentDownloadStatusWindow()
 {
 	_network_content_client.RemoveCallback(this);
-	this->Window::Close();
 }
 
 void BaseNetworkContentDownloadStatusWindow::UpdateWidgetSize(int widget, Dimension *size, const Dimension &padding, Dimension *fill, Dimension *resize)
@@ -173,7 +173,13 @@ void BaseNetworkContentDownloadStatusWindow::OnDownloadProgress(const ContentInf
 		this->downloaded_files++;
 	}
 
-	this->downloaded_bytes += bytes;
+	/* A negative value means we are resetting; for example, when retrying or using a fallback. */
+	if (bytes < 0) {
+		this->downloaded_bytes = 0;
+	} else {
+		this->downloaded_bytes += bytes;
+	}
+
 	this->SetDirty();
 }
 
@@ -193,7 +199,8 @@ public:
 		this->parent = FindWindowById(WC_NETWORK_WINDOW, WN_NETWORK_WINDOW_CONTENT_LIST);
 	}
 
-	void Close() override
+	/** Free whatever we've allocated */
+	~NetworkContentDownloadStatusWindow()
 	{
 		TarScanner::Mode mode = TarScanner::NONE;
 		for (auto ctype : this->receivedTypes) {
@@ -263,7 +270,6 @@ public:
 
 				case CONTENT_TYPE_SCENARIO:
 				case CONTENT_TYPE_HEIGHTMAP:
-					extern void ScanScenarios();
 					ScanScenarios();
 					InvalidateWindowData(WC_SAVELOAD, 0, 0);
 					break;
@@ -275,8 +281,6 @@ public:
 
 		/* Always invalidate the download window; tell it we are going to be gone */
 		InvalidateWindowData(WC_NETWORK_WINDOW, WN_NETWORK_WINDOW_CONTENT_LIST, 2);
-
-		this->BaseNetworkContentDownloadStatusWindow::Close();
 	}
 
 	void OnClick(Point pt, int widget, int click_count) override
@@ -284,11 +288,11 @@ public:
 		if (widget == WID_NCDS_CANCELOK) {
 			if (this->downloaded_bytes != this->total_bytes) {
 				_network_content_client.CloseConnection();
-				this->Close();
+				delete this;
 			} else {
 				/* If downloading succeeded, close the online content window. This will close
 				 * the current window as well. */
-				CloseWindowById(WC_NETWORK_WINDOW, WN_NETWORK_WINDOW_CONTENT_LIST);
+				DeleteWindowById(WC_NETWORK_WINDOW, WN_NETWORK_WINDOW_CONTENT_LIST);
 			}
 		}
 	}
@@ -344,8 +348,6 @@ class NetworkContentListWindow : public Window, ContentCallback {
 	/** Search external websites for content */
 	void OpenExternalSearch()
 	{
-		extern void OpenBrowser(const char *url);
-
 		char url[1024];
 		const char *last = lastof(url);
 
@@ -422,14 +424,14 @@ class NetworkContentListWindow : public Window, ContentCallback {
 		this->content.RebuildDone();
 		this->SortContentList();
 
-		this->vscroll->SetCount((int)this->content.size()); // Update the scrollbar
+		this->vscroll->SetCount(this->content.size()); // Update the scrollbar
 		this->ScrollToSelected();
 	}
 
 	/** Sort content by name. */
 	static bool NameSorter(const ContentInfo * const &a, const ContentInfo * const &b)
 	{
-		return strnatcmp(a->name.c_str(), b->name.c_str(), true) < 0; // Sort by name (natural sorting).
+		return StrNaturalCompare(a->name, b->name, true) < 0; // Sort by name (natural sorting).
 	}
 
 	/** Sort content by type. */
@@ -437,7 +439,7 @@ class NetworkContentListWindow : public Window, ContentCallback {
 	{
 		int r = 0;
 		if (a->type != b->type) {
-			r = strnatcmp(content_type_strs[a->type], content_type_strs[b->type]);
+			r = StrNaturalCompare(content_type_strs[a->type], content_type_strs[b->type]);
 		}
 		if (r == 0) return NameSorter(a, b);
 		return r < 0;
@@ -461,17 +463,17 @@ class NetworkContentListWindow : public Window, ContentCallback {
 	}
 
 	/** Filter content by tags/name */
-	static bool CDECL TagNameFilter(const ContentInfo * const *a, ContentListFilterData &filter)
+	static bool TagNameFilter(const ContentInfo * const *a, ContentListFilterData &filter)
 	{
 		filter.string_filter.ResetState();
-		for (auto &tag : (*a)->tags) filter.string_filter.AddLine(tag.c_str());
+		for (auto &tag : (*a)->tags) filter.string_filter.AddLine(tag);
 
-		filter.string_filter.AddLine((*a)->name.c_str());
+		filter.string_filter.AddLine((*a)->name);
 		return filter.string_filter.GetState();
 	}
 
 	/** Filter content by type, but still show content selected for download. */
-	static bool CDECL TypeOrSelectedFilter(const ContentInfo * const *a, ContentListFilterData &filter)
+	static bool TypeOrSelectedFilter(const ContentInfo * const *a, ContentListFilterData &filter)
 	{
 		if (filter.types.none()) return true;
 		if (filter.types[(*a)->type]) return true;
@@ -569,10 +571,10 @@ public:
 		this->InvalidateData();
 	}
 
-	void Close() override
+	/** Free everything we allocated */
+	~NetworkContentListWindow()
 	{
 		_network_content_client.RemoveCallback(this);
-		this->Window::Close();
 	}
 
 	void OnInit() override
@@ -849,12 +851,11 @@ public:
 				break;
 
 			case WID_NCL_CANCEL:
-				this->Close();
+				delete this;
 				break;
 
 			case WID_NCL_OPEN_URL:
 				if (this->selected != nullptr) {
-					extern void OpenBrowser(const char *url);
 					OpenBrowser(this->selected->url.c_str());
 				}
 				break;
@@ -953,7 +954,7 @@ public:
 	{
 		if (!success) {
 			ShowErrorMessage(STR_CONTENT_ERROR_COULD_NOT_CONNECT, INVALID_STRING_ID, WL_ERROR);
-			this->Close();
+			delete this;
 			return;
 		}
 
@@ -1140,7 +1141,7 @@ void ShowNetworkContentListWindow(ContentVector *cv, ContentType type1, ContentT
 		_network_content_client.RequestContentList(cv, true);
 	}
 
-	CloseWindowById(WC_NETWORK_WINDOW, WN_NETWORK_WINDOW_CONTENT_LIST);
+	DeleteWindowById(WC_NETWORK_WINDOW, WN_NETWORK_WINDOW_CONTENT_LIST);
 	new NetworkContentListWindow(&_network_content_list_desc, cv != nullptr, types);
 #else
 	ShowErrorMessage(STR_CONTENT_NO_ZLIB, STR_CONTENT_NO_ZLIB_SUB, WL_ERROR);

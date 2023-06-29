@@ -74,7 +74,7 @@ ServerNetworkAdminSocketHandler::ServerNetworkAdminSocketHandler(SOCKET s) : Net
 ServerNetworkAdminSocketHandler::~ServerNetworkAdminSocketHandler()
 {
 	_network_admins_connected--;
-	Debug(net, 3, "[admin] '{}' ({}) has disconnected", this->admin_name, this->admin_version);
+	DEBUG(net, 3, "[admin] '%s' (%s) has disconnected", this->admin_name.c_str(), this->admin_version.c_str());
 	if (_redirect_console_to_admin == this->index) _redirect_console_to_admin = INVALID_ADMIN_ID;
 
 	if (this->update_frequency[ADMIN_UPDATE_CONSOLE] & ADMIN_FREQUENCY_AUTOMATIC) {
@@ -102,7 +102,7 @@ ServerNetworkAdminSocketHandler::~ServerNetworkAdminSocketHandler()
 {
 	for (ServerNetworkAdminSocketHandler *as : ServerNetworkAdminSocketHandler::Iterate()) {
 		if (as->status == ADMIN_STATUS_INACTIVE && std::chrono::steady_clock::now() > as->connect_time + ADMIN_AUTHORISATION_TIMEOUT) {
-			Debug(net, 2, "[admin] Admin did not send its authorisation within {} seconds", std::chrono::duration_cast<std::chrono::seconds>(ADMIN_AUTHORISATION_TIMEOUT).count());
+			DEBUG(net, 2, "[admin] Admin did not send its authorisation within %d seconds", (uint32)std::chrono::duration_cast<std::chrono::seconds>(ADMIN_AUTHORISATION_TIMEOUT).count());
 			as->CloseConnection(true);
 			continue;
 		}
@@ -140,7 +140,7 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::SendError(NetworkErrorCode er
 
 	std::string error_message = GetString(GetNetworkErrorMsg(error));
 
-	Debug(net, 1, "[admin] The admin '{}' ({}) made an error and has been disconnected: '{}'", this->admin_name, this->admin_version, error_message);
+	DEBUG(net, 1, "[admin] The admin '%s' (%s) made an error and has been disconnected: '%s'", this->admin_name.c_str(), this->admin_version.c_str(), error_message.c_str());
 
 	return this->CloseConnection(true);
 }
@@ -171,7 +171,7 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::SendWelcome()
 	Packet *p = new Packet(ADMIN_PACKET_SERVER_WELCOME);
 
 	p->Send_string(_settings_client.network.server_name);
-	p->Send_string(GetNetworkRevisionString());
+	p->Send_string(_openttd_revision);
 	p->Send_bool  (_network_dedicated);
 
 	p->Send_string(""); // Used to be map-name.
@@ -332,10 +332,6 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::SendCompanyInfo(const Company
 	p->Send_bool  (c->is_ai);
 	p->Send_uint8 (CeilDiv(c->months_of_bankruptcy, 3)); // send as quarters_of_bankruptcy
 
-	for (auto owner : c->share_owners) {
-		p->Send_uint8(owner);
-	}
-
 	this->SendPacket(p);
 
 	return NETWORK_RECV_STATUS_OKAY;
@@ -358,10 +354,6 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::SendCompanyUpdate(const Compa
 	p->Send_uint8 (c->colour);
 	p->Send_bool  (NetworkCompanyIsPassworded(c->index));
 	p->Send_uint8 (CeilDiv(c->months_of_bankruptcy, 3)); // send as quarters_of_bankruptcy
-
-	for (auto owner : c->share_owners) {
-		p->Send_uint8(owner);
-	}
 
 	this->SendPacket(p);
 
@@ -455,7 +447,7 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::SendCompanyStats()
  * @param msg The actual message.
  * @param data Arbitrary extra data.
  */
-NetworkRecvStatus ServerNetworkAdminSocketHandler::SendChat(NetworkAction action, DestType desttype, ClientID client_id, const std::string &msg, int64 data)
+NetworkRecvStatus ServerNetworkAdminSocketHandler::SendChat(NetworkAction action, DestType desttype, ClientID client_id, const std::string &msg, NetworkTextMessageData data)
 {
 	Packet *p = new Packet(ADMIN_PACKET_SERVER_CHAT);
 
@@ -463,7 +455,7 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::SendChat(NetworkAction action
 	p->Send_uint8 (desttype);
 	p->Send_uint32(client_id);
 	p->Send_string(msg);
-	p->Send_uint64(data);
+	data.send(p);
 
 	this->SendPacket(p);
 	return NETWORK_RECV_STATUS_OKAY;
@@ -505,7 +497,7 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::Receive_ADMIN_RCON(Packet *p)
 
 	std::string command = p->Recv_string(NETWORK_RCONCOMMAND_LENGTH);
 
-	Debug(net, 3, "[admin] Rcon command from '{}' ({}): {}", this->admin_name, this->admin_version, command);
+	DEBUG(net, 3, "[admin] Rcon command from '%s' (%s): %s", this->admin_name.c_str(), this->admin_version.c_str(), command.c_str());
 
 	_redirect_console_to_admin = this->index;
 	IConsoleCmdExec(command.c_str());
@@ -519,7 +511,7 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::Receive_ADMIN_GAMESCRIPT(Pack
 
 	std::string json = p->Recv_string(NETWORK_GAMESCRIPT_JSON_LENGTH);
 
-	Debug(net, 6, "[admin] GameScript JSON from '{}' ({}): {}", this->admin_name, this->admin_version, json);
+	DEBUG(net, 6, "[admin] GameScript JSON from '%s' (%s): %s", this->admin_name.c_str(), this->admin_version.c_str(), json.c_str());
 
 	Game::NewEvent(new ScriptEventAdminPort(json));
 	return NETWORK_RECV_STATUS_OKAY;
@@ -531,7 +523,7 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::Receive_ADMIN_PING(Packet *p)
 
 	uint32 d1 = p->Recv_uint32();
 
-	Debug(net, 6, "[admin] Ping from '{}' ({}): {}", this->admin_name, this->admin_version, d1);
+	DEBUG(net, 6, "[admin] Ping from '%s' (%s): %d", this->admin_name.c_str(), this->admin_version.c_str(), d1);
 
 	return this->SendPong(d1);
 }
@@ -593,8 +585,8 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::SendCmdNames()
 {
 	Packet *p = new Packet(ADMIN_PACKET_SERVER_CMD_NAMES);
 
-	for (uint16 i = 0; i < CMD_END; i++) {
-		const char *cmdname = GetCommandName(static_cast<Commands>(i));
+	for (uint i = 0; i < CMD_END; i++) {
+		const char *cmdname = GetCommandName(i);
 
 		/* Should COMPAT_MTU be exceeded, start a new packet
 		 * (magic 5: 1 bool "more data" and one uint16 "command id", one
@@ -629,8 +621,17 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::SendCmdLogging(ClientID clien
 
 	p->Send_uint32(client_id);
 	p->Send_uint8 (cp->company);
-	p->Send_uint16(cp->cmd);
-	p->Send_buffer(cp->data);
+	p->Send_uint16(cp->cmd & CMD_ID_MASK);
+
+	p->Send_uint16(4 + 4 + 8 + 4 + (uint16)cp->text.size() + 1);
+	{
+		p->Send_uint32(cp->p1);
+		p->Send_uint32(cp->p2);
+		p->Send_uint64(cp->p3);
+		p->Send_uint32(cp->tile);
+		p->Send_string(cp->text.c_str());
+	}
+
 	p->Send_uint32(cp->frame);
 
 	this->SendPacket(p);
@@ -664,7 +665,7 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::Receive_ADMIN_JOIN(Packet *p)
 
 	this->status = ADMIN_STATUS_ACTIVE;
 
-	Debug(net, 3, "[admin] '{}' ({}) has connected", this->admin_name, this->admin_version);
+	DEBUG(net, 3, "[admin] '%s' (%s) has connected", this->admin_name.c_str(), this->admin_version.c_str());
 
 	return this->SendProtocol();
 }
@@ -684,7 +685,7 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::Receive_ADMIN_UPDATE_FREQUENC
 
 	if (type >= ADMIN_UPDATE_END || (_admin_update_type_frequencies[type] & freq) != freq) {
 		/* The server does not know of this UpdateType. */
-		Debug(net, 1, "[admin] Not supported update frequency {} ({}) from '{}' ({})", type, freq, this->admin_name, this->admin_version);
+		DEBUG(net, 1, "[admin] Not supported update frequency %d (%d) from '%s' (%s)", type, freq, this->admin_name.c_str(), this->admin_version.c_str());
 		return this->SendError(NETWORK_ERROR_ILLEGAL_PACKET);
 	}
 
@@ -754,7 +755,7 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::Receive_ADMIN_POLL(Packet *p)
 
 		default:
 			/* An unsupported "poll" update type. */
-			Debug(net, 1, "[admin] Not supported poll {} ({}) from '{}' ({}).", type, d1, this->admin_name, this->admin_version);
+			DEBUG(net, 1, "[admin] Not supported poll %d (%d) from '%s' (%s).", type, d1, this->admin_name.c_str(), this->admin_version.c_str());
 			return this->SendError(NETWORK_ERROR_ILLEGAL_PACKET);
 	}
 
@@ -780,7 +781,7 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::Receive_ADMIN_CHAT(Packet *p)
 			break;
 
 		default:
-			Debug(net, 1, "[admin] Invalid chat action {} from admin '{}' ({}).", action, this->admin_name, this->admin_version);
+			DEBUG(net, 1, "[admin] Invalid chat action %d from admin '%s' (%s).", action, this->admin_name.c_str(), this->admin_version.c_str());
 			return this->SendError(NETWORK_ERROR_ILLEGAL_PACKET);
 	}
 
@@ -797,7 +798,8 @@ NetworkRecvStatus ServerNetworkAdminSocketHandler::Receive_ADMIN_EXTERNAL_CHAT(P
 	std::string msg = p->Recv_string(NETWORK_CHAT_LENGTH);
 
 	if (!IsValidConsoleColour(colour)) {
-		Debug(net, 1, "[admin] Not supported chat colour {} ({}, {}, {}) from '{}' ({}).", (uint16)colour, source, user, msg, this->admin_name, this->admin_version);
+		DEBUG(net, 1, "[admin] Not supported chat colour %d (%s, %s, %s) from '%s' (%s).",
+				(uint16)colour, source.c_str(), user.c_str(), msg.c_str(), this->admin_name.c_str(), this->admin_version.c_str());
 		return this->SendError(NETWORK_ERROR_ILLEGAL_PACKET);
 	}
 
@@ -875,7 +877,7 @@ void NetworkAdminClientError(ClientID client_id, NetworkErrorCode error_code)
 void NetworkAdminCompanyInfo(const Company *company, bool new_company)
 {
 	if (company == nullptr) {
-		Debug(net, 1, "[admin] Empty company given for update");
+		DEBUG(net, 1, "[admin] Empty company given for update");
 		return;
 	}
 
@@ -920,7 +922,7 @@ void NetworkAdminCompanyRemove(CompanyID company_id, AdminCompanyRemoveReason bc
 /**
  * Send chat to the admin network (if they did opt in for the respective update).
  */
-void NetworkAdminChat(NetworkAction action, DestType desttype, ClientID client_id, const std::string &msg, int64 data, bool from_admin)
+void NetworkAdminChat(NetworkAction action, DestType desttype, ClientID client_id, const std::string &msg, NetworkTextMessageData data, bool from_admin)
 {
 	if (from_admin) return;
 

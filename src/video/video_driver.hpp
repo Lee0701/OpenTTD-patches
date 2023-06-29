@@ -23,6 +23,11 @@
 #include <thread>
 #include <vector>
 #include <functional>
+#if defined(__MINGW32__)
+#include "../3rdparty/mingw-std-threads/mingw.mutex.h"
+#include "../3rdparty/mingw-std-threads/mingw.condition_variable.h"
+#include "../3rdparty/mingw-std-threads/mingw.thread.h"
+#endif
 
 extern std::string _ini_videodriver;
 extern std::vector<Dimension> _resolutions;
@@ -222,6 +227,8 @@ public:
 		bool unlock; ///< Stores if the lock did anything that has to be undone.
 	};
 
+	static bool EmergencyAcquireGameLock(uint tries, uint delay_ms);
+
 protected:
 	const uint ALLOWED_DRIFT = 5; ///< How many times videodriver can miss deadlines without it being overly compensated.
 
@@ -307,6 +314,8 @@ protected:
 	 */
 	void SleepTillNextTick();
 
+	void InvalidateGameOptionsWindow();
+
 	std::chrono::steady_clock::duration GetGameInterval()
 	{
 		/* If we are paused, run on normal speed. */
@@ -350,7 +359,7 @@ protected:
 
 	bool is_game_threaded;
 	std::thread game_thread;
-	std::mutex game_state_mutex;
+	std::recursive_mutex game_state_mutex;
 	std::mutex game_thread_wait_mutex;
 
 	static void GameThreadThunk(VideoDriver *drv);

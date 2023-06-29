@@ -88,8 +88,10 @@ static inline bool HaveChatMessages(bool show_all)
  * @param duration The duration of the chat message in seconds
  * @param message message itself in printf() style
  */
-void CDECL NetworkAddChatMessage(TextColour colour, uint duration, const std::string &message)
+void NetworkAddChatMessage(TextColour colour, uint duration, const std::string_view message)
 {
+	if (MAX_CHAT_MESSAGES == 0) return;
+
 	if (_chatmsg_list.size() == MAX_CHAT_MESSAGES) {
 		_chatmsg_list.pop_back();
 	}
@@ -108,7 +110,7 @@ void NetworkReInitChatBoxSize()
 {
 	_chatmsg_box.y       = 3 * FONT_HEIGHT_NORMAL;
 	_chatmsg_box.height  = MAX_CHAT_MESSAGES * (FONT_HEIGHT_NORMAL + ScaleGUITrad(NETWORK_CHAT_LINE_SPACING)) + ScaleGUITrad(4);
-	_chatmessage_backup  = ReallocT(_chatmessage_backup, _chatmsg_box.width * _chatmsg_box.height * BlitterFactory::GetCurrentBlitter()->GetBytesPerPixel());
+	_chatmessage_backup  = ReallocT(_chatmessage_backup, static_cast<size_t>(_chatmsg_box.width) * _chatmsg_box.height * BlitterFactory::GetCurrentBlitter()->GetBytesPerPixel());
 }
 
 /** Initialize all buffers of the chat visualisation. */
@@ -214,7 +216,7 @@ void NetworkDrawChatMessage()
 	}
 	if (width <= 0 || height <= 0) return;
 
-	assert(blitter->BufferSize(width, height) <= (int)(_chatmsg_box.width * _chatmsg_box.height * blitter->GetBytesPerPixel()));
+	assert(blitter->BufferSize(width, height) <= static_cast<size_t>(_chatmsg_box.width) * _chatmsg_box.height * blitter->GetBytesPerPixel());
 
 	/* Make a copy of the screen as it is before painting (for undraw) */
 	blitter->CopyToBuffer(blitter->MoveTo(_screen.dst_ptr, x, y), _chatmessage_backup, width, height);
@@ -263,8 +265,9 @@ void NetworkDrawChatMessage()
 static void SendChat(const std::string &buf, DestType type, int dest)
 {
 	if (buf.empty()) return;
+	assert(type >= DESTTYPE_BROADCAST && type <= DESTTYPE_CLIENT);
 	if (!_network_server) {
-		MyClient::SendChat((NetworkAction)(NETWORK_ACTION_CHAT + type), type, dest, buf, 0);
+		MyClient::SendChat((NetworkAction)(NETWORK_ACTION_CHAT + type), type, dest, buf, NetworkTextMessageData());
 	} else {
 		NetworkServerSendChat((NetworkAction)(NETWORK_ACTION_CHAT + type), type, dest, buf, CLIENT_ID_SERVER);
 	}
@@ -293,7 +296,8 @@ struct NetworkChatWindow : public Window {
 		static const StringID chat_captions[] = {
 			STR_NETWORK_CHAT_ALL_CAPTION,
 			STR_NETWORK_CHAT_COMPANY_CAPTION,
-			STR_NETWORK_CHAT_CLIENT_CAPTION
+			STR_NETWORK_CHAT_CLIENT_CAPTION,
+			STR_NULL,
 		};
 		assert((uint)this->dtype < lengthof(chat_captions));
 
@@ -308,10 +312,9 @@ struct NetworkChatWindow : public Window {
 		PositionNetworkChatWindow(this);
 	}
 
-	void Close() override
+	~NetworkChatWindow()
 	{
 		InvalidateWindowData(WC_NEWS_WINDOW, 0, 0);
-		this->Window::Close();
 	}
 
 	void FindWindowPlacementAndResize(int def_width, int def_height) override
@@ -421,7 +424,7 @@ struct NetworkChatWindow : public Window {
 			}
 
 			len = strlen(cur_name);
-			if (tb_len < len && strncasecmp(cur_name, tb_buf, tb_len) == 0) {
+			if (tb_len < len && StrStartsWith(cur_name, tb_buf)) {
 				/* Save the data it was before completion */
 				if (!second_scan) seprintf(_chat_tab_completion_buf, lastof(_chat_tab_completion_buf), "%s", tb->buf);
 				_chat_tab_completion_active = true;
@@ -472,7 +475,7 @@ struct NetworkChatWindow : public Window {
 				FALLTHROUGH;
 
 			case WID_NC_CLOSE: /* Cancel */
-				this->Close();
+				delete this;
 				break;
 		}
 	}
@@ -499,7 +502,7 @@ struct NetworkChatWindow : public Window {
 	 */
 	void OnInvalidateData(int data = 0, bool gui_scope = true) override
 	{
-		if (data == this->dest) this->Close();
+		if (data == this->dest) delete this;
 	}
 };
 
@@ -509,7 +512,7 @@ static const NWidgetPart _nested_chat_window_widgets[] = {
 		NWidget(WWT_CLOSEBOX, COLOUR_GREY, WID_NC_CLOSE),
 		NWidget(WWT_PANEL, COLOUR_GREY, WID_NC_BACKGROUND),
 			NWidget(NWID_HORIZONTAL),
-				NWidget(WWT_TEXT, COLOUR_GREY, WID_NC_DESTINATION), SetMinimalSize(62, 12), SetPadding(1, 0, 1, 0), SetAlignment(SA_TOP | SA_RIGHT), SetDataTip(STR_NULL, STR_NULL),
+				NWidget(WWT_TEXT, COLOUR_GREY, WID_NC_DESTINATION), SetMinimalSize(62, 12), SetPadding(1, 0, 1, 0), SetAlignment(SA_VERT_CENTER | SA_RIGHT), SetDataTip(STR_NULL, STR_NULL),
 				NWidget(WWT_EDITBOX, COLOUR_GREY, WID_NC_TEXTBOX), SetMinimalSize(100, 12), SetPadding(1, 0, 1, 0), SetResize(1, 0),
 																	SetDataTip(STR_NETWORK_CHAT_OSKTITLE, STR_NULL),
 				NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_NC_SENDBUTTON), SetMinimalSize(62, 12), SetPadding(1, 0, 1, 0), SetDataTip(STR_NETWORK_CHAT_SEND, STR_NULL),
@@ -522,7 +525,7 @@ static const NWidgetPart _nested_chat_window_widgets[] = {
 static WindowDesc _chat_window_desc(
 	WDP_MANUAL, nullptr, 0, 0,
 	WC_SEND_NETWORK_MSG, WC_NONE,
-	0,
+	WDF_NETWORK,
 	_nested_chat_window_widgets, lengthof(_nested_chat_window_widgets)
 );
 
@@ -534,6 +537,6 @@ static WindowDesc _chat_window_desc(
  */
 void ShowNetworkChatQueryWindow(DestType type, int dest)
 {
-	CloseWindowByClass(WC_SEND_NETWORK_MSG);
+	DeleteWindowByClass(WC_SEND_NETWORK_MSG);
 	new NetworkChatWindow(&_chat_window_desc, type, dest);
 }

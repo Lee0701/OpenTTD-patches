@@ -12,10 +12,10 @@
 
 #include "cpu.h"
 #include <chrono>
-#include "3rdparty/fmt/format.h"
+#include <string>
 
 /* Debugging messages policy:
- * These should be the severities used for direct Debug() calls
+ * These should be the severities used for direct DEBUG() calls
  * maximum debugging level should be 10 if really deep, deep
  * debugging is needed.
  * (there is room for exceptions, but you have to have a good cause):
@@ -29,13 +29,11 @@
  */
 
 /**
- * Ouptut a line of debugging information.
- * @param name The category of debug information.
- * @param level The maximum debug level this message should be shown at. When the debug level for this category is set lower, then the message will not be shown.
- * @param format_string The formatting string of the message.
+ * Output a line of debugging information.
+ * @param name Category
+ * @param level Debugging level, higher levels means more detailed information.
  */
-#define Debug(name, level, format_string, ...) if ((level) == 0 || _debug_ ## name ## _level >= (level)) DebugPrint(#name, fmt::format(FMT_STRING(format_string), ## __VA_ARGS__))
-void DebugPrint(const char *level, const std::string &message);
+#define DEBUG(name, level, ...) if ((level) == 0 || _debug_ ## name ## _level >= (level)) debug(#name, __VA_ARGS__)
 
 extern int _debug_driver_level;
 extern int _debug_grf_level;
@@ -51,14 +49,27 @@ extern int _debug_script_level;
 extern int _debug_sl_level;
 extern int _debug_gamelog_level;
 extern int _debug_desync_level;
+extern int _debug_yapfdesync_level;
 extern int _debug_console_level;
+extern int _debug_linkgraph_level;
+extern int _debug_sound_level;
+extern int _debug_command_level;
 #ifdef RANDOM_DEBUG
 extern int _debug_random_level;
+extern int _debug_statecsum_level;
 #endif
+
+extern const char *_savegame_DBGL_data;
+extern std::string _loadgame_DBGL_data;
+extern bool _save_DBGC_data;
+extern std::string _loadgame_DBGC_data;
+
+void CDECL debug(const char *dbg, const char *format, ...) WARN_FORMAT(2, 3);
+void debug_print(const char *dbg, const char *buf);
 
 char *DumpDebugFacilityNames(char *buf, char *last);
 void SetDebugString(const char *s, void (*error_func)(const char *));
-const char *GetDebugString();
+std::string GetDebugString();
 
 /* Shorter form for passing filename and linenumber */
 #define FILE_LINE __FILE__, __LINE__
@@ -95,7 +106,7 @@ const char *GetDebugString();
 #define TOC(str, count)\
 	_sum_ += ottd_rdtsc() - _xxx_;\
 	if (++_i_ == count) {\
-		Debug(misc, 0, "[{}] {} [avg: {:.1f}]", str, _sum_, _sum_/(double)_i_);\
+		DEBUG(misc, 0, "[%s] " OTTD_PRINTF64 " [avg: %.1f]", str, _sum_, _sum_/(double)_i_);\
 		_i_ = 0;\
 		_sum_ = 0;\
 	}\
@@ -110,7 +121,7 @@ const char *GetDebugString();
 #define TOCC(str, _count_)\
 	_sum_ += (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - _start_)).count();\
 	if (++_i_ == _count_) {\
-		Debug(misc, 0, "[{}] {} us [avg: {:.1f} us]", str, _sum_, _sum_/(double)_i_);\
+		DEBUG(misc, 0, "[%s] " OTTD_PRINTF64 " us [avg: %.1f us]", str, _sum_, _sum_/(double)_i_);\
 		_i_ = 0;\
 		_sum_ = 0;\
 	}\
@@ -121,6 +132,10 @@ void ShowInfo(const char *str);
 void CDECL ShowInfoF(const char *str, ...) WARN_FORMAT(1, 2);
 
 const char *GetLogPrefix();
+
+void ClearDesyncMsgLog();
+void LogDesyncMsg(std::string msg);
+char *DumpDesyncMsgLog(char *buffer, const char *last);
 
 void DebugSendRemoteMessages();
 void DebugReconsiderSendRemoteMessages();

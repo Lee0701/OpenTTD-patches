@@ -16,6 +16,8 @@
 #include "config.h"
 #include "core.h"
 #include "../../string_type.h"
+#include "../../core/serialisation.hpp"
+#include <string>
 #include <functional>
 #include <limits>
 
@@ -41,10 +43,8 @@ typedef uint8  PacketType; ///< Identifier for the packet
  *  - years that are leap years in the 'days since X' to 'date' calculations:
  *     (year % 4 == 0) and ((year % 100 != 0) or (year % 400 == 0))
  */
-struct Packet {
+struct Packet : public BufferSerialisationHelper<Packet>, public BufferDeserialisationHelper<Packet> {
 private:
-	/** The next packet. Used for queueing packets before sending. */
-	Packet *next;
 	/** The current read/write position in the packet */
 	PacketSize pos;
 	/** The buffer of this packet. */
@@ -59,39 +59,38 @@ public:
 	Packet(NetworkSocketHandler *cs, size_t limit, size_t initial_read_size = sizeof(PacketSize));
 	Packet(PacketType type, size_t limit = COMPAT_MTU);
 
-	static void AddToQueue(Packet **queue, Packet *packet);
-	static Packet *PopFromQueue(Packet **queue);
+	void ResetState(PacketType type);
 
 	/* Sending/writing of packets */
 	void PrepareToSend();
 
-	bool   CanWriteToPacket(size_t bytes_to_write);
-	void   Send_bool  (bool   data);
-	void   Send_uint8 (uint8  data);
-	void   Send_uint16(uint16 data);
-	void   Send_uint32(uint32 data);
-	void   Send_uint64(uint64 data);
-	void   Send_string(const std::string_view data);
-	void   Send_buffer(const std::vector<byte> &data);
-	size_t Send_bytes (const byte *begin, const byte *end);
+	std::vector<byte> &GetSerialisationBuffer() { return this->buffer; }
+	size_t GetSerialisationLimit() const { return this->limit; }
+
+	const byte *GetDeserialisationBuffer() const { return this->buffer.data(); }
+	size_t GetDeserialisationBufferSize() const { return this->buffer.size(); }
+	PacketSize &GetDeserialisationPosition() { return this->pos; }
+	bool CanDeserialiseBytes(size_t bytes_to_read, bool raise_error) { return this->CanReadFromPacket(bytes_to_read, raise_error); }
+
+	bool CanWriteToPacket(size_t bytes_to_write);
+
+	void WriteAtOffset_uint16(size_t offset, uint16);
 
 	/* Reading/receiving of packets */
+	size_t ReadRawPacketSize() const;
 	bool HasPacketSizeData() const;
 	bool ParsePacketSize();
 	size_t Size() const;
 	void PrepareToRead();
 	PacketType GetPacketType() const;
 
-	bool   CanReadFromPacket(size_t bytes_to_read, bool close_connection = false);
-	bool   Recv_bool  ();
-	uint8  Recv_uint8 ();
-	uint16 Recv_uint16();
-	uint32 Recv_uint32();
-	uint64 Recv_uint64();
-	std::vector<byte> Recv_buffer();
-	std::string Recv_string(size_t length, StringValidationSettings settings = SVS_REPLACE_WITH_QUESTION_MARK);
+	bool CanReadFromPacket(size_t bytes_to_read, bool close_connection = false);
 
 	size_t RemainingBytesToTransfer() const;
+
+	const byte *GetBufferData() const { return this->buffer.data(); }
+	PacketSize GetRawPos() const { return this->pos; }
+	void ReserveBuffer(size_t size) { this->buffer.reserve(size); }
 
 	/**
 	 * Transfer data from the packet to the given function. It starts reading at the
@@ -188,6 +187,23 @@ public:
 		if (bytes > 0) this->pos += bytes;
 		return bytes;
 	}
+
+	NetworkSocketHandler *GetParentSocket() { return this->cs; }
+};
+
+struct SubPacketDeserialiser : public BufferDeserialisationHelper<SubPacketDeserialiser> {
+	NetworkSocketHandler *cs;
+	const byte *data;
+	size_t size;
+	PacketSize pos;
+
+	SubPacketDeserialiser(Packet *p, const byte *data, size_t size, PacketSize pos = 0) : cs(p->GetParentSocket()), data(data), size(size), pos(pos) {}
+	SubPacketDeserialiser(Packet *p, const std::vector<byte> &buffer, PacketSize pos = 0) : cs(p->GetParentSocket()), data(buffer.data()), size(buffer.size()), pos(pos) {}
+
+	const byte *GetDeserialisationBuffer() const { return this->data; }
+	size_t GetDeserialisationBufferSize() const { return this->size; }
+	PacketSize &GetDeserialisationPosition() { return this->pos; }
+	bool CanDeserialiseBytes(size_t bytes_to_read, bool raise_error);
 };
 
 #endif /* NETWORK_CORE_PACKET_H */

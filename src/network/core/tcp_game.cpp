@@ -15,17 +15,84 @@
 #include "../network_internal.h"
 #include "../../debug.h"
 #include "../../error.h"
+#include "../../window_func.h"
 
 #include "table/strings.h"
 
 #include "../../safeguards.h"
+
+static std::vector<NetworkGameSocketHandler *> _deferred_deletions;
+
+static const char* _packet_game_type_names[] {
+	"SERVER_FULL",
+	"SERVER_BANNED",
+	"CLIENT_JOIN",
+	"SERVER_ERROR",
+	"CLIENT_COMPANY_INFO",
+	"SERVER_COMPANY_INFO",
+	"SERVER_GAME_INFO",
+	"CLIENT_GAME_INFO",
+	"SERVER_GAME_INFO_EXTENDED",
+	"SERVER_CHECK_NEWGRFS",
+	"CLIENT_NEWGRFS_CHECKED",
+	"SERVER_NEED_GAME_PASSWORD",
+	"CLIENT_GAME_PASSWORD",
+	"SERVER_NEED_COMPANY_PASSWORD",
+	"CLIENT_COMPANY_PASSWORD",
+	"CLIENT_SETTINGS_PASSWORD",
+	"SERVER_SETTINGS_ACCESS",
+	"SERVER_WELCOME",
+	"SERVER_CLIENT_INFO",
+	"CLIENT_GETMAP",
+	"SERVER_WAIT",
+	"SERVER_MAP_BEGIN",
+	"SERVER_MAP_SIZE",
+	"SERVER_MAP_DATA",
+	"SERVER_MAP_DONE",
+	"CLIENT_MAP_OK",
+	"SERVER_JOIN",
+	"SERVER_FRAME",
+	"CLIENT_ACK",
+	"SERVER_SYNC",
+	"CLIENT_COMMAND",
+	"SERVER_COMMAND",
+	"CLIENT_CHAT",
+	"SERVER_CHAT",
+	"SERVER_EXTERNAL_CHAT",
+	"CLIENT_RCON",
+	"SERVER_RCON",
+	"CLIENT_MOVE",
+	"SERVER_MOVE",
+	"CLIENT_SET_PASSWORD",
+	"CLIENT_SET_NAME",
+	"SERVER_COMPANY_UPDATE",
+	"SERVER_CONFIG_UPDATE",
+	"SERVER_NEWGAME",
+	"SERVER_SHUTDOWN",
+	"CLIENT_QUIT",
+	"SERVER_QUIT",
+	"CLIENT_ERROR",
+	"SERVER_ERROR_QUIT",
+	"CLIENT_DESYNC_LOG",
+	"SERVER_DESYNC_LOG",
+	"CLIENT_DESYNC_MSG",
+	"CLIENT_DESYNC_SYNC_DATA",
+};
+static_assert(lengthof(_packet_game_type_names) == PACKET_END);
+
+const char *GetPacketGameTypeName(PacketGameType type)
+{
+	if (type >= PACKET_END) return "[invalid packet type]";
+
+	return _packet_game_type_names[type];
+}
 
 /**
  * Create a new socket for the game connection.
  * @param s The socket to connect with.
  */
 NetworkGameSocketHandler::NetworkGameSocketHandler(SOCKET s) : info(nullptr), client_id(INVALID_CLIENT_ID),
-		last_frame(_frame_counter), last_frame_server(_frame_counter)
+		last_frame(_frame_counter), last_frame_server(_frame_counter), last_pkt_type(PACKET_END)
 {
 	this->sock = s;
 	this->last_packet = std::chrono::steady_clock::now();
@@ -40,10 +107,12 @@ NetworkGameSocketHandler::NetworkGameSocketHandler(SOCKET s) : info(nullptr), cl
  */
 NetworkRecvStatus NetworkGameSocketHandler::CloseConnection(bool error)
 {
+	if (this->ignore_close) return NETWORK_RECV_STATUS_CLIENT_QUIT;
+
 	/* Clients drop back to the main menu */
 	if (!_network_server && _networking) {
-		extern void ClientNetworkEmergencySave(); // from network_client.cpp
 		ClientNetworkEmergencySave();
+		DeleteNetworkClientWindows();
 		_switch_mode = SM_MENU;
 		_networking = false;
 		ShowErrorMessage(STR_NETWORK_ERROR_LOSTCONNECTION, INVALID_STRING_ID, WL_CRITICAL);
@@ -64,20 +133,32 @@ NetworkRecvStatus NetworkGameSocketHandler::HandlePacket(Packet *p)
 {
 	PacketGameType type = (PacketGameType)p->Recv_uint8();
 
-	this->last_packet = std::chrono::steady_clock::now();
+	if (this->HasClientQuit()) {
+		DEBUG(net, 0, "[tcp/game] Received invalid packet from client %d", this->client_id);
+		this->CloseConnection();
+		return NETWORK_RECV_STATUS_MALFORMED_PACKET;
+	}
 
-	switch (this->HasClientQuit() ? PACKET_END : type) {
+	this->last_packet = std::chrono::steady_clock::now();
+	this->last_pkt_type = type;
+
+	DEBUG(net, 5, "[tcp/game] received packet type %d (%s) from client %d, %s", type, GetPacketGameTypeName(type), this->client_id, this->GetDebugInfo().c_str());
+
+	switch (type) {
 		case PACKET_SERVER_FULL:                  return this->Receive_SERVER_FULL(p);
 		case PACKET_SERVER_BANNED:                return this->Receive_SERVER_BANNED(p);
 		case PACKET_CLIENT_JOIN:                  return this->Receive_CLIENT_JOIN(p);
 		case PACKET_SERVER_ERROR:                 return this->Receive_SERVER_ERROR(p);
 		case PACKET_CLIENT_GAME_INFO:             return this->Receive_CLIENT_GAME_INFO(p);
 		case PACKET_SERVER_GAME_INFO:             return this->Receive_SERVER_GAME_INFO(p);
+		case PACKET_SERVER_GAME_INFO_EXTENDED:    return this->Receive_SERVER_GAME_INFO_EXTENDED(p);
 		case PACKET_SERVER_CLIENT_INFO:           return this->Receive_SERVER_CLIENT_INFO(p);
 		case PACKET_SERVER_NEED_GAME_PASSWORD:    return this->Receive_SERVER_NEED_GAME_PASSWORD(p);
 		case PACKET_SERVER_NEED_COMPANY_PASSWORD: return this->Receive_SERVER_NEED_COMPANY_PASSWORD(p);
 		case PACKET_CLIENT_GAME_PASSWORD:         return this->Receive_CLIENT_GAME_PASSWORD(p);
 		case PACKET_CLIENT_COMPANY_PASSWORD:      return this->Receive_CLIENT_COMPANY_PASSWORD(p);
+		case PACKET_CLIENT_SETTINGS_PASSWORD:     return this->Receive_CLIENT_SETTINGS_PASSWORD(p);
+		case PACKET_SERVER_SETTINGS_ACCESS:       return this->Receive_SERVER_SETTINGS_ACCESS(p);
 		case PACKET_SERVER_WELCOME:               return this->Receive_SERVER_WELCOME(p);
 		case PACKET_CLIENT_GETMAP:                return this->Receive_CLIENT_GETMAP(p);
 		case PACKET_SERVER_WAIT:                  return this->Receive_SERVER_WAIT(p);
@@ -99,6 +180,10 @@ NetworkRecvStatus NetworkGameSocketHandler::HandlePacket(Packet *p)
 		case PACKET_CLIENT_SET_NAME:              return this->Receive_CLIENT_SET_NAME(p);
 		case PACKET_CLIENT_QUIT:                  return this->Receive_CLIENT_QUIT(p);
 		case PACKET_CLIENT_ERROR:                 return this->Receive_CLIENT_ERROR(p);
+		case PACKET_CLIENT_DESYNC_LOG:            return this->Receive_CLIENT_DESYNC_LOG(p);
+		case PACKET_SERVER_DESYNC_LOG:            return this->Receive_SERVER_DESYNC_LOG(p);
+		case PACKET_CLIENT_DESYNC_MSG:            return this->Receive_CLIENT_DESYNC_MSG(p);
+		case PACKET_CLIENT_DESYNC_SYNC_DATA:      return this->Receive_CLIENT_DESYNC_SYNC_DATA(p);
 		case PACKET_SERVER_QUIT:                  return this->Receive_SERVER_QUIT(p);
 		case PACKET_SERVER_ERROR_QUIT:            return this->Receive_SERVER_ERROR_QUIT(p);
 		case PACKET_SERVER_SHUTDOWN:              return this->Receive_SERVER_SHUTDOWN(p);
@@ -113,13 +198,8 @@ NetworkRecvStatus NetworkGameSocketHandler::HandlePacket(Packet *p)
 		case PACKET_SERVER_CONFIG_UPDATE:         return this->Receive_SERVER_CONFIG_UPDATE(p);
 
 		default:
+			DEBUG(net, 0, "[tcp/game] Received invalid packet type %d from client %d", type, this->client_id);
 			this->CloseConnection();
-
-			if (this->HasClientQuit()) {
-				Debug(net, 0, "[tcp/game] Received invalid packet type {} from client {}", type, this->client_id);
-			} else {
-				Debug(net, 0, "[tcp/game] Received illegal packet from client {}", this->client_id);
-			}
 			return NETWORK_RECV_STATUS_MALFORMED_PACKET;
 	}
 }
@@ -133,10 +213,9 @@ NetworkRecvStatus NetworkGameSocketHandler::HandlePacket(Packet *p)
  */
 NetworkRecvStatus NetworkGameSocketHandler::ReceivePackets()
 {
-	Packet *p;
+	std::unique_ptr<Packet> p;
 	while ((p = this->ReceivePacket()) != nullptr) {
-		NetworkRecvStatus res = HandlePacket(p);
-		delete p;
+		NetworkRecvStatus res = HandlePacket(p.get());
 		if (res != NETWORK_RECV_STATUS_OKAY) return res;
 	}
 
@@ -150,7 +229,7 @@ NetworkRecvStatus NetworkGameSocketHandler::ReceivePackets()
  */
 NetworkRecvStatus NetworkGameSocketHandler::ReceiveInvalidPacket(PacketGameType type)
 {
-	Debug(net, 0, "[tcp/game] Received illegal packet type {} from client {}", type, this->client_id);
+	DEBUG(net, 0, "[tcp/game] Received illegal packet type %d from client %d", type, this->client_id);
 	return NETWORK_RECV_STATUS_MALFORMED_PACKET;
 }
 
@@ -160,11 +239,14 @@ NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_JOIN(Packet *p) { ret
 NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_ERROR(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_ERROR); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_GAME_INFO(Packet *p) { return this->ReceiveInvalidPacket(PACKET_CLIENT_GAME_INFO); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_GAME_INFO(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_GAME_INFO); }
+NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_GAME_INFO_EXTENDED(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_GAME_INFO_EXTENDED); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_CLIENT_INFO(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_CLIENT_INFO); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_NEED_GAME_PASSWORD(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_NEED_GAME_PASSWORD); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_NEED_COMPANY_PASSWORD(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_NEED_COMPANY_PASSWORD); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_GAME_PASSWORD(Packet *p) { return this->ReceiveInvalidPacket(PACKET_CLIENT_GAME_PASSWORD); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_COMPANY_PASSWORD(Packet *p) { return this->ReceiveInvalidPacket(PACKET_CLIENT_COMPANY_PASSWORD); }
+NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_SETTINGS_PASSWORD(Packet *p) { return this->ReceiveInvalidPacket(PACKET_CLIENT_SETTINGS_PASSWORD); }
+NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_SETTINGS_ACCESS(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_SETTINGS_ACCESS); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_WELCOME(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_WELCOME); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_GETMAP(Packet *p) { return this->ReceiveInvalidPacket(PACKET_CLIENT_GETMAP); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_WAIT(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_WAIT); }
@@ -186,6 +268,10 @@ NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_SET_PASSWORD(Packet *
 NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_SET_NAME(Packet *p) { return this->ReceiveInvalidPacket(PACKET_CLIENT_SET_NAME); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_QUIT(Packet *p) { return this->ReceiveInvalidPacket(PACKET_CLIENT_QUIT); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_ERROR(Packet *p) { return this->ReceiveInvalidPacket(PACKET_CLIENT_ERROR); }
+NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_DESYNC_LOG(Packet *p) { return this->ReceiveInvalidPacket(PACKET_CLIENT_DESYNC_LOG); }
+NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_DESYNC_LOG(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_DESYNC_LOG); }
+NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_DESYNC_MSG(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_DESYNC_LOG); }
+NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_DESYNC_SYNC_DATA(Packet *p) { return this->ReceiveInvalidPacket(PACKET_CLIENT_DESYNC_SYNC_DATA); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_QUIT(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_QUIT); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_ERROR_QUIT(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_ERROR_QUIT); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_SHUTDOWN(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_SHUTDOWN); }
@@ -198,3 +284,25 @@ NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_MOVE(Packet *p) { ret
 NetworkRecvStatus NetworkGameSocketHandler::Receive_CLIENT_MOVE(Packet *p) { return this->ReceiveInvalidPacket(PACKET_CLIENT_MOVE); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_COMPANY_UPDATE(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_COMPANY_UPDATE); }
 NetworkRecvStatus NetworkGameSocketHandler::Receive_SERVER_CONFIG_UPDATE(Packet *p) { return this->ReceiveInvalidPacket(PACKET_SERVER_CONFIG_UPDATE); }
+
+std::string NetworkGameSocketHandler::GetDebugInfo() const { return ""; }
+
+void NetworkGameSocketHandler::LogSentPacket(const Packet &pkt)
+{
+	PacketGameType type = (PacketGameType)pkt.GetPacketType();
+	DEBUG(net, 5, "[tcp/game] sent packet type %d (%s) to client %d, %s", type, GetPacketGameTypeName(type), this->client_id, this->GetDebugInfo().c_str());
+}
+
+void NetworkGameSocketHandler::DeferDeletion()
+{
+	_deferred_deletions.push_back(this);
+	this->is_pending_deletion = true;
+}
+
+/* static */ void NetworkGameSocketHandler::ProcessDeferredDeletions()
+{
+	for (NetworkGameSocketHandler *cs : _deferred_deletions) {
+		delete cs;
+	}
+	_deferred_deletions.clear();
+}

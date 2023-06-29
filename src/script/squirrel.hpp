@@ -13,9 +13,9 @@
 #include <squirrel.h>
 
 /** The type of script we're working with, i.e. for who is it? */
-enum ScriptType {
-	ST_AI, ///< The script is for AI scripts.
-	ST_GS, ///< The script is for Game scripts.
+enum class ScriptType {
+	AI, ///< The script is for AI scripts.
+	GS, ///< The script is for Game scripts.
 };
 
 struct ScriptAllocator;
@@ -280,6 +280,8 @@ public:
 	 * Get number of bytes allocated by this VM.
 	 */
 	size_t GetAllocatedMemory() const noexcept;
+
+	void SetMemoryAllocationLimit(size_t limit) noexcept;
 };
 
 

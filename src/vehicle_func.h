@@ -19,6 +19,7 @@
 #include "newgrf_config.h"
 #include "track_type.h"
 #include "livery.h"
+#include "cargo_type.h"
 
 #define is_custom_sprite(x) (x >= 0xFD)
 #define IS_CUSTOM_FIRSTHEAD_SPRITE(x) (x == 0xFD)
@@ -26,6 +27,8 @@
 
 static const int VEHICLE_PROFIT_MIN_AGE = DAYS_IN_YEAR * 2; ///< Only vehicles older than this have a meaningful profit.
 static const Money VEHICLE_PROFIT_THRESHOLD = 10000;        ///< Threshold for a vehicle to be considered making good profit.
+
+struct Viewport;
 
 /**
  * Helper to check whether an image index is valid for a particular vehicle.
@@ -40,25 +43,104 @@ typedef Vehicle *VehicleFromPosProc(Vehicle *v, void *data);
 
 void VehicleServiceInDepot(Vehicle *v);
 uint CountVehiclesInChain(const Vehicle *v);
-void FindVehicleOnPos(TileIndex tile, void *data, VehicleFromPosProc *proc);
-void FindVehicleOnPosXY(int x, int y, void *data, VehicleFromPosProc *proc);
-bool HasVehicleOnPos(TileIndex tile, void *data, VehicleFromPosProc *proc);
-bool HasVehicleOnPosXY(int x, int y, void *data, VehicleFromPosProc *proc);
+
+/**
+ * Find a vehicle from a specific location. It will call \a proc for ALL vehicles
+ * on the tile and YOU must make SURE that the "best one" is stored in the
+ * data value and is ALWAYS the same regardless of the order of the vehicles
+ * where proc was called on!
+ * When you fail to do this properly you create an almost untraceable DESYNC!
+ * @note The return value of \a proc will be ignored.
+ * @note Use this function when you have the intention that all vehicles
+ *       should be iterated over.
+ * @param tile The location on the map
+ * @param data Arbitrary data passed to \a proc.
+ * @param proc The proc that determines whether a vehicle will be "found".
+ */
+inline void FindVehicleOnPos(TileIndex tile, VehicleType type, void *data, VehicleFromPosProc *proc)
+{
+	extern Vehicle *VehicleFromPos(TileIndex tile, VehicleType type, void *data, VehicleFromPosProc *proc, bool find_first);
+	VehicleFromPos(tile, type, data, proc, false);
+}
+
+/**
+ * Checks whether a vehicle is on a specific location. It will call \a proc for
+ * vehicles until it returns non-nullptr.
+ * @note Use #FindVehicleOnPos when you have the intention that all vehicles
+ *       should be iterated over.
+ * @param tile The location on the map
+ * @param data Arbitrary data passed to \a proc.
+ * @param proc The \a proc that determines whether a vehicle will be "found".
+ * @return True if proc returned non-nullptr.
+ */
+inline bool HasVehicleOnPos(TileIndex tile, VehicleType type, void *data, VehicleFromPosProc *proc)
+{
+	extern Vehicle *VehicleFromPos(TileIndex tile, VehicleType type, void *data, VehicleFromPosProc *proc, bool find_first);
+	return VehicleFromPos(tile, type, data, proc, true) != nullptr;
+}
+
+/**
+ * Find a vehicle from a specific location. It will call proc for ALL vehicles
+ * on the tile and YOU must make SURE that the "best one" is stored in the
+ * data value and is ALWAYS the same regardless of the order of the vehicles
+ * where proc was called on!
+ * When you fail to do this properly you create an almost untraceable DESYNC!
+ * @note The return value of proc will be ignored.
+ * @note Use this when you have the intention that all vehicles
+ *       should be iterated over.
+ * @param x    The X location on the map
+ * @param y    The Y location on the map
+ * @param data Arbitrary data passed to proc
+ * @param proc The proc that determines whether a vehicle will be "found".
+ */
+inline void FindVehicleOnPosXY(int x, int y, VehicleType type, void *data, VehicleFromPosProc *proc)
+{
+	extern Vehicle *VehicleFromPosXY(int x, int y, VehicleType type, void *data, VehicleFromPosProc *proc, bool find_first);
+	VehicleFromPosXY(x, y, type, data, proc, false);
+}
+
+/**
+ * Checks whether a vehicle in on a specific location. It will call proc for
+ * vehicles until it returns non-nullptr.
+ * @note Use FindVehicleOnPosXY when you have the intention that all vehicles
+ *       should be iterated over.
+ * @param x    The X location on the map
+ * @param y    The Y location on the map
+ * @param data Arbitrary data passed to proc
+ * @param proc The proc that determines whether a vehicle will be "found".
+ * @return True if proc returned non-nullptr.
+ */
+inline bool HasVehicleOnPosXY(int x, int y, VehicleType type, void *data, VehicleFromPosProc *proc)
+{
+	extern Vehicle *VehicleFromPosXY(int x, int y, VehicleType type, void *data, VehicleFromPosProc *proc, bool find_first);
+	return VehicleFromPosXY(x, y, type, data, proc, true) != nullptr;
+}
+
 void CallVehicleTicks();
 uint8 CalcPercentVehicleFilled(const Vehicle *v, StringID *colour);
+uint8 CalcPercentVehicleFilledOfCargo(const Vehicle *v, CargoID cargo);
 
 void VehicleLengthChanged(const Vehicle *u);
 
-byte VehicleRandomBits();
 void ResetVehicleHash();
 void ResetVehicleColourMap();
 
 byte GetBestFittingSubType(Vehicle *v_from, Vehicle *v_for, CargoID dest_cargo_type);
 
-void ViewportAddVehicles(DrawPixelInfo *dpi);
+void ViewportAddVehicles(DrawPixelInfo *dpi, bool update_vehicles);
+void ViewportMapDrawVehicles(DrawPixelInfo *dpi, Viewport *vp);
 
 void ShowNewGrfVehicleError(EngineID engine, StringID part1, StringID part2, GRFBugs bug_type, bool critical);
-CommandCost TunnelBridgeIsFree(TileIndex tile, TileIndex endtile, const Vehicle *ignore = nullptr);
+
+enum TunnelBridgeIsFreeMode {
+	TBIFM_ALL,
+	TBIFM_ACROSS_ONLY,
+	TBIFM_PRIMARY_ONLY,
+};
+CommandCost TunnelBridgeIsFree(TileIndex tile, TileIndex endtile, const Vehicle *ignore = nullptr, TunnelBridgeIsFreeMode mode = TBIFM_ALL);
+Train *GetTrainClosestToTunnelBridgeEnd(TileIndex tile, TileIndex other_tile);
+int GetAvailableFreeTilesInSignalledTunnelBridge(TileIndex entrance, TileIndex exit, TileIndex tile);
+int GetAvailableFreeTilesInSignalledTunnelBridgeWithStartOffset(TileIndex entrance, TileIndex exit, int offset);
 
 void DecreaseVehicleValue(Vehicle *v);
 void CheckVehicleBreakdown(Vehicle *v);
@@ -110,62 +192,70 @@ static inline bool IsCompanyBuildableVehicleType(const BaseVehicle *v)
 }
 
 LiveryScheme GetEngineLiveryScheme(EngineID engine_type, EngineID parent_engine_type, const Vehicle *v);
-const struct Livery *GetEngineLivery(EngineID engine_type, CompanyID company, EngineID parent_engine_type, const Vehicle *v, byte livery_setting);
+const struct Livery *GetEngineLivery(EngineID engine_type, CompanyID company, EngineID parent_engine_type, const Vehicle *v, byte livery_setting, bool ignore_group = false);
 
 SpriteID GetEnginePalette(EngineID engine_type, CompanyID company);
 SpriteID GetVehiclePalette(const Vehicle *v);
+SpriteID GetUncachedTrainPaletteIgnoringGroup(const Train *v);
 
-extern const StringID _veh_build_msg_table[];
-extern const StringID _veh_sell_msg_table[];
-extern const StringID _veh_refit_msg_table[];
-extern const StringID _send_to_depot_msg_table[];
+extern const uint32 _veh_build_proc_table[];
+extern const uint32 _veh_sell_proc_table[];
+extern const uint32 _veh_refit_proc_table[];
+extern const uint32 _send_to_depot_proc_table[];
 
 /* Functions to find the right command for certain vehicle type */
-static inline StringID GetCmdBuildVehMsg(VehicleType type)
+static inline uint32 GetCmdBuildVeh(VehicleType type)
 {
-	return _veh_build_msg_table[type];
+	return _veh_build_proc_table[type];
 }
 
-static inline StringID GetCmdBuildVehMsg(const BaseVehicle *v)
+static inline uint32 GetCmdBuildVeh(const BaseVehicle *v)
 {
-	return GetCmdBuildVehMsg(v->type);
+	return GetCmdBuildVeh(v->type);
 }
 
-static inline StringID GetCmdSellVehMsg(VehicleType type)
+static inline uint32 GetCmdSellVeh(VehicleType type)
 {
-	return _veh_sell_msg_table[type];
+	return _veh_sell_proc_table[type];
 }
 
-static inline StringID GetCmdSellVehMsg(const BaseVehicle *v)
+static inline uint32 GetCmdSellVeh(const BaseVehicle *v)
 {
-	return GetCmdSellVehMsg(v->type);
+	return GetCmdSellVeh(v->type);
 }
 
-static inline StringID GetCmdRefitVehMsg(VehicleType type)
+static inline uint32 GetCmdRefitVeh(VehicleType type)
 {
-	return _veh_refit_msg_table[type];
+	return _veh_refit_proc_table[type];
 }
 
-static inline StringID GetCmdRefitVehMsg(const BaseVehicle *v)
+static inline uint32 GetCmdRefitVeh(const BaseVehicle *v)
 {
-	return GetCmdRefitVehMsg(v->type);
+	return GetCmdRefitVeh(v->type);
 }
 
-static inline StringID GetCmdSendToDepotMsg(VehicleType type)
+static inline uint32 GetCmdSendToDepot(VehicleType type)
 {
-	return _send_to_depot_msg_table[type];
+	return _send_to_depot_proc_table[type];
 }
 
-static inline StringID GetCmdSendToDepotMsg(const BaseVehicle *v)
+static inline uint32 GetCmdSendToDepot(const BaseVehicle *v)
 {
-	return GetCmdSendToDepotMsg(v->type);
+	return GetCmdSendToDepot(v->type);
 }
 
 CommandCost EnsureNoVehicleOnGround(TileIndex tile);
+bool IsTrainCollidableRoadVehicleOnGround(TileIndex tile);
 CommandCost EnsureNoTrainOnTrackBits(TileIndex tile, TrackBits track_bits);
+
+extern VehicleID _new_vehicle_id;
+extern uint _returned_refit_capacity;
+extern uint16 _returned_mail_refit_capacity;
+extern CargoArray _returned_vehicle_capacities;
 
 bool CanVehicleUseStation(EngineID engine_type, const struct Station *st);
 bool CanVehicleUseStation(const Vehicle *v, const struct Station *st);
+StringID GetVehicleCannotUseStationReason(const Vehicle *v, const Station *st);
 
 void ReleaseDisastersTargetingVehicle(VehicleID vehicle);
 
@@ -176,5 +266,7 @@ void CheckCargoCapacity(Vehicle *v);
 
 bool VehiclesHaveSameEngineList(const Vehicle *v1, const Vehicle *v2);
 bool VehiclesHaveSameOrderList(const Vehicle *v1, const Vehicle *v2);
+
+bool IsUniqueVehicleName(const char *name);
 
 #endif /* VEHICLE_FUNC_H */

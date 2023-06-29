@@ -109,6 +109,12 @@ enum WindowClass {
 	WC_TOOLTIPS,
 
 	/**
+	* Station rating tooltip window; %Window numbers:
+	*   - 0 = #ToolTipsWidgets
+	*/
+	WC_STATION_RATING_TOOLTIP,
+
+	/**
 	 * Query string window; %Window numbers:
 	 *   - #WN_QUERY_STRING = #QueryStringWidgets
 	 *   - #WN_QUERY_STRING_SIGN = #QueryEditSignWidgets
@@ -162,10 +168,10 @@ enum WindowClass {
 
 
 	/**
-	 * AI settings; %Window numbers:
-	 *   - 0 = #AISettingsWidgets
+	 * Script settings; %Window numbers:
+	 *   - 0 = #ScriptSettingsWidgets
 	 */
-	WC_AI_SETTINGS,
+	WC_SCRIPT_SETTINGS,
 
 	/**
 	 * NewGRF parameters; %Window numbers:
@@ -205,6 +211,18 @@ enum WindowClass {
 	WC_VEHICLE_ORDERS,
 
 	/**
+	 * Vehicle cargo type load orders; %Window numbers:
+	 *   - #VehicleID = #CargoTypeOrdersWidgets
+	 */
+	WC_VEHICLE_CARGO_TYPE_LOAD_ORDERS,
+
+	/**
+	 * Vehicle cargo type unload orders; %Window numbers:
+	 *   - #VehicleID = #CargoTypeOrdersWidgets
+	 */
+	WC_VEHICLE_CARGO_TYPE_UNLOAD_ORDERS,
+
+	/**
 	 * Replace vehicle window; %Window numbers:
 	 *   - #VehicleType = #ReplaceVehicleWidgets
 	 */
@@ -233,6 +251,12 @@ enum WindowClass {
 	 *   - 0 = #JoinStationWidgets
 	 */
 	WC_SELECT_STATION,
+
+	/**
+	 * Select town (when placing a house); %Window numbers:
+	 *   - 0 = #SelectTownWidgets
+	 */
+	WC_SELECT_TOWN,
 
 	/**
 	 * News window; %Window numbers:
@@ -271,10 +295,10 @@ enum WindowClass {
 	WC_SIGN_LIST,
 
 	/**
-	 * AI list; %Window numbers:
-	 *   - 0 = #AIListWidgets
+	 * Scripts list; %Window numbers:
+	 *   - 0 = #ScriptListWidgets
 	 */
-	WC_AI_LIST,
+	WC_SCRIPT_LIST,
 
 	/**
 	 * Goals list; %Window numbers:
@@ -367,6 +391,12 @@ enum WindowClass {
 	 *   - 0 = #BuildObjectWidgets
 	 */
 	WC_BUILD_OBJECT,
+
+	/**
+	 * Build house; %Window numbers:
+	 *  - 0 = #BuildHouseWidgets
+	*/
+	WC_BUILD_HOUSE,
 
 	/**
 	 * Build vehicle; %Window numbers:
@@ -557,6 +587,12 @@ enum WindowClass {
 	WC_PAYMENT_RATES,
 
 	/**
+	* Station cargo graph; %Window numbers:
+	*   - #StationID = #StationCargoWidgets
+	*/
+	WC_STATION_CARGO,
+
+	/**
 	 * Performance detail window; %Window numbers:
 	 *   - 0 = #PerformanceRatingDetailsWidgets
 	 */
@@ -650,10 +686,10 @@ enum WindowClass {
 
 
 	/**
-	 * AI debug window; %Window numbers:
-	 *   - 0 = #AIDebugWidgets
+	 * Script debug window; %Window numbers:
+	 *   - 0 = #ScriptDebugWidgets
 	 */
-	WC_AI_DEBUG,
+	WC_SCRIPT_DEBUG,
 
 	/**
 	 * NewGRF inspect (debug); %Window numbers:
@@ -666,6 +702,7 @@ enum WindowClass {
 	 *   - 0 = #SpriteAlignerWidgets
 	 */
 	WC_SPRITE_ALIGNER,
+	WC_ZONING_TOOLBAR,
 
 	/**
 	 * Linkgraph legend; %Window numbers:
@@ -690,13 +727,61 @@ enum WindowClass {
 	 *   - 0 = #FrametimeGraphWindowWidgets
 	 */
 	WC_FRAMETIME_GRAPH,
-
 	/**
 	 * Screenshot window; %Window numbers:
 	 *   - 0 = #ScreenshotWidgets
 	 */
 	WC_SCREENSHOT,
 
+	/**
+	 * Trace restrict programme window; %Window numbers:
+	 *   - #TileIndex << 3 | #Track = #TraceRestrictWindow
+	 */
+	WC_TRACE_RESTRICT,
+
+	/**
+	 * Trace restrict slot window; %Window numbers:
+	 *   - Packed value = #SlotListWidgets / #VehicleListWidgets
+	 */
+	WC_TRACE_RESTRICT_SLOTS,
+
+	/**
+	 * Trace restrict counter window; %Window numbers:
+	 *   - Packed value = #SlotListWidgets / #VehicleListWidgets
+	 */
+	WC_TRACE_RESTRICT_COUNTERS,
+
+	/**
+	 * Programmable pre-signals window
+	 */
+	WC_SIGNAL_PROGRAM,
+
+	/**
+	 * Departure boards
+	 */
+	WC_DEPARTURES_BOARD,
+
+	/**
+	 * Vehicle scheduled dispatch - departure slots
+	 */
+	WC_SCHDISPATCH_SLOTS,
+
+	/**
+	 * Plans window.
+	 */
+	WC_PLANS,
+
+	WC_TEMPLATEGUI_MAIN,
+	WC_TEMPLATEGUI_RPLALL,
+	WC_BUILD_VIRTUAL_TRAIN,
+	WC_CREATE_TEMPLATE,
+
+	/**
+	 * Modifier key toggle window.
+	 */
+	WC_MODIFIER_KEY_TOGGLE,
+
+	WC_END,              ///< End sentinel.
 	WC_INVALID = 0xFFFF, ///< Invalid window.
 };
 
@@ -711,6 +796,7 @@ enum GameOptionsInvalidationData {
 };
 
 struct Window;
+struct WindowBase;
 
 /** Number to differentiate different windows of the same class */
 typedef int32 WindowNumber;

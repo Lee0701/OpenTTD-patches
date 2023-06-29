@@ -205,6 +205,13 @@ size_t Squirrel::GetAllocatedMemory() const noexcept
 	return this->allocator->allocated_size;
 }
 
+void Squirrel::SetMemoryAllocationLimit(size_t limit) noexcept
+{
+	if (this->allocator != nullptr) {
+		this->allocator->allocation_limit = limit;
+	}
+}
+
 
 void Squirrel::CompileError(HSQUIRRELVM vm, const SQChar *desc, const SQChar *source, SQInteger line, SQInteger column)
 {
@@ -217,7 +224,7 @@ void Squirrel::CompileError(HSQUIRRELVM vm, const SQChar *desc, const SQChar *so
 	engine->crashed = true;
 	SQPrintFunc *func = engine->print_func;
 	if (func == nullptr) {
-		Debug(misc, 0, "[Squirrel] Compile error: {}", buf);
+		DEBUG(misc, 0, "[Squirrel] Compile error: %s", buf);
 	} else {
 		(*func)(true, buf);
 	}
@@ -350,8 +357,8 @@ void Squirrel::AddClassBegin(const char *class_name, const char *parent_class)
 	sq_pushstring(this->vm, class_name, -1);
 	sq_pushstring(this->vm, parent_class, -1);
 	if (SQ_FAILED(sq_get(this->vm, -3))) {
-		Debug(misc, 0, "[squirrel] Failed to initialize class '{}' based on parent class '{}'", class_name, parent_class);
-		Debug(misc, 0, "[squirrel] Make sure that '{}' exists before trying to define '{}'", parent_class, class_name);
+		DEBUG(misc, 0, "[squirrel] Failed to initialize class '%s' based on parent class '%s'", class_name, parent_class);
+		DEBUG(misc, 0, "[squirrel] Make sure that '%s' exists before trying to define '%s'", parent_class, class_name);
 		return;
 	}
 	sq_newclass(this->vm, SQTrue);
@@ -435,7 +442,7 @@ bool Squirrel::CallMethod(HSQOBJECT instance, const char *method_name, HSQOBJECT
 	/* Find the function-name inside the script */
 	sq_pushstring(this->vm, method_name, -1);
 	if (SQ_FAILED(sq_get(this->vm, -2))) {
-		Debug(misc, 0, "[squirrel] Could not find '{}' in the class", method_name);
+		DEBUG(misc, 0, "[squirrel] Could not find '%s' in the class", method_name);
 		sq_settop(this->vm, top);
 		return false;
 	}
@@ -500,14 +507,14 @@ bool Squirrel::CallBoolMethod(HSQOBJECT instance, const char *method_name, bool 
 	}
 
 	if (SQ_FAILED(sq_get(vm, -2))) {
-		Debug(misc, 0, "[squirrel] Failed to find class by the name '{}{}'", prepend_API_name ? engine->GetAPIName() : "", class_name);
+		DEBUG(misc, 0, "[squirrel] Failed to find class by the name '%s%s'", prepend_API_name ? engine->GetAPIName() : "", class_name);
 		sq_settop(vm, oldtop);
 		return false;
 	}
 
 	/* Create the instance */
 	if (SQ_FAILED(sq_createinstance(vm, -1))) {
-		Debug(misc, 0, "[squirrel] Failed to create instance for class '{}{}'", prepend_API_name ? engine->GetAPIName() : "", class_name);
+		DEBUG(misc, 0, "[squirrel] Failed to create instance for class '%s%s'", prepend_API_name ? engine->GetAPIName() : "", class_name);
 		sq_settop(vm, oldtop);
 		return false;
 	}
@@ -566,6 +573,10 @@ void Squirrel::Initialize()
 
 	sq_pushroottable(this->vm);
 	squirrel_register_global_std(this);
+
+	/* Set consts table as delegate of root table, so consts/enums defined via require() are accessible */
+	sq_pushconsttable(this->vm);
+	sq_setdelegate(this->vm, -2);
 }
 
 class SQFile {
@@ -746,7 +757,7 @@ bool Squirrel::LoadScript(HSQUIRRELVM vm, const char *script, bool in_root)
 	}
 
 	vm->_ops_till_suspend = ops_left;
-	Debug(misc, 0, "[squirrel] Failed to compile '{}'", script);
+	DEBUG(misc, 0, "[squirrel] Failed to compile '%s'", script);
 	return false;
 }
 
@@ -763,6 +774,12 @@ Squirrel::~Squirrel()
 void Squirrel::Uninitialize()
 {
 	ScriptAllocatorScope alloc_scope(this);
+
+	/* Remove the delegation */
+	sq_pushroottable(this->vm);
+	sq_pushnull(this->vm);
+	sq_setdelegate(this->vm, -2);
+	sq_pop(this->vm, 1);
 
 	/* Clean up the stuff */
 	sq_pop(this->vm, 1);

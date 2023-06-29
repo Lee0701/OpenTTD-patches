@@ -41,7 +41,7 @@ public:
 		} else {
 			m_destStation   = INVALID_STATION;
 			m_destTile      = v->dest_tile;
-			m_destTrackdirs = TrackStatusToTrackdirBits(GetTileTrackStatus(v->dest_tile, TRANSPORT_WATER, 0));
+			m_destTrackdirs = GetTileTrackdirBits(v->dest_tile, TRANSPORT_WATER, 0);
 		}
 	}
 
@@ -153,7 +153,7 @@ public:
 		/* move back to the old tile/trackdir (where ship is coming from) */
 		TileIndex src_tile = TileAddByDiagDir(tile, ReverseDiagDir(enterdir));
 		Trackdir trackdir = v->GetVehicleTrackdir();
-		assert(IsValidTrackdir(trackdir));
+		dbg_assert(IsValidTrackdir(trackdir));
 
 		/* convert origin trackdir to TrackdirBits */
 		TrackdirBits trackdirs = TrackdirToTrackdirBits(trackdir);
@@ -216,7 +216,7 @@ public:
 			pf.SetOrigin(tile, TrackdirToTrackdirBits(td1) | TrackdirToTrackdirBits(td2));
 		} else {
 			DiagDirection entry = ReverseDiagDir(VehicleExitDir(v->direction, v->state));
-			TrackdirBits rtds = DiagdirReachesTrackdirs(entry) & TrackStatusToTrackdirBits(GetTileTrackStatus(tile, TRANSPORT_WATER, 0, entry));
+			TrackdirBits rtds = DiagdirReachesTrackdirs(entry) & GetTileTrackdirBits(tile, TRANSPORT_WATER, 0, entry);
 			pf.SetOrigin(tile, rtds);
 		}
 		pf.SetDestination(v);
@@ -262,8 +262,8 @@ protected:
 public:
 	inline int CurveCost(Trackdir td1, Trackdir td2)
 	{
-		assert(IsValidTrackdir(td1));
-		assert(IsValidTrackdir(td2));
+		dbg_assert(IsValidTrackdir(td1));
+		dbg_assert(IsValidTrackdir(td2));
 
 		if (HasTrackdir(TrackdirCrossesTrackdirs(td1), td2)) {
 			/* 90-deg curve penalty */
@@ -279,7 +279,7 @@ public:
 	{
 		uint *count = (uint *)data;
 		/* Ignore other vehicles (aircraft) and ships inside depot. */
-		if (v->type == VEH_SHIP && (v->vehstatus & VS_HIDDEN) == 0) (*count)++;
+		if ((v->vehstatus & VS_HIDDEN) == 0) (*count)++;
 
 		return nullptr;
 	}
@@ -299,7 +299,7 @@ public:
 		if (IsDockingTile(n.GetTile())) {
 			/* Check docking tile for occupancy */
 			uint count = 0;
-			HasVehicleOnPos(n.GetTile(), &count, &CountShipProc);
+			HasVehicleOnPos(n.GetTile(), VEH_SHIP, &count, &CountShipProc);
 			c += count * 3 * YAPF_TILE_LENGTH;
 		}
 

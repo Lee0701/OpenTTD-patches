@@ -11,13 +11,16 @@
 #define VIDEO_SDL_H
 
 #include <condition_variable>
+#if defined(__MINGW32__)
+#include "../3rdparty/mingw-std-threads/mingw.condition_variable.h"
+#endif
 
 #include "video_driver.hpp"
 
 /** The SDL video driver. */
 class VideoDriver_SDL_Base : public VideoDriver {
 public:
-	VideoDriver_SDL_Base() : sdl_window(nullptr), buffer_locked(false), driver_info(this->GetName()) {}
+	VideoDriver_SDL_Base() : sdl_window(nullptr), buffer_locked(false) {}
 
 	const char *Start(const StringList &param) override;
 
@@ -41,13 +44,11 @@ public:
 
 	std::vector<int> GetListOfMonitorRefreshRates() override;
 
-	const char *GetName() const override { return "sdl"; }
-
 	const char *GetInfoString() const override { return this->driver_info.c_str(); }
 
 protected:
 	struct SDL_Window *sdl_window; ///< Main SDL window.
-	Palette local_palette; ///< Current palette to use for drawing.
+	Palette local_palette; ///< Copy of _cur_palette.
 	bool buffer_locked; ///< Video buffer was locked by the main thread.
 	Rect dirty_rect; ///< Rectangle encompassing the dirty area of the video buffer.
 	std::string driver_info; ///< Information string about selected driver.

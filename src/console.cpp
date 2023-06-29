@@ -59,7 +59,7 @@ static void IConsoleWriteToLogFile(const char *string)
 				fwrite("\n", 1, 1, _iconsole_output_file) != 1) {
 			fclose(_iconsole_output_file);
 			_iconsole_output_file = nullptr;
-			IConsolePrint(CC_ERROR, "Cannot write to console log file; closing the log file.");
+			IConsolePrintF(CC_DEFAULT, "cannot write to log file");
 		}
 	}
 }
@@ -67,7 +67,7 @@ static void IConsoleWriteToLogFile(const char *string)
 bool CloseConsoleLogIfActive()
 {
 	if (_iconsole_output_file != nullptr) {
-		IConsolePrint(CC_INFO, "Console log file closed.");
+		IConsolePrintF(CC_DEFAULT, "file output complete");
 		fclose(_iconsole_output_file);
 		_iconsole_output_file = nullptr;
 		return true;
@@ -88,13 +88,14 @@ void IConsoleFree()
  * as well as to a logfile. If the network server is a dedicated server, all activities
  * are also logged. All lines to print are added to a temporary buffer which can be
  * used as a history to print them onscreen
- * @param colour_code The colour of the command.
- * @param string The message to output on the console (notice, error, etc.)
+ * @param colour_code the colour of the command. Red in case of errors, etc.
+ * @param string the message entered or output on the console (notice, error, etc.)
  */
-void IConsolePrint(TextColour colour_code, const std::string &string)
+void IConsolePrint(TextColour colour_code, const char *string)
 {
 	assert(IsValidConsoleColour(colour_code));
 
+	char *str;
 	if (_redirect_console_to_client != INVALID_CLIENT_ID) {
 		/* Redirect the string to the client */
 		NetworkServerSendRcon(_redirect_console_to_client, colour_code, string);
@@ -108,7 +109,7 @@ void IConsolePrint(TextColour colour_code, const std::string &string)
 
 	/* Create a copy of the string, strip if of colours and invalid
 	 * characters and (when applicable) assign it to the console buffer */
-	char *str = stredup(string.c_str());
+	str = stredup(string);
 	str_strip_colours(str);
 	StrMakeValidInPlace(str);
 
@@ -124,6 +125,45 @@ void IConsolePrint(TextColour colour_code, const std::string &string)
 	IConsoleWriteToLogFile(str);
 	IConsoleGUIPrint(colour_code, str);
 	free(str);
+}
+
+/**
+ * Handle the printing of text entered into the console or redirected there
+ * by any other means. Uses printf() style format, for more information look
+ * at IConsolePrint()
+ */
+void CDECL IConsolePrintF(TextColour colour_code, const char *format, ...)
+{
+	assert(IsValidConsoleColour(colour_code));
+
+	va_list va;
+	char buf[ICON_MAX_STREAMSIZE];
+
+	va_start(va, format);
+	vseprintf(buf, lastof(buf), format, va);
+	va_end(va);
+
+	IConsolePrint(colour_code, buf);
+}
+
+/**
+ * It is possible to print warnings to the console. These are mostly
+ * errors or mishaps, but non-fatal. You need at least a level 1 (developer) for
+ * debugging messages to show up
+ */
+void IConsoleWarning(const char *string)
+{
+	if (_settings_client.gui.developer == 0) return;
+	IConsolePrintF(CC_WARNING, "WARNING: %s", string);
+}
+
+/**
+ * It is possible to print error information to the console. This can include
+ * game errors, or errors in general you would want the user to notice
+ */
+void IConsoleError(const char *string)
+{
+	IConsolePrintF(CC_ERROR, "ERROR: %s", string);
 }
 
 /**
@@ -146,7 +186,7 @@ bool GetArgumentInteger(uint32 *value, const char *arg)
 		return true;
 	}
 
-	*value = strtoul(arg, &endptr, 0);
+	*value = std::strtoul(arg, &endptr, 0);
 	return arg != endptr;
 }
 
@@ -155,7 +195,7 @@ bool GetArgumentInteger(uint32 *value, const char *arg)
  * @param name String to remove the underscores from.
  * @return A copy of \a name, without underscores.
  */
-static std::string RemoveUnderscores(std::string name)
+std::string RemoveUnderscores(std::string name)
 {
 	name.erase(std::remove(name.begin(), name.end(), '_'), name.end());
 	return name;
@@ -166,9 +206,9 @@ static std::string RemoveUnderscores(std::string name)
  * @param name name of the command that will be used
  * @param proc function that will be called upon execution of command
  */
-/* static */ void IConsole::CmdRegister(const std::string &name, IConsoleCmdProc *proc, IConsoleHook *hook)
+/* static */ void IConsole::CmdRegister(const std::string &name, IConsoleCmdProc *proc, IConsoleHook *hook, bool unlisted)
 {
-	IConsole::Commands().try_emplace(RemoveUnderscores(name), name, proc, hook);
+	IConsole::Commands().try_emplace(RemoveUnderscores(name), name, proc, hook, unlisted);
 }
 
 /**
@@ -191,7 +231,7 @@ static std::string RemoveUnderscores(std::string name)
 /* static */ void IConsole::AliasRegister(const std::string &name, const std::string &cmd)
 {
 	auto result = IConsole::Aliases().try_emplace(RemoveUnderscores(name), name, cmd);
-	if (!result.second) IConsolePrint(CC_ERROR, "An alias with the name '{}' already exists.", name);
+	if (!result.second) IConsoleError("an alias with this name already exists; insertion aborted");
 }
 
 /**
@@ -218,10 +258,10 @@ static void IConsoleAliasExec(const IConsoleAlias *alias, byte tokencount, char 
 	char  alias_buffer[ICON_MAX_STREAMSIZE] = { '\0' };
 	char *alias_stream = alias_buffer;
 
-	Debug(console, 6, "Requested command is an alias; parsing...");
+	DEBUG(console, 6, "Requested command is an alias; parsing...");
 
 	if (recurse_count > ICON_MAX_RECURSE) {
-		IConsolePrint(CC_ERROR, "Too many alias expansions, recursion limit reached.");
+		IConsoleError("Too many alias expansions, recursion limit reached. Aborting");
 		return;
 	}
 
@@ -267,8 +307,8 @@ static void IConsoleAliasExec(const IConsoleAlias *alias, byte tokencount, char 
 						int param = *cmdptr - 'A';
 
 						if (param < 0 || param >= tokencount) {
-							IConsolePrint(CC_ERROR, "Too many or wrong amount of parameters passed to alias.");
-							IConsolePrint(CC_HELP, "Usage of alias '{}': '{}'.", alias->name, alias->cmdline);
+							IConsoleError("too many or wrong amount of parameters passed to alias, aborting");
+							IConsolePrintF(CC_WARNING, "Usage of alias '%s': %s", alias->name.c_str(), alias->cmdline.c_str());
 							return;
 						}
 
@@ -287,7 +327,7 @@ static void IConsoleAliasExec(const IConsoleAlias *alias, byte tokencount, char 
 		}
 
 		if (alias_stream >= lastof(alias_buffer) - 1) {
-			IConsolePrint(CC_ERROR, "Requested alias execution would overflow execution buffer.");
+			IConsoleError("Requested alias execution would overflow execution buffer");
 			return;
 		}
 	}
@@ -313,12 +353,13 @@ void IConsoleCmdExec(const char *cmdstr, const uint recurse_count)
 
 	for (cmdptr = cmdstr; *cmdptr != '\0'; cmdptr++) {
 		if (!IsValidChar(*cmdptr, CS_ALPHANUMERAL)) {
-			IConsolePrint(CC_ERROR, "Command '{}' contains malformed characters.", cmdstr);
+			IConsoleError("command contains malformed characters, aborting");
+			IConsolePrintF(CC_ERROR, "ERROR: command was: '%s'", cmdstr);
 			return;
 		}
 	}
 
-	Debug(console, 4, "Executing cmdline: '{}'", cmdstr);
+	DEBUG(console, 4, "Executing cmdline: '%s'", cmdstr);
 
 	memset(&tokens, 0, sizeof(tokens));
 	memset(&tokenstream, 0, sizeof(tokenstream));
@@ -328,7 +369,7 @@ void IConsoleCmdExec(const char *cmdstr, const uint recurse_count)
 	 * of characters in our stream or the max amount of tokens we can handle */
 	for (cmdptr = cmdstr, t_index = 0, tstream_i = 0; *cmdptr != '\0'; cmdptr++) {
 		if (tstream_i >= lengthof(tokenstream)) {
-			IConsolePrint(CC_ERROR, "Command line too long.");
+			IConsoleError("command line too long");
 			return;
 		}
 
@@ -349,7 +390,7 @@ void IConsoleCmdExec(const char *cmdstr, const uint recurse_count)
 			longtoken = !longtoken;
 			if (!foundtoken) {
 				if (t_index >= lengthof(tokens)) {
-					IConsolePrint(CC_ERROR, "Command line too long.");
+					IConsoleError("command line too long");
 					return;
 				}
 				tokens[t_index++] = &tokenstream[tstream_i];
@@ -367,7 +408,7 @@ void IConsoleCmdExec(const char *cmdstr, const uint recurse_count)
 
 			if (!foundtoken) {
 				if (t_index >= lengthof(tokens)) {
-					IConsolePrint(CC_ERROR, "Command line too long.");
+					IConsoleError("command line too long");
 					return;
 				}
 				tokens[t_index++] = &tokenstream[tstream_i - 1];
@@ -378,9 +419,18 @@ void IConsoleCmdExec(const char *cmdstr, const uint recurse_count)
 	}
 
 	for (uint i = 0; i < lengthof(tokens) && tokens[i] != nullptr; i++) {
-		Debug(console, 8, "Token {} is: '{}'", i, tokens[i]);
+		DEBUG(console, 8, "Token %d is: '%s'", i, tokens[i]);
 	}
 
+	IConsoleCmdExecTokens(t_index, tokens, recurse_count);
+}
+
+/**
+ * Execute a given command passed to us as tokens
+ * @param cmdstr string to be parsed and executed
+ */
+void IConsoleCmdExecTokens(uint token_count, char *tokens[], const uint recurse_count)
+{
 	if (StrEmpty(tokens[0])) return; // don't execute empty commands
 	/* 2. Determine type of command (cmd or alias) and execute
 	 * First try commands, then aliases. Execute
@@ -391,7 +441,7 @@ void IConsoleCmdExec(const char *cmdstr, const uint recurse_count)
 		ConsoleHookResult chr = (cmd->hook == nullptr ? CHR_ALLOW : cmd->hook(true));
 		switch (chr) {
 			case CHR_ALLOW:
-				if (!cmd->proc(t_index, tokens)) { // index started with 0
+				if (!cmd->proc(token_count, tokens)) { // index started with 0
 					cmd->proc(0, nullptr); // if command failed, give help
 				}
 				return;
@@ -401,12 +451,12 @@ void IConsoleCmdExec(const char *cmdstr, const uint recurse_count)
 		}
 	}
 
-	t_index--;
+	token_count--;
 	IConsoleAlias *alias = IConsole::AliasGet(tokens[0]);
 	if (alias != nullptr) {
-		IConsoleAliasExec(alias, t_index, &tokens[1], recurse_count + 1);
+		IConsoleAliasExec(alias, token_count, &tokens[1], recurse_count + 1);
 		return;
 	}
 
-	IConsolePrint(CC_ERROR, "Command '{}' not found.", tokens[0]);
+	IConsoleError("command not found");
 }

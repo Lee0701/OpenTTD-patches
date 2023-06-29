@@ -40,6 +40,7 @@ install(FILES
                 ${CMAKE_SOURCE_DIR}/changelog.txt
                 ${CMAKE_SOURCE_DIR}/docs/multiplayer.md
                 ${CMAKE_SOURCE_DIR}/known-bugs.txt
+                ${CMAKE_SOURCE_DIR}/jgrpp-changelog.md
         DESTINATION ${DOCS_DESTINATION_DIR}
         COMPONENT docs)
 
@@ -100,12 +101,12 @@ endif()
 set(CPACK_SYSTEM_NAME "${ARCHITECTURE}")
 
 set(CPACK_PACKAGE_NAME "openttd")
-set(CPACK_PACKAGE_VENDOR "OpenTTD")
-set(CPACK_PACKAGE_DESCRIPTION "OpenTTD")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "OpenTTD")
-set(CPACK_PACKAGE_HOMEPAGE_URL "https://www.openttd.org/")
-set(CPACK_PACKAGE_CONTACT "OpenTTD <info@openttd.org>")
-set(CPACK_PACKAGE_INSTALL_DIRECTORY "OpenTTD")
+set(CPACK_PACKAGE_VENDOR "OpenTTD (JGRPP)")
+set(CPACK_PACKAGE_DESCRIPTION "OpenTTD (JGRPP)")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "OpenTTD (JGRPP)")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/JGRennison/OpenTTD-patches")
+set(CPACK_PACKAGE_CONTACT "https://github.com/JGRennison/OpenTTD-patches")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "OpenTTD-JGRPP")
 set(CPACK_PACKAGE_CHECKSUM "SHA256")
 
 if((APPLE OR WIN32) AND EXISTS ${PANDOC_EXECUTABLE})
@@ -118,12 +119,10 @@ endif()
 set(CPACK_RESOURCE_FILE_README "${CMAKE_SOURCE_DIR}/README.md")
 set(CPACK_MONOLITHIC_INSTALL YES)
 set(CPACK_PACKAGE_EXECUTABLES "openttd;OpenTTD")
-set(CPACK_STRIP_FILES YES)
+set(CPACK_STRIP_FILES NO)
 set(CPACK_OUTPUT_FILE_PREFIX "bundles")
 
 if(APPLE)
-    # Stripping would produce unreadable stacktraces.
-    set(CPACK_STRIP_FILES NO)
     set(CPACK_GENERATOR "Bundle")
     include(PackageBundle)
 
@@ -173,6 +172,10 @@ elseif(UNIX)
 
                 set(CPACK_GENERATOR "DEB")
                 include(PackageDeb)
+            elseif(LSB_RELEASE_ID STREQUAL "Fedora")
+                set(PLATFORM "fedora")
+                set(CPACK_GENERATOR "RPM")
+                include(PackageRPM)
             else()
                 set(UNSUPPORTED_PLATFORM_NAME "LSB-based Linux distribution '${LSB_RELEASE_ID}'")
             endif()

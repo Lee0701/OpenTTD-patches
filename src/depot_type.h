@@ -17,6 +17,6 @@ struct Depot;
 
 static const DepotID INVALID_DEPOT = (DepotID)INVALID_STATION;
 
-static const uint MAX_LENGTH_DEPOT_NAME_CHARS = 32; ///< The maximum length of a depot name in characters including '\0'
+static const uint MAX_LENGTH_DEPOT_NAME_CHARS = 128; ///< The maximum length of a depot name in characters including '\0'
 
 #endif /* DEPOT_TYPE_H */

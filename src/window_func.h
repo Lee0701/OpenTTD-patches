@@ -16,6 +16,7 @@
 
 Window *FindWindowById(WindowClass cls, WindowNumber number);
 Window *FindWindowByClass(WindowClass cls);
+Window *GetMainWindow();
 void ChangeWindowOwner(Owner old_owner, Owner new_owner);
 
 void ResizeWindow(Window *w, int x, int y, bool clamp_to_screen = true);
@@ -36,10 +37,11 @@ void InputLoop();
 void InvalidateWindowData(WindowClass cls, WindowNumber number, int data = 0, bool gui_scope = false);
 void InvalidateWindowClassesData(WindowClass cls, int data = 0, bool gui_scope = false);
 
-void CloseNonVitalWindows();
-void CloseAllNonVitalWindows();
+void DeleteNonVitalWindows();
+void DeleteAllNonVitalWindows();
 void DeleteAllMessages();
-void CloseConstructionWindows();
+void DeleteConstructionWindows();
+void DeleteNetworkClientWindows();
 void HideVitalWindows();
 void ShowVitalWindows();
 
@@ -53,11 +55,16 @@ void SetWindowWidgetDirty(WindowClass cls, WindowNumber number, byte widget_inde
 void SetWindowDirty(WindowClass cls, WindowNumber number);
 void SetWindowClassesDirty(WindowClass cls);
 
-void CloseWindowById(WindowClass cls, WindowNumber number, bool force = true);
-void CloseWindowByClass(WindowClass cls);
+void DeleteWindowById(WindowClass cls, WindowNumber number, bool force = true);
+void DeleteAllWindowsById(WindowClass cls, WindowNumber number, bool force = true);
+void DeleteWindowByClass(WindowClass cls);
+
+bool FocusWindowById(WindowClass cls, WindowNumber number);
 
 bool EditBoxInGlobalFocus();
 bool FocusedWindowIsConsole();
 Point GetCaretPosition();
+
+char *DumpWindowInfo(char *b, const char *last, const Window *w);
 
 #endif /* WINDOW_FUNC_H */

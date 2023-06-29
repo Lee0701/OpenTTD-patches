@@ -15,6 +15,8 @@
 #include "../network/network.h"
 #include "../window_func.h"
 #include "../framerate_type.h"
+#include "../scope_info.h"
+#include "../string_func.h"
 #include "ai_scanner.hpp"
 #include "ai_instance.hpp"
 #include "ai_config.hpp"
@@ -57,10 +59,12 @@
 	assert(c->ai_instance == nullptr);
 	c->ai_instance = new AIInstance();
 	c->ai_instance->Initialize(info);
+	c->ai_instance->LoadOnStack(config->GetToLoadData());
+	config->SetToLoadData(nullptr);
 
 	cur_company.Restore();
 
-	InvalidateWindowData(WC_AI_DEBUG, 0, -1);
+	InvalidateWindowData(WC_SCRIPT_DEBUG, 0, -1);
 	return;
 }
 
@@ -77,21 +81,20 @@
 	Backup<CompanyID> cur_company(_current_company, FILE_LINE);
 	for (const Company *c : Company::Iterate()) {
 		if (c->is_ai) {
+			SCOPE_INFO_FMT([&], "AI::GameLoop: %i: %s (v%d)\n", (int)c->index, c->ai_info->GetName(), c->ai_info->GetVersion());
 			PerformanceMeasurer framerate((PerformanceElement)(PFE_AI0 + c->index));
 			cur_company.Change(c->index);
 			c->ai_instance->GameLoop();
+			/* Occasionally collect garbage; every 255 ticks do one company.
+			 * Effectively collecting garbage once every two months per AI. */
+			if ((AI::frame_counter & 255) == 0 && (CompanyID)GB(AI::frame_counter, 8, 4) == c->index) {
+				c->ai_instance->CollectGarbage();
+			}
 		} else {
 			PerformanceMeasurer::SetInactive((PerformanceElement)(PFE_AI0 + c->index));
 		}
 	}
 	cur_company.Restore();
-
-	/* Occasionally collect garbage; every 255 ticks do one company.
-	 * Effectively collecting garbage once every two months per AI. */
-	if ((AI::frame_counter & 255) == 0) {
-		CompanyID cid = (CompanyID)GB(AI::frame_counter, 8, 4);
-		if (Company::IsValidAiID(cid)) Company::Get(cid)->ai_instance->CollectGarbage();
-	}
 }
 
 /* static */ uint AI::GetTick()
@@ -113,8 +116,8 @@
 
 	cur_company.Restore();
 
-	InvalidateWindowData(WC_AI_DEBUG, 0, -1);
-	CloseWindowById(WC_AI_SETTINGS, company);
+	InvalidateWindowData(WC_SCRIPT_DEBUG, 0, -1);
+	DeleteWindowById(WC_SCRIPT_SETTINGS, company);
 }
 
 /* static */ void AI::Pause(CompanyID company)
@@ -177,15 +180,10 @@
 	AI::KillAll();
 
 	if (keepConfig) {
-		/* Run a rescan, which indexes all AIInfos again, and check if we can
-		 *  still load all the AIS, while keeping the configs in place */
-		Rescan();
+		/* Do not bother re-scanning AI files, just reset config */
+		ResetConfig();
 	} else {
-		delete AI::scanner_info;
-		delete AI::scanner_library;
-		AI::scanner_info = nullptr;
-		AI::scanner_library = nullptr;
-
+		/* Do not bother re-scanning AI files, just delete config */
 		for (CompanyID c = COMPANY_FIRST; c < MAX_COMPANIES; c++) {
 			if (_settings_game.ai_config[c] != nullptr) {
 				delete _settings_game.ai_config[c];
@@ -207,7 +205,7 @@
 	for (CompanyID c = COMPANY_FIRST; c < MAX_COMPANIES; c++) {
 		if (_settings_game.ai_config[c] != nullptr && _settings_game.ai_config[c]->HasScript()) {
 			if (!_settings_game.ai_config[c]->ResetInfo(true)) {
-				Debug(script, 0, "After a reload, the AI by the name '{}' was no longer found, and removed from the list.", _settings_game.ai_config[c]->GetName());
+				DEBUG(script, 0, "After a reload, the AI by the name '%s' was no longer found, and removed from the list.", _settings_game.ai_config[c]->GetName());
 				_settings_game.ai_config[c]->Change(nullptr);
 				if (Company::IsValidAiID(c)) {
 					/* The code belonging to an already running AI was deleted. We can only do
@@ -224,7 +222,7 @@
 		}
 		if (_settings_newgame.ai_config[c] != nullptr && _settings_newgame.ai_config[c]->HasScript()) {
 			if (!_settings_newgame.ai_config[c]->ResetInfo(false)) {
-				Debug(script, 0, "After a reload, the AI by the name '{}' was no longer found, and removed from the list.", _settings_newgame.ai_config[c]->GetName());
+				DEBUG(script, 0, "After a reload, the AI by the name '%s' was no longer found, and removed from the list.", _settings_newgame.ai_config[c]->GetName());
 				_settings_newgame.ai_config[c]->Change(nullptr);
 			}
 		}
@@ -289,32 +287,6 @@
 	}
 }
 
-/* static */ void AI::Load(CompanyID company, int version)
-{
-	if (!_networking || _network_server) {
-		Company *c = Company::GetIfValid(company);
-		assert(c != nullptr && c->ai_instance != nullptr);
-
-		Backup<CompanyID> cur_company(_current_company, company, FILE_LINE);
-		c->ai_instance->Load(version);
-		cur_company.Restore();
-	} else {
-		/* Read, but ignore, the load data */
-		AIInstance::LoadEmpty();
-	}
-}
-
-/* static */ int AI::GetStartNextTime()
-{
-	/* Find the first company which doesn't exist yet */
-	for (CompanyID c = COMPANY_FIRST; c < MAX_COMPANIES; c++) {
-		if (!Company::IsValidID(c)) return AIConfig::GetConfig(c, AIConfig::SSS_FORCE_GAME)->GetSetting("start_date");
-	}
-
-	/* Currently no AI can be started, check again in a year. */
-	return DAYS_IN_YEAR;
-}
-
 /* static */ std::string AI::GetConsoleList(bool newest_only)
 {
 	return AI::scanner_info->GetConsoleList(newest_only);
@@ -353,9 +325,9 @@
 	AI::scanner_library->RescanDir();
 	ResetConfig();
 
-	InvalidateWindowData(WC_AI_LIST, 0, 1);
-	SetWindowClassesDirty(WC_AI_DEBUG);
-	InvalidateWindowClassesData(WC_AI_SETTINGS);
+	InvalidateWindowData(WC_SCRIPT_LIST, 0, 1);
+	SetWindowClassesDirty(WC_SCRIPT_DEBUG);
+	InvalidateWindowClassesData(WC_SCRIPT_SETTINGS);
 }
 
 /**

@@ -849,7 +849,7 @@ bool MidiFile::LoadSong(const MusicSongInfo &song)
 {
 	switch (song.filetype) {
 		case MTT_STANDARDMIDI:
-			return this->LoadFile(song.filename);
+			return this->LoadFile(song.filename.c_str());
 		case MTT_MPSMIDI:
 		{
 			size_t songdatalen = 0;
@@ -1060,9 +1060,9 @@ std::string MidiFile::GetSMFFile(const MusicSongInfo &song)
 
 	char basename[MAX_PATH];
 	{
-		const char *fnstart = strrchr(song.filename, PATHSEPCHAR);
+		const char *fnstart = strrchr(song.filename.c_str(), PATHSEPCHAR);
 		if (fnstart == nullptr) {
-			fnstart = song.filename;
+			fnstart = song.filename.c_str();
 		} else {
 			fnstart++;
 		}
@@ -1110,7 +1110,7 @@ std::string MidiFile::GetSMFFile(const MusicSongInfo &song)
 static bool CmdDumpSMF(byte argc, char *argv[])
 {
 	if (argc == 0) {
-		IConsolePrint(CC_HELP, "Write the current song to a Standard MIDI File. Usage: 'dumpsmf <filename>'.");
+		IConsolePrint(CC_WARNING, "Write the current song to a Standard MIDI File. Usage: 'dumpsmf <filename>'");
 		return true;
 	}
 	if (argc != 2) {
@@ -1128,7 +1128,7 @@ static bool CmdDumpSMF(byte argc, char *argv[])
 		IConsolePrint(CC_ERROR, "Filename too long.");
 		return false;
 	}
-	IConsolePrint(CC_INFO, "Dumping MIDI to '{}'.", fnbuf);
+	IConsolePrintF(CC_INFO, "Dumping MIDI to: %s", fnbuf);
 
 	if (_midifile_instance->WriteSMF(fnbuf)) {
 		IConsolePrint(CC_INFO, "File written successfully.");

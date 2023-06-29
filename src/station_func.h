@@ -55,6 +55,9 @@ bool SplitGroundSpriteForOverlay(const TileInfo *ti, SpriteID *ground, RailTrack
 void IncreaseStats(Station *st, const Vehicle *v, StationID next_station_id, uint32 time);
 void IncreaseStats(Station *st, CargoID cargo, StationID next_station_id, uint capacity, uint usage, uint32 time, EdgeUpdateMode mode);
 void RerouteCargo(Station *st, CargoID c, StationID avoid, StationID avoid2);
+void RerouteCargoFromSource(Station *st, CargoID c, StationID source, StationID avoid, StationID avoid2);
+
+void FreeTrainStationPlatformReservation(const Train *v);
 
 /**
  * Calculates the maintenance cost of a number of station tiles.
@@ -67,5 +70,7 @@ static inline Money StationMaintenanceCost(uint32 num)
 }
 
 Money AirportMaintenanceCost(Owner owner);
+
+bool ShouldShowBaseStationViewportLabel(const BaseStation *bst);
 
 #endif /* STATION_FUNC_H */

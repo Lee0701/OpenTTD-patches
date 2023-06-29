@@ -16,6 +16,8 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 /** Description of the data to save and load in #PersistentStorage. */
 static const SaveLoad _storage_desc[] = {
 	 SLE_CONDVAR(PersistentStorage, grfid,    SLE_UINT32,                  SLV_6, SL_MAX_VERSION),
@@ -59,3 +61,5 @@ static const ChunkHandlerRef persistent_storage_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _persistent_storage_chunk_handlers(persistent_storage_chunk_handlers);
+
+}

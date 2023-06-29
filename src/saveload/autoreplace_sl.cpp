@@ -16,6 +16,8 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 static const SaveLoad _engine_renew_desc[] = {
 	    SLE_VAR(EngineRenew, from,     SLE_UINT16),
 	    SLE_VAR(EngineRenew, to,       SLE_UINT16),
@@ -71,3 +73,5 @@ static const ChunkHandlerRef autoreplace_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _autoreplace_chunk_handlers(autoreplace_chunk_handlers);
+
+}

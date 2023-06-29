@@ -290,8 +290,10 @@ static const SpriteID SPR_TRAMWAY_DEPOT_NO_TRACK       = SPR_TRAMWAY_BASE + 113;
 static const uint16 TRAMWAY_SPRITE_COUNT = 119;
 
 /** One way road sprites */
-static const SpriteID SPR_ONEWAY_BASE = SPR_TRAMWAY_BASE + TRAMWAY_SPRITE_COUNT;
-static const uint16 ONEWAY_SPRITE_COUNT = 6;
+static const SpriteID SPR_ONEWAY_BASE           = SPR_TRAMWAY_BASE + TRAMWAY_SPRITE_COUNT;
+static const SpriteID SPR_ONEWAY_SLOPE_N_OFFSET = 6;
+static const SpriteID SPR_ONEWAY_SLOPE_S_OFFSET = 12;
+static const uint16 ONEWAY_SPRITE_COUNT = 18;
 
 /** Tunnel sprites with grass only for custom railtype tunnel. */
 static const SpriteID SPR_RAILTYPE_TUNNEL_BASE = SPR_ONEWAY_BASE + ONEWAY_SPRITE_COUNT;
@@ -305,8 +307,61 @@ static const uint16 EMPTY_BOUNDING_BOX_SPRITE_COUNT = 1;
 static const SpriteID SPR_PALETTE_BASE = SPR_EMPTY_BOUNDING_BOX + EMPTY_BOUNDING_BOX_SPRITE_COUNT;
 static const uint16 PALETTE_SPRITE_COUNT = 1;
 
+/* Programmable pre-signal sprites */
+static const SpriteID SPR_PROGSIGNAL_BASE = SPR_PALETTE_BASE + PALETTE_SPRITE_COUNT;
+static const uint16 PROGSIGNAL_SPRITE_COUNT = 32;
+static const SpriteID SPR_DUP_PROGSIGNAL_BASE = SPR_PROGSIGNAL_BASE + PROGSIGNAL_SPRITE_COUNT;
+
+/* Extra signal sprites */
+static const SpriteID SPR_EXTRASIGNAL_BASE = SPR_DUP_PROGSIGNAL_BASE + PROGSIGNAL_SPRITE_COUNT;
+static const uint16 EXTRASIGNAL_SPRITE_COUNT = 16;
+static const SpriteID SPR_DUP_EXTRASIGNAL_BASE = SPR_EXTRASIGNAL_BASE + EXTRASIGNAL_SPRITE_COUNT;
+
+/* Zoning sprites */
+static const SpriteID SPR_ZONING_INNER_HIGHLIGHT_BASE       = SPR_DUP_EXTRASIGNAL_BASE + EXTRASIGNAL_SPRITE_COUNT;
+static const uint16 ZONING_INNER_HIGHLIGHT_SPRITE_COUNT = 32;
+static const SpriteID SPR_ZONING_INNER_HIGHLIGHT_RED        = SPR_ZONING_INNER_HIGHLIGHT_BASE + 19;
+static const SpriteID SPR_ZONING_INNER_HIGHLIGHT_GREEN      = SPR_ZONING_INNER_HIGHLIGHT_BASE + 20;
+static const SpriteID SPR_ZONING_INNER_HIGHLIGHT_BLACK      = SPR_ZONING_INNER_HIGHLIGHT_BASE + 21;
+static const SpriteID SPR_ZONING_INNER_HIGHLIGHT_LIGHT_BLUE = SPR_ZONING_INNER_HIGHLIGHT_BASE + 22;
+static const SpriteID SPR_ZONING_INNER_HIGHLIGHT_ORANGE     = SPR_ZONING_INNER_HIGHLIGHT_BASE + 23;
+static const SpriteID SPR_ZONING_INNER_HIGHLIGHT_WHITE      = SPR_ZONING_INNER_HIGHLIGHT_BASE + 24;
+static const SpriteID SPR_ZONING_INNER_HIGHLIGHT_PURPLE     = SPR_ZONING_INNER_HIGHLIGHT_BASE + 25;
+static const SpriteID SPR_ZONING_INNER_HIGHLIGHT_BROWN      = SPR_ZONING_INNER_HIGHLIGHT_BASE + 26;
+static const SpriteID SPR_ZONING_INNER_HIGHLIGHT_YELLOW     = SPR_ZONING_INNER_HIGHLIGHT_BASE + 27;
+
+/* Sprites for the route step marker. */
+static const SpriteID SPR_ROUTE_STEP_BASE          = SPR_ZONING_INNER_HIGHLIGHT_BASE + ZONING_INNER_HIGHLIGHT_SPRITE_COUNT;
+static const SpriteID SPR_ROUTE_STEP_TOP           = SPR_ROUTE_STEP_BASE + 0;
+static const SpriteID SPR_ROUTE_STEP_MIDDLE        = SPR_ROUTE_STEP_BASE + 1;
+static const SpriteID SPR_ROUTE_STEP_BOTTOM        = SPR_ROUTE_STEP_BASE + 2;
+static const SpriteID SPR_ROUTE_STEP_BOTTOM_SHADOW = SPR_ROUTE_STEP_BASE + 3;
+static const SpriteID ROUTE_STEP_SPRITE_COUNT = 4;
+
+/* Tracerestrict sprites */
+static const SpriteID SPR_TRACERESTRICT_BASE = SPR_ROUTE_STEP_BASE + ROUTE_STEP_SPRITE_COUNT;
+static const uint16 TRACERESTRICT_SPRITE_COUNT = 2;
+
+/* Misc GUI sprites */
+static const SpriteID SPR_MISC_GUI_BASE = SPR_TRACERESTRICT_BASE + TRACERESTRICT_SPRITE_COUNT;
+static const uint16 MISC_GUI_SPRITE_COUNT = 1;
+
+/* Road waypoints sprites */
+static const SpriteID SPR_ROAD_WAYPOINTS_BASE = SPR_MISC_GUI_BASE + MISC_GUI_SPRITE_COUNT;
+static const SpriteID SPR_ROAD_WAYPOINT_Y_W   = SPR_ROAD_WAYPOINTS_BASE;
+static const SpriteID SPR_ROAD_WAYPOINT_Y_E   = SPR_ROAD_WAYPOINTS_BASE + 1;
+static const SpriteID SPR_ROAD_WAYPOINT_X_W   = SPR_ROAD_WAYPOINTS_BASE + 2;
+static const SpriteID SPR_ROAD_WAYPOINT_X_E   = SPR_ROAD_WAYPOINTS_BASE + 3;
+static const uint16 ROAD_WAYPOINTS_SPRITE_COUNT = 4;
+
+/* Duplicated signal sprites */
+static const SpriteID SPR_DUP_ORIGINAL_SIGNALS_BASE = SPR_ROAD_WAYPOINTS_BASE + ROAD_WAYPOINTS_SPRITE_COUNT;
+static const uint16 DUP_ORIGINAL_SIGNALS_SPRITE_COUNT = 16;
+static const SpriteID SPR_DUP_SIGNALS_BASE = SPR_DUP_ORIGINAL_SIGNALS_BASE + DUP_ORIGINAL_SIGNALS_SPRITE_COUNT;
+static const uint16 DUP_SIGNALS_SPRITE_COUNT = PRESIGNAL_SEMAPHORE_AND_PBS_SPRITE_COUNT;
+
 /* From where can we start putting NewGRFs? */
-static const SpriteID SPR_NEWGRFS_BASE = SPR_PALETTE_BASE + PALETTE_SPRITE_COUNT;
+static const SpriteID SPR_NEWGRFS_BASE = SPR_DUP_SIGNALS_BASE + DUP_SIGNALS_SPRITE_COUNT;
 
 /* Manager face sprites */
 static const SpriteID SPR_GRADIENT = 874; // background gradient behind manager face
@@ -1124,6 +1179,10 @@ static const SpriteID SPR_OTTD_N                = 4839;
 static const SpriteID SPR_OTTD_T                = 4836;
 /* Letters not used: R,A,S,Y,C (4837, 4838, 4840, 4843, 4844) */
 
+/* Range of "special" sprites that are used by the old map generation algorithm. */
+static const SpriteID SPR_MAPGEN_BEGIN = 4845;
+static const SpriteID SPR_MAPGEN_END   = 4882;
+
 static const SpriteID SPR_HIGHSCORE_CHART_BEGIN = 4804;
 static const SpriteID SPR_TYCOON_IMG1_BEGIN     = 4814;
 static const SpriteID SPR_TYCOON_IMG2_BEGIN     = 4824;
@@ -1331,12 +1390,16 @@ static const SpriteID SPR_IMG_SIGNAL_ELECTRIC_EXIT     = SPR_SIGNALS_BASE +  28;
 static const SpriteID SPR_IMG_SIGNAL_ELECTRIC_COMBO    = SPR_SIGNALS_BASE +  44;
 static const SpriteID SPR_IMG_SIGNAL_ELECTRIC_PBS      = SPR_SIGNALS_BASE + 124;
 static const SpriteID SPR_IMG_SIGNAL_ELECTRIC_PBS_OWAY = SPR_SIGNALS_BASE + 140;
+static const SpriteID SPR_IMG_SIGNAL_ELECTRIC_PROG     = SPR_PROGSIGNAL_BASE + 28;
+static const SpriteID SPR_IMG_SIGNAL_ELECTRIC_NO_ENTRY = SPR_EXTRASIGNAL_BASE + 14;
 static const SpriteID SPR_IMG_SIGNAL_SEMAPHORE_NORM    = SPR_SIGNALS_BASE +  60;
 static const SpriteID SPR_IMG_SIGNAL_SEMAPHORE_ENTRY   = SPR_SIGNALS_BASE +  76;
 static const SpriteID SPR_IMG_SIGNAL_SEMAPHORE_EXIT    = SPR_SIGNALS_BASE +  92;
 static const SpriteID SPR_IMG_SIGNAL_SEMAPHORE_COMBO   = SPR_SIGNALS_BASE + 108;
 static const SpriteID SPR_IMG_SIGNAL_SEMAPHORE_PBS     = SPR_SIGNALS_BASE + 188;
 static const SpriteID SPR_IMG_SIGNAL_SEMAPHORE_PBS_OWAY= SPR_SIGNALS_BASE + 204;
+static const SpriteID SPR_IMG_SIGNAL_SEMAPHORE_PROG    = SPR_PROGSIGNAL_BASE + 12;
+static const SpriteID SPR_IMG_SIGNAL_SEMAPHORE_NO_ENTRY= SPR_EXTRASIGNAL_BASE + 6;
 static const SpriteID SPR_IMG_SIGNAL_CONVERT           = SPR_OPENTTD_BASE + 135;
 
 static const SpriteID SPR_IMG_TUNNEL_RAIL   = 2430;
@@ -1516,6 +1579,9 @@ enum SpriteSetup {
 
 	/* This bit is applied to palette ID */
 	PALETTE_TEXT_RECOLOUR = 31, ///< Set if palette is actually a magic text recolour
+	PALETTE_BRIGHTNESS_MODIFY = 30, ///< Set if palette has a brightness adjustment
+	PALETTE_BRIGHTNESS_OFFSET = 24, ///< Palette brightness adjustment bit offset
+	PALETTE_BRIGHTNESS_WIDTH = 5,   ///< Palette brightness adjustment width
 
 	PALETTE_WIDTH = 24,         ///< number of bits of the sprite containing the recolour palette
 	SPRITE_WIDTH = 24,          ///< number of bits for the sprite number

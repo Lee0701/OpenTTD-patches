@@ -11,8 +11,8 @@
 #define NETWORK_CONTENT_H
 
 #include "core/tcp_content.h"
-#include "core/tcp_http.h"
-#include <unordered_map>
+#include "core/http.h"
+#include "../3rdparty/cpp-btree/btree_map.h"
 
 /** Vector with content info */
 typedef std::vector<ContentInfo *> ContentVector;
@@ -69,13 +69,14 @@ protected:
 	std::vector<ContentCallback *> callbacks;     ///< Callbacks to notify "the world"
 	ContentIDList requested;                      ///< ContentIDs we already requested (so we don't do it again)
 	ContentVector infos;                          ///< All content info we received
-	std::unordered_multimap<ContentID, ContentID> reverse_dependency_map; ///< Content reverse dependency map
+	btree::btree_multimap<ContentID, ContentID> reverse_dependency_map; ///< Content reverse dependency map
 	std::vector<char> http_response;              ///< The HTTP response to the requests we've been doing
 	int http_response_index;                      ///< Where we are, in the response, with handling it
 
 	FILE *curFile;        ///< Currently downloaded file
 	ContentInfo *curInfo; ///< Information about the currently downloaded file
 	bool isConnecting;    ///< Whether we're connecting
+	bool isCancelled;     ///< Whether the download has been cancelled
 	std::chrono::steady_clock::time_point lastActivity;  ///< The last time there was network activity
 
 	friend class NetworkContentConnecter;
@@ -83,7 +84,8 @@ protected:
 	bool Receive_SERVER_INFO(Packet *p) override;
 	bool Receive_SERVER_CONTENT(Packet *p) override;
 
-	ContentInfo *GetContent(ContentID cid) const;
+	ContentInfo *GetContent(ContentID cid);
+	const ContentInfo *GetContent(ContentID cid) const { return const_cast<ClientNetworkContentSocketHandler *>(this)->GetContent(cid); }
 	void DownloadContentInfo(ContentID cid);
 
 	void OnConnect(bool success) override;
@@ -94,6 +96,7 @@ protected:
 
 	void OnFailure() override;
 	void OnReceiveData(const char *data, size_t length) override;
+	bool IsCancelled() const override;
 
 	bool BeforeDownload();
 	void AfterDownload();

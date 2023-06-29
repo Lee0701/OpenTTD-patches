@@ -14,6 +14,8 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 struct APIDChunkHandler : NewGRFMappingChunkHandler {
 	APIDChunkHandler() : NewGRFMappingChunkHandler('APID', _airport_mngr) {}
 };
@@ -30,3 +32,5 @@ static const ChunkHandlerRef airport_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _airport_chunk_handlers(airport_chunk_handlers);
+
+}

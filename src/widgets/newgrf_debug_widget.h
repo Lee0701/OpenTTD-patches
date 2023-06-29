@@ -19,6 +19,15 @@ enum NewGRFInspectWidgets {
 	WID_NGRFI_VEH_CHAIN, ///< Display for vehicle chain.
 	WID_NGRFI_MAINPANEL, ///< Panel widget containing the actual data.
 	WID_NGRFI_SCROLLBAR, ///< Scrollbar.
+	WID_NGRFI_REFRESH,   ///< Refresh toggle.
+	WID_NGRFI_LOG_CONSOLE, ///< Log to console
+	WID_NGRFI_DUPLICATE, ///< Duplicate window
+	WID_NGRFI_SPRITE_DUMP, ///< Dump current sprite group
+	WID_NGRFI_SPRITE_DUMP_SEL, ///< Selection widget for WID_NGRFI_SPRITE_DUMP
+	WID_NGRFI_SPRITE_DUMP_UNOPT, ///< Dump unoptimised sprite group
+	WID_NGRFI_SPRITE_DUMP_UNOPT_SEL, ///< Selection widget for WID_NGRFI_SPRITE_DUMP_UNOPT
+	WID_NGRFI_SPRITE_DUMP_GOTO, ///< Goto sprite
+	WID_NGRFI_SPRITE_DUMP_GOTO_SEL, ///< Selection widget for WID_NGRFI_SPRITE_DUMP_GOTO
 };
 
 /** Widgets of the #SpriteAlignerWindow class. */
@@ -38,6 +47,8 @@ enum SpriteAlignerWidgets {
 	WID_SA_LIST,        ///< Queried sprite list.
 	WID_SA_SCROLLBAR,   ///< Scrollbar for sprite list.
 	WID_SA_RESET_REL,   ///< Reset relative sprite offset
+	WID_SA_CENTRE,      ///< Toggle centre sprite.
+	WID_SA_CROSSHAIR,   ///< Toggle crosshair.
 };
 
 #endif /* WIDGETS_NEWGRF_DEBUG_WIDGET_H */

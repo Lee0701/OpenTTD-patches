@@ -89,7 +89,8 @@ public:
 		this->SetPort(port);
 	}
 
-	const std::string &GetHostname();
+	const char *GetHostname();
+	void GetAddressAsString(char *buffer, const char *last, bool with_family = true);
 	std::string GetAddressAsString(bool with_family = true);
 	const sockaddr_storage *GetAddress();
 
@@ -117,7 +118,7 @@ public:
 	}
 
 	bool IsFamily(int family);
-	bool IsInNetmask(const std::string &netmask);
+	bool IsInNetmask(const char *netmask);
 
 	/**
 	 * Compare the address of this class with the address of another.
@@ -178,6 +179,19 @@ public:
 	static NetworkAddress GetPeerAddress(SOCKET sock);
 	static NetworkAddress GetSockAddress(SOCKET sock);
 	static const std::string GetPeerName(SOCKET sock);
+};
+
+/**
+ * The use of a struct is so that when used as an argument to /seprintf/etc, the buffer lives
+ * on the stack with a lifetime which lasts until the end of the statement.
+ * This avoids using a static buffer which is thread-unsafe, or needing to call malloc, which would then nee to be freed.
+ */
+struct NetworkAddressDumper {
+	const char *GetAddressAsString(NetworkAddress *addr, bool with_family = true);
+
+private:
+	/* 7 extra are for with_family, which adds " (IPvX)". */
+	char buf[NETWORK_HOSTNAME_PORT_LENGTH + 7];
 };
 
 /**

@@ -29,7 +29,7 @@ public:
 	bool WouldBlock() const;
 	bool IsConnectionReset() const;
 	bool IsConnectInProgress() const;
-	const std::string &AsString() const;
+	const char *AsString() const;
 
 	static NetworkError GetLast();
 };
@@ -57,6 +57,19 @@ typedef unsigned long in_addr_t;
 	typedef int socklen_t;
 #	define IPPROTO_IPV6 41
 #endif /* !(__MINGW32__ && __CYGWIN__) */
+
+#if defined(__MINGW32__)
+#ifndef AI_ADDRCONFIG
+#define AI_ADDRCONFIG 0x400
+#endif
+#ifndef IPPROTO_IPV6
+#define IPPROTO_IPV6 41
+#endif
+#ifndef IPV6_V6ONLY
+#define IPV6_V6ONLY 27
+#endif
+#endif /* __MINGW32__ */
+
 #endif /* _WIN32 */
 
 /* UNIX stuff */
@@ -67,6 +80,9 @@ typedef unsigned long in_addr_t;
 #	define SOCKET int
 #	define INVALID_SOCKET -1
 #	define closesocket close
+#	define SD_RECEIVE SHUT_RD
+#	define SD_SEND SHUT_WR
+#	define SD_BOTH SHUT_RDWR
 /* Need this for FIONREAD on solaris */
 #	define BSD_COMP
 
@@ -122,6 +138,9 @@ typedef unsigned long in_addr_t;
 #	define SOCKET int
 #	define INVALID_SOCKET -1
 #	define closesocket close
+#	define SD_RECEIVE SHUT_RD
+#	define SD_SEND SHUT_WR
+#	define SD_BOTH SHUT_RDWR
 
 /* Includes needed for OS/2 systems */
 #	include <types.h>
@@ -193,10 +212,11 @@ static inline socklen_t FixAddrLenForEmscripten(struct sockaddr_storage &address
 }
 #endif
 
-
 bool SetNonBlocking(SOCKET d);
+bool SetBlocking(SOCKET d);
 bool SetNoDelay(SOCKET d);
 bool SetReusePort(SOCKET d);
+bool ShutdownSocket(SOCKET d, bool read, bool write, uint linger_timeout);
 NetworkError GetSocketError(SOCKET d);
 
 /* Make sure these structures have the size we expect them to be */

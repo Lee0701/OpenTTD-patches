@@ -24,9 +24,7 @@
 #include "window_gui.h"
 #include "window_func.h"
 #include "zoom_func.h"
-#include "terraform_cmd.h"
-#include "object_cmd.h"
-#include "road_cmd.h"
+#include "core/backup_type.hpp"
 
 #include "widgets/object_widget.h"
 
@@ -119,12 +117,13 @@ public:
 
 		NWidgetMatrix *matrix = this->GetWidget<NWidgetMatrix>(WID_BO_SELECT_MATRIX);
 		matrix->SetScrollbar(this->GetScrollbar(WID_BO_SELECT_SCROLL));
+		matrix->SetCount(ObjectClass::Get(_selected_object_class)->GetUISpecCount());
 
 		this->GetWidget<NWidgetMatrix>(WID_BO_OBJECT_MATRIX)->SetCount(4);
 
 		ResetObjectToPlace();
 
-		this->vscroll->SetCount((int)this->object_classes.size());
+		this->vscroll->SetCount(this->object_classes.size());
 
 		EnsureSelectedObjectClassIsVisible();
 
@@ -138,14 +137,12 @@ public:
 	}
 
 	/** Filter object classes by class name. */
-	static bool CDECL TagNameFilter(ObjectClassID const *oc, StringFilter &filter)
+	static bool TagNameFilter(ObjectClassID const *oc, StringFilter &filter)
 	{
 		ObjectClass *objclass = ObjectClass::Get(*oc);
-		char buffer[DRAW_STRING_BUFFER];
-		GetString(buffer, objclass->name, lastof(buffer));
 
 		filter.ResetState();
-		filter.AddLine(buffer);
+		filter.AddLine(GetString(objclass->name));
 		return filter.GetState();
 	}
 
@@ -156,7 +153,7 @@ public:
 
 		this->object_classes.clear();
 
-		for (uint i = 0; i < ObjectClass::GetClassCount(); i++) {
+		for (uint i = 0; ObjectClass::IsClassIDValid((ObjectClassID)i); i++) {
 			ObjectClass *objclass = ObjectClass::Get((ObjectClassID)i);
 			if (objclass->GetUISpecCount() == 0) continue; // Is this needed here?
 			object_classes.push_back((ObjectClassID)i);
@@ -167,7 +164,7 @@ public:
 		this->object_classes.RebuildDone();
 		this->object_classes.Sort();
 
-		this->vscroll->SetCount((uint)this->object_classes.size());
+		this->vscroll->SetCount(this->object_classes.size());
 	}
 
 	/**
@@ -184,7 +181,7 @@ public:
 			/* Check if the previously selected object class is not available anymore as a
 			 * result of starting a new game without the corresponding NewGRF. */
 			bool available = false;
-			for (uint i = 0; ObjectClass::GetClassCount(); ++i) {
+			for (uint i = 0; ObjectClass::IsClassIDValid((ObjectClassID)i); ++i) {
 				if ((ObjectClassID)i == _selected_object_class) {
 					available = true;
 					break;
@@ -241,9 +238,8 @@ public:
 				for (auto object_class_id : this->object_classes) {
 					ObjectClass *objclass = ObjectClass::Get(object_class_id);
 					if (objclass->GetUISpecCount() == 0) continue;
-					size->width = std::max(size->width, GetStringBoundingBox(objclass->name).width);
+					size->width = std::max(size->width, GetStringBoundingBox(objclass->name).width + padding.width);
 				}
-				size->width += padding.width;
 				this->line_height = FONT_HEIGHT_NORMAL + padding.height;
 				resize->height = this->line_height;
 				size->height = 5 * this->line_height;
@@ -274,11 +270,10 @@ public:
 				uint height[2] = {0, 0}; // The height for the different views; in this case views 1/2 and 4.
 
 				/* Get the height and view information. */
-				for (int i = 0; i < NUM_OBJECTS; i++) {
-					const ObjectSpec *spec = ObjectSpec::Get(i);
-					if (!spec->IsEverAvailable()) continue;
-					two_wide |= spec->views >= 2;
-					height[spec->views / 4] = std::max<int>(ObjectSpec::Get(i)->height, height[spec->views / 4]);
+				for (const auto &spec : ObjectSpec::Specs()) {
+					if (!spec.IsEverAvailable()) continue;
+					two_wide |= spec.views >= 2;
+					height[spec.views / 4] = std::max<int>(spec.height, height[spec.views / 4]);
 				}
 
 				/* Determine the pixel heights. */
@@ -362,8 +357,7 @@ public:
 				DrawPixelInfo tmp_dpi;
 				/* Set up a clipping area for the preview. */
 				if (FillDrawPixelInfo(&tmp_dpi, r.left, r.top, r.Width(), r.Height())) {
-					DrawPixelInfo *old_dpi = _cur_dpi;
-					_cur_dpi = &tmp_dpi;
+					AutoRestoreBackup dpi_backup(_cur_dpi, &tmp_dpi);
 					if (spec->grf_prop.grffile == nullptr) {
 						extern const DrawTileSprites _objects[];
 						const DrawTileSprites *dts = &_objects[spec->grf_prop.local_id];
@@ -371,7 +365,6 @@ public:
 					} else {
 						DrawNewObjectTileInGUI(r.Width() / 2 - 1, (r.Height() + matrix_height / 2) / 2 - this->object_margin - ScaleSpriteTrad(TILE_PIXELS), spec, GB(widget, 16, 16));
 					}
-					_cur_dpi = old_dpi;
 				}
 				break;
 			}
@@ -389,8 +382,7 @@ public:
 				DrawPixelInfo tmp_dpi;
 				/* Set up a clipping area for the preview. */
 				if (FillDrawPixelInfo(&tmp_dpi, r.left, r.top, r.Width(), r.Height())) {
-					DrawPixelInfo *old_dpi = _cur_dpi;
-					_cur_dpi = &tmp_dpi;
+					AutoRestoreBackup dpi_backup(_cur_dpi, &tmp_dpi);
 					if (spec->grf_prop.grffile == nullptr) {
 						extern const DrawTileSprites _objects[];
 						const DrawTileSprites *dts = &_objects[spec->grf_prop.local_id];
@@ -399,7 +391,6 @@ public:
 						DrawNewObjectTileInGUI(r.Width() / 2 - 1, r.Height() - this->object_margin - ScaleSpriteTrad(TILE_PIXELS), spec,
 								std::min<int>(_selected_object_view, spec->views - 1));
 					}
-					_cur_dpi = old_dpi;
 				}
 				break;
 			}
@@ -466,6 +457,11 @@ public:
 
 		if (_selected_object_index != -1) {
 			SetObjectToPlaceWnd(SPR_CURSOR_TRANSMITTER, PAL_NONE, HT_RECT | HT_DIAGONAL, this);
+		} else {
+			if (_thd.window_class == this->window_class &&
+					_thd.window_number == this->window_number) {
+				ResetObjectToPlace();
+			}
 		}
 
 		this->UpdateButtons(_selected_object_class, _selected_object_index, _selected_object_view);
@@ -551,12 +547,18 @@ public:
 	void OnPlaceObject(Point pt, TileIndex tile) override
 	{
 		const ObjectSpec *spec = ObjectClass::Get(_selected_object_class)->GetSpec(_selected_object_index);
-
-		if (spec->size == OBJECT_SIZE_1X1) {
+		if (spec == nullptr) return;
+		if (_settings_game.construction.build_object_area_permitted && spec->size == 0x11) {
 			VpStartPlaceSizing(tile, VPM_X_AND_Y, DDSP_BUILD_OBJECT);
 		} else {
-			Command<CMD_BUILD_OBJECT>::Post(STR_ERROR_CAN_T_BUILD_OBJECT, CcPlaySound_CONSTRUCTION_OTHER, tile, spec->Index(), _selected_object_view);
+			DoCommandP(tile, spec->Index(),
+					_selected_object_view, CMD_BUILD_OBJECT | CMD_MSG(STR_ERROR_CAN_T_BUILD_OBJECT), CcTerraform);
 		}
+	}
+
+	void OnPlaceObjectAbort() override
+	{
+		this->UpdateButtons(_selected_object_class, -1, _selected_object_view);
 	}
 
 	void OnPlaceDrag(ViewportPlaceMethod select_method, ViewportDragDropSelectionProcess select_proc, Point pt) override
@@ -566,27 +568,22 @@ public:
 
 	void OnPlaceMouseUp(ViewportPlaceMethod select_method, ViewportDragDropSelectionProcess select_proc, Point pt, TileIndex start_tile, TileIndex end_tile) override
 	{
-		if (pt.x == -1) return;
-
-		switch (select_proc) {
-			default: NOT_REACHED();
-			case DDSP_BUILD_OBJECT:
-				if (!_settings_game.construction.freeform_edges) {
-					/* When end_tile is MP_VOID, the error tile will not be visible to the
-						* user. This happens when terraforming at the southern border. */
-					if (TileX(end_tile) == MapMaxX()) end_tile += TileDiffXY(-1, 0);
-					if (TileY(end_tile) == MapMaxY()) end_tile += TileDiffXY(0, -1);
-				}
-				const ObjectSpec *spec = ObjectClass::Get(_selected_object_class)->GetSpec(_selected_object_index);
-				Command<CMD_BUILD_OBJECT_AREA>::Post(STR_ERROR_CAN_T_BUILD_OBJECT, CcPlaySound_CONSTRUCTION_OTHER,
-					end_tile, start_tile, spec->Index(), _selected_object_view, (_ctrl_pressed ? true : false));
-				break;
+		if (pt.x != -1) {
+			switch (select_proc) {
+				default: NOT_REACHED();
+				case DDSP_BUILD_OBJECT:
+					if (!_settings_game.construction.freeform_edges) {
+						/* When end_tile is MP_VOID, the error tile will not be visible to the
+						 * user. This happens when terraforming at the southern border. */
+						if (TileX(end_tile) == MapMaxX()) end_tile += TileDiffXY(-1, 0);
+						if (TileY(end_tile) == MapMaxY()) end_tile += TileDiffXY(0, -1);
+					}
+					DoCommandP(end_tile, start_tile,
+							( ObjectClass::Get(_selected_object_class)->GetSpec(_selected_object_index)->Index() << 3) | (_selected_object_view << 1) | (_ctrl_pressed ? 1 : 0),
+							CMD_BUILD_OBJECT_AREA | CMD_MSG(STR_ERROR_CAN_T_BUILD_OBJECT), CcTerraform);
+					break;
+			}
 		}
-	}
-
-	void OnPlaceObjectAbort() override
-	{
-		this->UpdateButtons(_selected_object_class, -1, _selected_object_view);
 	}
 
 	EventState OnHotkey(int hotkey) override
@@ -716,7 +713,7 @@ static const NWidgetPart _nested_build_object_widgets[] = {
 						NWidget(WWT_PANEL, COLOUR_GREY, WID_BO_OBJECT_SPRITE), SetDataTip(0x0, STR_OBJECT_BUILD_PREVIEW_TOOLTIP), EndContainer(),
 					EndContainer(),
 				EndContainer(),
-				NWidget(WWT_TEXT, COLOUR_DARK_GREEN, WID_BO_OBJECT_NAME), SetDataTip(STR_ORANGE_STRING, STR_NULL),
+				NWidget(WWT_TEXT, COLOUR_DARK_GREEN, WID_BO_OBJECT_NAME), SetDataTip(STR_JUST_STRING, STR_NULL), SetTextStyle(TC_ORANGE),
 				NWidget(WWT_TEXT, COLOUR_DARK_GREEN, WID_BO_OBJECT_SIZE), SetDataTip(STR_OBJECT_BUILD_SIZE, STR_NULL),
 			EndContainer(),
 			NWidget(WWT_PANEL, COLOUR_DARK_GREEN), SetScrollbar(WID_BO_SELECT_SCROLL),
@@ -752,10 +749,31 @@ static WindowDesc _build_object_desc(
 Window *ShowBuildObjectPicker()
 {
 	/* Don't show the place object button when there are no objects to place. */
-	if (ObjectClass::GetUIClassCount() > 0) {
+	if (ObjectClass::HasUIClass()) {
 		return AllocateWindowDescFront<BuildObjectWindow>(&_build_object_desc, 0);
 	}
 	return nullptr;
+}
+
+/** Show our object picker, and select a particular spec.  */
+void ShowBuildObjectPickerAndSelect(const ObjectSpec *spec)
+{
+	if (spec == nullptr || !spec->IsAvailable() || !ObjectClass::HasUIClass() || spec->cls_id == INVALID_OBJECT_CLASS) return;
+
+	int spec_id = -1;
+	const ObjectClass *objclass = ObjectClass::Get(spec->cls_id);
+	for (int i = 0; i < (int)objclass->GetSpecCount(); i++) {
+		if (objclass->GetSpec(i) == spec) {
+			spec_id = i;
+		}
+	}
+	if (spec_id < 0) return;
+
+	BuildObjectWindow *w = AllocateWindowDescFront<BuildObjectWindow>(&_build_object_desc, 0, true);
+	if (w != nullptr) {
+		w->SelectOtherClass(spec->cls_id);
+		w->SelectOtherObject(spec_id);
+	}
 }
 
 /** Reset all data of the object GUI. */

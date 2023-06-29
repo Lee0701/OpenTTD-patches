@@ -23,19 +23,19 @@
  */
 static bool CheckAPIVersion(const char *api_version)
 {
-	static const std::set<std::string> versions = { "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "1.11", "12", "13" };
+	static const std::set<std::string> versions = { "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9", "1.10", "1.11", "12", "13", "14" };
 	return versions.find(api_version) != versions.end();
 }
 
 #if defined(_WIN32)
 #undef GetClassName
 #endif /* _WIN32 */
-template <> const char *GetClassName<GameInfo, ST_GS>() { return "GSInfo"; }
+template <> const char *GetClassName<GameInfo, ScriptType::GS>() { return "GSInfo"; }
 
 /* static */ void GameInfo::RegisterAPI(Squirrel *engine)
 {
 	/* Create the GSInfo class, and add the RegisterGS function */
-	DefSQClass<GameInfo, ST_GS> SQGSInfo("GSInfo");
+	DefSQClass<GameInfo, ScriptType::GS> SQGSInfo("GSInfo");
 	SQGSInfo.PreRegister(engine);
 	SQGSInfo.AddConstructor<void (GameInfo::*)(), 1>(engine, "x");
 	SQGSInfo.DefSQAdvancedMethod(engine, &GameInfo::AddSetting, "AddSetting");
@@ -75,7 +75,7 @@ template <> const char *GetClassName<GameInfo, ST_GS>() { return "GSInfo"; }
 	if (!info->CheckMethod("GetAPIVersion")) return SQ_ERROR;
 	if (!info->engine->CallStringMethodStrdup(*info->SQ_instance, "GetAPIVersion", &info->api_version, MAX_GET_OPS)) return SQ_ERROR;
 	if (!CheckAPIVersion(info->api_version)) {
-		Debug(script, 1, "Loading info.nut from ({}.{}): GetAPIVersion returned invalid version", info->GetName(), info->GetVersion());
+		DEBUG(script, 1, "Loading info.nut from (%s.%d): GetAPIVersion returned invalid version", info->GetName(), info->GetVersion());
 		return SQ_ERROR;
 	}
 

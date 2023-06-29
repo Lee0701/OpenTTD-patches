@@ -98,6 +98,7 @@ static inline void IConsoleResetHistoryPos()
 
 static const char *IConsoleHistoryAdd(const char *cmd);
 static void IConsoleHistoryNavigate(int direction);
+static void IConsoleTabCompletion();
 
 static const struct NWidgetPart _nested_console_window_widgets[] = {
 	NWidget(WWT_EMPTY, INVALID_COLOUR, WID_C_BACKGROUND), SetResize(1, 1),
@@ -132,11 +133,10 @@ struct IConsoleWindow : Window
 		this->line_offset = GetStringBoundingBox("] ").width + WidgetDimensions::scaled.frametext.left;
 	}
 
-	void Close() override
+	~IConsoleWindow()
 	{
 		_iconsole_mode = ICONSOLE_CLOSED;
 		VideoDriver::GetInstance()->EditBoxLostFocus();
-		this->Window::Close();
 	}
 
 	/**
@@ -245,7 +245,7 @@ struct IConsoleWindow : Window
 				/* We always want the ] at the left side; we always force these strings to be left
 				 * aligned anyway. So enforce this in all cases by adding a left-to-right marker,
 				 * otherwise it will be drawn at the wrong side with right-to-left texts. */
-				IConsolePrint(CC_COMMAND, LRM "] {}", _iconsole_cmdline.buf);
+				IConsolePrintF(CC_COMMAND, LRM "] %s", _iconsole_cmdline.buf);
 				const char *cmd = IConsoleHistoryAdd(_iconsole_cmdline.buf);
 				IConsoleClearCommand();
 
@@ -261,6 +261,10 @@ struct IConsoleWindow : Window
 
 			case (WKC_CTRL | 'L'):
 				IConsoleCmdExec("clear");
+				break;
+
+			case WKC_TAB:
+				IConsoleTabCompletion();
 				break;
 
 			default:
@@ -322,11 +326,11 @@ struct IConsoleWindow : Window
 		return r;
 	}
 
-	const char *GetTextCharacterAtPosition(const Point &pt) const override
+	ptrdiff_t GetTextCharacterAtPosition(const Point &pt) const override
 	{
 		int delta = std::min<int>(this->width - this->line_offset - _iconsole_cmdline.pixels - ICON_RIGHT_BORDERWIDTH, 0);
 
-		if (!IsInsideMM(pt.y, this->height - this->line_height, this->height)) return nullptr;
+		if (!IsInsideMM(pt.y, this->height - this->line_height, this->height)) return -1;
 
 		return GetCharAtPosition(_iconsole_cmdline.buf, pt.x - delta);
 	}
@@ -336,12 +340,12 @@ struct IConsoleWindow : Window
 		this->Scroll(-wheel);
 	}
 
-	void OnFocus() override
+	void OnFocus(Window *previously_focused_window) override
 	{
 		VideoDriver::GetInstance()->EditBoxGainedFocus();
 	}
 
-	void OnFocusLost() override
+	void OnFocusLost(Window *newly_focused_window) override
 	{
 		VideoDriver::GetInstance()->EditBoxLostFocus();
 	}
@@ -357,10 +361,10 @@ void IConsoleGUIInit()
 	IConsoleClearBuffer();
 	memset(_iconsole_history, 0, sizeof(_iconsole_history));
 
-	IConsolePrint(TC_LIGHT_BLUE, "OpenTTD Game Console Revision 7 - {}", _openttd_revision);
-	IConsolePrint(CC_WHITE, "------------------------------------");
-	IConsolePrint(CC_WHITE, "use \"help\" for more information.");
-	IConsolePrint(CC_WHITE, "");
+	IConsolePrintF(CC_WARNING, "OpenTTD Game Console Revision 7 - %s", _openttd_revision);
+	IConsolePrint(CC_WHITE,  "------------------------------------");
+	IConsolePrint(CC_WHITE,  "use \"help\" for more information");
+	IConsolePrint(CC_WHITE,  "");
 	IConsoleClearCommand();
 }
 
@@ -401,7 +405,7 @@ void IConsoleSwitch()
 			break;
 
 		case ICONSOLE_OPENED: case ICONSOLE_FULL:
-			CloseWindowById(WC_CONSOLE, 0);
+			DeleteWindowById(WC_CONSOLE, 0);
 			break;
 	}
 
@@ -455,6 +459,79 @@ static void IConsoleHistoryNavigate(int direction)
 		_iconsole_cmdline.DeleteAll();
 	} else {
 		_iconsole_cmdline.Assign(_iconsole_history[_iconsole_historypos]);
+	}
+}
+
+static void IConsoleTabCompletion()
+{
+	const char *input = _iconsole_cmdline.buf;
+
+	/* Strip all spaces at the beginning */
+	while (IsWhitespace(*input)) input++;
+
+	/* Don't do tab completion for no input */
+	if (StrEmpty(input)) return;
+
+	const char *cmdptr = input;
+	for (; *cmdptr != '\0'; cmdptr++) {
+		switch (*cmdptr) {
+		case ' ':
+		case '"':
+		case '\\':
+			// Give up
+			return;
+		}
+	}
+	extern std::string RemoveUnderscores(std::string name);
+	std::string prefix = RemoveUnderscores(std::string(input, cmdptr - input));
+	size_t prefix_length = prefix.size();
+
+	if (prefix_length == 0) return;
+
+	char buffer[4096];
+	char *b = buffer;
+	uint matches = 0;
+	std::string common_prefix;
+	auto check_candidate = [&](const std::string &cmd_name_str) {
+		const char *cmd_name = cmd_name_str.c_str();
+		if (matches == 0) {
+			common_prefix = cmd_name_str;
+		} else {
+			const char *cp = common_prefix.c_str();
+			const char *cmdp = cmd_name;
+			while (true) {
+				const char *end = cmdp;
+				WChar a = Utf8Consume(cp);
+				WChar b = Utf8Consume(cmdp);
+				if (a == 0 || b == 0 || a != b) {
+					common_prefix.resize(end - cmd_name);
+					break;
+				}
+			}
+		}
+		matches++;
+		b += seprintf(b, lastof(buffer), "%s ", cmd_name);
+	};
+	for (auto &it : IConsole::Commands()) {
+		const char *cmd_name = it.first.c_str();
+		const IConsoleCmd *cmd = &it.second;
+		if (strncmp(cmd_name, prefix.c_str(), prefix_length) == 0) {
+			if ((_settings_client.gui.console_show_unlisted || !cmd->unlisted) && (cmd->hook == nullptr || cmd->hook(false) != CHR_HIDE)) {
+				check_candidate(it.first);
+			}
+		}
+	}
+	for (auto &it : IConsole::Aliases()) {
+		const char *cmd_name = it.first.c_str();
+		if (strncmp(cmd_name, prefix.c_str(), prefix_length) == 0) {
+			check_candidate(it.first);
+		}
+	}
+	if (matches > 0) {
+		_iconsole_cmdline.Assign(common_prefix.c_str());
+		if (matches > 1) {
+			IConsolePrint(CC_WHITE, buffer);
+		}
 	}
 }
 

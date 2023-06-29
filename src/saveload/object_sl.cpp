@@ -18,6 +18,8 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 static const SaveLoad _object_desc[] = {
 	    SLE_VAR(Object, location.tile,              SLE_UINT32),
 	    SLE_VAR(Object, location.w,                 SLE_FILE_U8 | SLE_VAR_U16),
@@ -78,3 +80,5 @@ static const ChunkHandlerRef object_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _object_chunk_handlers(object_chunk_handlers);
+
+}

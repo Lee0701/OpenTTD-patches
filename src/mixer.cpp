@@ -18,6 +18,11 @@
 #include "safeguards.h"
 #include "mixer.h"
 
+#include <mutex>
+#if defined(__MINGW32__)
+#include "3rdparty/mingw-std-threads/mingw.mutex.h"
+#endif
+
 struct MixerChannel {
 	/* pointer to allocated buffer memory */
 	int8 *memory;

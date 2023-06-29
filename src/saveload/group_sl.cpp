@@ -16,6 +16,8 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 static const SaveLoad _group_desc[] = {
 	 SLE_CONDVAR(Group, name,               SLE_NAME,                       SL_MIN_VERSION,  SLV_84),
 	SLE_CONDSSTR(Group, name,               SLE_STR | SLF_ALLOW_CONTROL,    SLV_84, SL_MAX_VERSION),
@@ -69,3 +71,5 @@ static const ChunkHandlerRef group_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _group_chunk_handlers(group_chunk_handlers);
+
+}

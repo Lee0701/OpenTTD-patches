@@ -15,11 +15,18 @@
 #include "address.h"
 #include "packet.h"
 
+#include <vector>
+#include <string>
+#include <time.h>
+
 /** Enum with all types of UDP packets. The order MUST not be changed **/
 enum PacketUDPType {
 	PACKET_UDP_CLIENT_FIND_SERVER,   ///< Queries a game server for game information
 	PACKET_UDP_SERVER_RESPONSE,      ///< Reply of the game server with game information
-	PACKET_UDP_END,                  ///< Must ALWAYS be on the end of this list!! (period)
+	PACKET_UDP_END,                  ///< Must ALWAYS be the last non-extended item in the list!! (period)
+
+	PACKET_UDP_EX_MULTI = 128,       ///< Extended/multi packet type
+	PACKET_UDP_EX_SERVER_RESPONSE,   ///< Reply of the game server with extended game information
 };
 
 /** Base socket handler for all UDP sockets */
@@ -29,6 +36,16 @@ protected:
 	NetworkAddressList bind;
 	/** The opened sockets. */
 	SocketList sockets;
+
+	uint64 fragment_token;
+
+	struct FragmentSet {
+		uint64 token;
+		NetworkAddress address;
+		time_t create_time;
+		std::vector<std::string> fragments;
+	};
+	std::vector<FragmentSet> fragments;
 
 	void ReceiveInvalidPacket(PacketUDPType, NetworkAddress *client_addr);
 
@@ -46,7 +63,11 @@ protected:
 	 */
 	virtual void Receive_SERVER_RESPONSE(Packet *p, NetworkAddress *client_addr);
 
+	virtual void Receive_EX_SERVER_RESPONSE(Packet *p, NetworkAddress *client_addr);
+
 	void HandleUDPPacket(Packet *p, NetworkAddress *client_addr);
+
+	virtual void Receive_EX_MULTI(Packet *p, NetworkAddress *client_addr);
 public:
 	NetworkUDPSocketHandler(NetworkAddressList *bind = nullptr);
 
@@ -56,7 +77,7 @@ public:
 	bool Listen();
 	void CloseSocket();
 
-	void SendPacket(Packet *p, NetworkAddress *recv, bool all = false, bool broadcast = false);
+	void SendPacket(Packet *p, NetworkAddress *recv, bool all = false, bool broadcast = false, bool short_mtu = false);
 	void ReceivePackets();
 };
 

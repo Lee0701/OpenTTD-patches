@@ -57,6 +57,7 @@ void UpdateAircraftCache(Aircraft *v, bool update_range = false);
 void AircraftLeaveHangar(Aircraft *v, Direction exit_dir);
 void AircraftNextAirportPos_and_Order(Aircraft *v);
 void SetAircraftPosition(Aircraft *v, int x, int y, int z);
+void FindBreakdownDestination(Aircraft *v);
 
 void GetAircraftFlightLevelBounds(const Vehicle *v, int *min, int *max);
 template <class T>
@@ -66,6 +67,7 @@ int GetAircraftFlightLevel(T *v, bool takeoff = false);
 struct AircraftCache {
 	uint32 cached_max_range_sqr;   ///< Cached squared maximum range.
 	uint16 cached_max_range;       ///< Cached maximum range.
+	byte image_movement_state;     ///< Cached image aircraft movement state
 };
 
 /**
@@ -94,6 +96,7 @@ struct Aircraft FINAL : public SpecializedVehicle<Aircraft, VEH_AIRCRAFT> {
 	ExpensesType GetExpenseType(bool income) const { return income ? EXPENSES_AIRCRAFT_REVENUE : EXPENSES_AIRCRAFT_RUN; }
 	bool IsPrimaryVehicle() const                  { return this->IsNormalAircraft(); }
 	void GetImage(Direction direction, EngineImageType image_type, VehicleSpriteSeq *result) const;
+	Direction GetMapImageDirection() const { return this->First()->direction; }
 	int GetDisplaySpeed() const    { return this->cur_speed; }
 	int GetDisplayMaxSpeed() const { return this->vcache.cached_max_speed; }
 	int GetSpeedOldUnits() const   { return this->vcache.cached_max_speed * 10 / 128; }
@@ -108,9 +111,10 @@ struct Aircraft FINAL : public SpecializedVehicle<Aircraft, VEH_AIRCRAFT> {
 
 	bool Tick();
 	void OnNewDay();
+	void OnPeriodic();
 	uint Crash(bool flooded = false);
 	TileIndex GetOrderStationLocation(StationID station);
-	bool FindClosestDepot(TileIndex *location, DestinationID *destination, bool *reverse);
+	ClosestDepot FindClosestDepot();
 
 	/**
 	 * Check if the aircraft type is a normal flying device; eg
@@ -139,5 +143,8 @@ struct Aircraft FINAL : public SpecializedVehicle<Aircraft, VEH_AIRCRAFT> {
 void GetRotorImage(const Aircraft *v, EngineImageType image_type, VehicleSpriteSeq *result);
 
 Station *GetTargetAirportIfValid(const Aircraft *v);
+void HandleMissingAircraftOrders(Aircraft *v);
+
+const char *AirportMovementStateToString(byte state);
 
 #endif /* AIRCRAFT_H */

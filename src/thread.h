@@ -15,6 +15,10 @@
 #include <system_error>
 #include <thread>
 #include <mutex>
+#if defined(__MINGW32__)
+#include "3rdparty/mingw-std-threads/mingw.thread.h"
+#include "3rdparty/mingw-std-threads/mingw.mutex.h"
+#endif
 
 /**
  * Sleep on the current thread for a defined time.
@@ -30,6 +34,54 @@ inline void CSleep(int milliseconds)
  * @param name Name to set for the thread..
  */
 void SetCurrentThreadName(const char *name);
+
+/**
+ * Get the name of the current thread, if any.
+ * @param str The start of the buffer.
+ * @param last The last char of the buffer.
+ * @return Number of chars written to str.
+ */
+int GetCurrentThreadName(char *str, const char *last);
+
+/**
+ * Set the current thread as the "main" thread
+ */
+void SetSelfAsMainThread();
+
+/**
+ * Set the current thread as the "game" thread
+ */
+void SetSelfAsGameThread();
+
+/**
+ * Perform per-thread setup
+ */
+void PerThreadSetup();
+
+/**
+ * Setup thread functionality required for later calls to PerThreadSetup
+ */
+void PerThreadSetupInit();
+
+/**
+ * @return true if the current thread is definitely the "main" thread. If in doubt returns false.
+ */
+bool IsMainThread();
+
+/**
+ * @return true if the current thread is definitely a "non-main" thread. If in doubt returns false.
+ */
+bool IsNonMainThread();
+
+/**
+ * @return true if the current thread is definitely the "game" thread. If in doubt returns false.
+ */
+bool IsGameThread();
+
+/**
+ * @return true if the current thread is definitely a "non-game" thread. If in doubt returns false.
+ */
+bool IsNonGameThread();
 
 
 /**
@@ -59,6 +111,7 @@ inline bool StartNewThread(std::thread *thr, const char *name, TFn&& _Fx, TArgs&
 				}
 
 				SetCurrentThreadName(name);
+				PerThreadSetup();
 				CrashLog::InitThread();
 				try {
 					/* Call user function with the given arguments. */
@@ -66,7 +119,7 @@ inline bool StartNewThread(std::thread *thr, const char *name, TFn&& _Fx, TArgs&
 				} catch (...) {
 					NOT_REACHED();
 				}
-			}, name, std::forward<TFn>(_Fx), std::forward<TArgs>(_Ax)...);
+			}, std::forward<const char *>(name), std::forward<TFn>(_Fx), std::forward<TArgs>(_Ax)...);
 
 		if (thr != nullptr) {
 			*thr = std::move(t);
@@ -77,7 +130,7 @@ inline bool StartNewThread(std::thread *thr, const char *name, TFn&& _Fx, TArgs&
 		return true;
 	} catch (const std::system_error& e) {
 		/* Something went wrong, the system we are running on might not support threads. */
-		Debug(misc, 1, "Can't create thread '{}': {}", name, e.what());
+		DEBUG(misc, 1, "Can't create thread '%s': %s", name, e.what());
 	}
 #endif
 

@@ -8,7 +8,7 @@
 /** @file gamelog.cpp Definition of functions used for logging of important changes in the game */
 
 #include "stdafx.h"
-#include "saveload/saveload.h"
+#include "sl/saveload.h"
 #include "string_func.h"
 #include "settings_type.h"
 #include "gamelog_internal.h"
@@ -36,30 +36,6 @@ LoggedAction *_gamelog_action = nullptr;        ///< first logged action
 uint _gamelog_actions         = 0;           ///< number of actions
 static LoggedAction *_current_action = nullptr; ///< current action we are logging, nullptr when there is no action active
 
-
-/**
- * Return the revision string for the current client version, for use in gamelog.
- * The string returned is at most GAMELOG_REVISION_LENGTH bytes long.
- */
-static const char * GetGamelogRevisionString()
-{
-	/* Allocate a buffer larger than necessary (git revision hash is 40 bytes) to avoid truncation later */
-	static char gamelog_revision[48] = { 0 };
-	static_assert(lengthof(gamelog_revision) > GAMELOG_REVISION_LENGTH);
-
-	if (IsReleasedVersion()) {
-		return _openttd_revision;
-	} else if (gamelog_revision[0] == 0) {
-		/* Prefix character indication revision status */
-		assert(_openttd_revision_modified < 3);
-		gamelog_revision[0] = "gum"[_openttd_revision_modified]; // g = "git", u = "unknown", m = "modified"
-		/* Append the revision hash */
-		strecat(gamelog_revision, _openttd_revision_hash, lastof(gamelog_revision));
-		/* Truncate string to GAMELOG_REVISION_LENGTH bytes */
-		gamelog_revision[GAMELOG_REVISION_LENGTH - 1] = '\0';
-	}
-	return gamelog_revision;
-}
 
 /**
  * Stores information about new action, but doesn't allocate it
@@ -102,6 +78,7 @@ void GamelogFree(LoggedAction *gamelog_action, uint gamelog_actions)
 		for (uint j = 0; j < la->changes; j++) {
 			const LoggedChange *lc = &la->change[j];
 			if (lc->ct == GLCT_SETTING) free(lc->setting.name);
+			if (lc->ct == GLCT_REVISION) free(lc->revision.text);
 		}
 		free(la->change);
 	}
@@ -143,11 +120,11 @@ static char *PrintGrfInfo(char *buf, const char *last, uint grfid, const uint8 *
 	}
 
 	if (gc != nullptr) {
-		buf += seprintf(buf, last, ", filename: %s (md5sum matches)", gc->filename);
+		buf += seprintf(buf, last, ", filename: %s (md5sum matches)", gc->filename.c_str());
 	} else {
 		gc = FindGRFConfig(grfid, FGCM_ANY);
 		if (gc != nullptr) {
-			buf += seprintf(buf, last, ", filename: %s (matches GRFID only)", gc->filename);
+			buf += seprintf(buf, last, ", filename: %s (matches GRFID only)", gc->filename.c_str());
 		} else {
 			buf += seprintf(buf, last, ", unknown GRF");
 		}
@@ -212,11 +189,13 @@ void GamelogPrint(GamelogPrintProc *proc)
 			switch (lc->ct) {
 				default: NOT_REACHED();
 				case GLCT_MODE:
+					/* Changing landscape, or going from scenario editor to game or back. */
 					buf += seprintf(buf, lastof(buffer), "New game mode: %u landscape: %u",
 						(uint)lc->mode.mode, (uint)lc->mode.landscape);
 					break;
 
 				case GLCT_REVISION:
+					/* The game was loaded in a diffferent version than before. */
 					buf += seprintf(buf, lastof(buffer), "Revision text changed to %s, savegame version %u, ",
 						lc->revision.text, lc->revision.slver);
 
@@ -230,6 +209,7 @@ void GamelogPrint(GamelogPrintProc *proc)
 					break;
 
 				case GLCT_OLDVER:
+					/* The game was loaded from before 0.7.0-beta1. */
 					buf += seprintf(buf, lastof(buffer), "Conversion from ");
 					switch (lc->oldver.type) {
 						default: NOT_REACHED();
@@ -260,10 +240,12 @@ void GamelogPrint(GamelogPrintProc *proc)
 					break;
 
 				case GLCT_SETTING:
+					/* A setting with the SF_NO_NETWORK flag got changed; these settings usually affect NewGRFs, such as road side or wagon speed limits. */
 					buf += seprintf(buf, lastof(buffer), "Setting changed: %s : %d -> %d", lc->setting.name, lc->setting.oldval, lc->setting.newval);
 					break;
 
 				case GLCT_GRFADD: {
+					/* A NewGRF got added to the game, either at the start of the game (never an issue), or later on when it could be an issue. */
 					const GRFConfig *gc = FindGRFConfig(lc->grfadd.grfid, FGCM_EXACT, lc->grfadd.md5sum);
 					buf += seprintf(buf, lastof(buffer), "Added NewGRF: ");
 					buf = PrintGrfInfo(buf, lastof(buffer), lc->grfadd.grfid, lc->grfadd.md5sum, gc);
@@ -274,6 +256,7 @@ void GamelogPrint(GamelogPrintProc *proc)
 				}
 
 				case GLCT_GRFREM: {
+					/* A NewGRF got removed from the game, either manually or by it missing when loading the game. */
 					GrfIDMapping::Pair *gm = grf_names.Find(lc->grfrem.grfid);
 					buf += seprintf(buf, lastof(buffer), la->at == GLAT_LOAD ? "Missing NewGRF: " : "Removed NewGRF: ");
 					buf = PrintGrfInfo(buf, lastof(buffer), lc->grfrem.grfid, nullptr, gm != grf_names.End() ? gm->second.gc : nullptr);
@@ -291,6 +274,7 @@ void GamelogPrint(GamelogPrintProc *proc)
 				}
 
 				case GLCT_GRFCOMPAT: {
+					/* Another version of the same NewGRF got loaded. */
 					const GRFConfig *gc = FindGRFConfig(lc->grfadd.grfid, FGCM_EXACT, lc->grfadd.md5sum);
 					buf += seprintf(buf, lastof(buffer), "Compatible NewGRF loaded: ");
 					buf = PrintGrfInfo(buf, lastof(buffer), lc->grfcompat.grfid, lc->grfcompat.md5sum, gc);
@@ -300,6 +284,7 @@ void GamelogPrint(GamelogPrintProc *proc)
 				}
 
 				case GLCT_GRFPARAM: {
+					/* A parameter of a NewGRF got changed after the game was started. */
 					GrfIDMapping::Pair *gm = grf_names.Find(lc->grfrem.grfid);
 					buf += seprintf(buf, lastof(buffer), "GRF parameter changed: ");
 					buf = PrintGrfInfo(buf, lastof(buffer), lc->grfparam.grfid, nullptr, gm != grf_names.End() ? gm->second.gc : nullptr);
@@ -308,6 +293,7 @@ void GamelogPrint(GamelogPrintProc *proc)
 				}
 
 				case GLCT_GRFMOVE: {
+					/* The order of NewGRFs got changed, which might cause some other NewGRFs to behave differently. */
 					GrfIDMapping::Pair *gm = grf_names.Find(lc->grfrem.grfid);
 					buf += seprintf(buf, lastof(buffer), "GRF order changed: %08X moved %d places %s",
 						BSWAP32(lc->grfmove.grfid), abs(lc->grfmove.offset), lc->grfmove.offset >= 0 ? "down" : "up" );
@@ -317,19 +303,19 @@ void GamelogPrint(GamelogPrintProc *proc)
 				}
 
 				case GLCT_GRFBUG: {
+					/* A specific bug in a NewGRF, that could cause wide spread problems, has been noted during the execution of the game. */
 					GrfIDMapping::Pair *gm = grf_names.Find(lc->grfrem.grfid);
-					switch (lc->grfbug.bug) {
-						default: NOT_REACHED();
-						case GBUG_VEH_LENGTH:
-							buf += seprintf(buf, lastof(buffer), "Rail vehicle changes length outside a depot: GRF ID %08X, internal ID 0x%X", BSWAP32(lc->grfbug.grfid), (uint)lc->grfbug.data);
-							break;
-					}
+					assert (lc->grfbug.bug == GBUG_VEH_LENGTH);
+
+					buf += seprintf(buf, lastof(buffer), "Rail vehicle changes length outside a depot: GRF ID %08X, internal ID 0x%X", BSWAP32(lc->grfbug.grfid), (uint)lc->grfbug.data);
 					buf = PrintGrfInfo(buf, lastof(buffer), lc->grfbug.grfid, nullptr, gm != grf_names.End() ? gm->second.gc : nullptr);
 					if (gm == grf_names.End()) buf += seprintf(buf, lastof(buffer), ". Gamelog inconsistency: GrfID was never added!");
 					break;
 				}
 
 				case GLCT_EMERGENCY:
+					/* At one point the savegame was made during the handling of a game crash.
+					 * The generic code already mentioned the emergency savegame, and there is no extra information to log. */
 					break;
 			}
 
@@ -356,7 +342,7 @@ static int _gamelog_print_level = 0; ///< gamelog debug level we need to print s
 
 static void GamelogPrintDebugProc(const char *s)
 {
-	Debug(gamelog, _gamelog_print_level, "{}", s);
+	DEBUG(gamelog, _gamelog_print_level, "%s", s);
 }
 
 
@@ -442,8 +428,7 @@ void GamelogRevision()
 	LoggedChange *lc = GamelogChange(GLCT_REVISION);
 	if (lc == nullptr) return;
 
-	memset(lc->revision.text, 0, sizeof(lc->revision.text));
-	strecpy(lc->revision.text, GetGamelogRevisionString(), lastof(lc->revision.text));
+	lc->revision.text = stredup(_openttd_revision);
 	lc->revision.slver = SAVEGAME_VERSION;
 	lc->revision.modified = _openttd_revision_modified;
 	lc->revision.newgrf = _openttd_newgrf_version;
@@ -483,14 +468,14 @@ void GamelogOldver()
  * @param oldval old setting value
  * @param newval new setting value
  */
-void GamelogSetting(const std::string &name, int32 oldval, int32 newval)
+void GamelogSetting(const char *name, int32 oldval, int32 newval)
 {
 	assert(_gamelog_action_type == GLAT_SETTING);
 
 	LoggedChange *lc = GamelogChange(GLCT_SETTING);
 	if (lc == nullptr) return;
 
-	lc->setting.name = stredup(name.c_str());
+	lc->setting.name = stredup(name);
 	lc->setting.oldval = oldval;
 	lc->setting.newval = newval;
 }
@@ -512,7 +497,7 @@ void GamelogTestRevision()
 		}
 	}
 
-	if (rev == nullptr || strcmp(rev->revision.text, GetGamelogRevisionString()) != 0 ||
+	if (rev == nullptr || strcmp(rev->revision.text, _openttd_revision) != 0 ||
 			rev->revision.modified != _openttd_revision_modified ||
 			rev->revision.newgrf != _openttd_newgrf_version) {
 		GamelogRevision();
@@ -823,4 +808,23 @@ void GamelogInfo(LoggedAction *gamelog_action, uint gamelog_actions, uint32 *las
 			}
 		}
 	}
+}
+
+const char *GamelogGetLastRevision(const LoggedAction *gamelog_action, uint gamelog_actions)
+{
+	for (uint i = gamelog_actions; i > 0; i--) {
+		const LoggedAction &la = gamelog_action[i - 1];
+		const LoggedChange *lcend = &(la.change[la.changes]);
+		for (const LoggedChange *lc = la.change; lc != lcend; lc++) {
+			switch (lc->ct) {
+				case GLCT_REVISION:
+					return lc->revision.text;
+					break;
+
+				default:
+					break;
+			}
+		}
+	}
+	return nullptr;
 }

@@ -17,6 +17,13 @@
 #include "blitter/factory.hpp"
 #include "video/video_driver.hpp"
 #include "window_func.h"
+#include "zoom_func.h"
+#include "clear_map.h"
+#include "clear_func.h"
+#include "tree_map.h"
+#include "scope.h"
+#include "table/tree_land.h"
+#include "blitter/32bpp_base.hpp"
 
 /* The type of set we're replacing */
 #define SET_TYPE "graphics"
@@ -40,19 +47,17 @@ static const SpriteID * const _landscape_spriteindexes[] = {
  * @param filename   The name of the file to open.
  * @param load_index The offset of the first sprite.
  * @param needs_palette_remap Whether the colours in the GRF file need a palette remap.
- * @return The number of loaded sprites.
  */
-static uint LoadGrfFile(const char *filename, uint load_index, bool needs_palette_remap)
+static SpriteFile &LoadGrfFile(const std::string &filename, uint load_index, bool needs_palette_remap)
 {
-	uint load_index_org = load_index;
 	uint sprite_id = 0;
 
 	SpriteFile &file = OpenCachedSpriteFile(filename, BASESET_DIR, needs_palette_remap);
 
-	Debug(sprite, 2, "Reading grf-file '{}'", filename);
+	DEBUG(sprite, 2, "Reading grf-file '%s'", filename.c_str());
 
 	byte container_ver = file.GetContainerVersion();
-	if (container_ver == 0) usererror("Base grf '%s' is corrupt", filename);
+	if (container_ver == 0) usererror("Base grf '%s' is corrupt", filename.c_str());
 	ReadGRFSpriteOffsets(file);
 	if (container_ver >= 2) {
 		/* Read compression. */
@@ -67,9 +72,9 @@ static uint LoadGrfFile(const char *filename, uint load_index, bool needs_palett
 			usererror("Too many sprites. Recompile with higher MAX_SPRITES value or remove some custom GRF files.");
 		}
 	}
-	Debug(sprite, 2, "Currently {} sprites are loaded", load_index);
+	DEBUG(sprite, 2, "Currently %i sprites are loaded", load_index);
 
-	return load_index - load_index_org;
+	return file;
 }
 
 /**
@@ -79,17 +84,17 @@ static uint LoadGrfFile(const char *filename, uint load_index, bool needs_palett
  * @param needs_palette_remap Whether the colours in the GRF file need a palette remap.
  * @return The number of loaded sprites.
  */
-static void LoadGrfFileIndexed(const char *filename, const SpriteID *index_tbl, bool needs_palette_remap)
+static void LoadGrfFileIndexed(const std::string &filename, const SpriteID *index_tbl, bool needs_palette_remap)
 {
 	uint start;
 	uint sprite_id = 0;
 
 	SpriteFile &file = OpenCachedSpriteFile(filename, BASESET_DIR, needs_palette_remap);
 
-	Debug(sprite, 2, "Reading indexed grf-file '{}'", filename);
+	DEBUG(sprite, 2, "Reading indexed grf-file '%s'", filename.c_str());
 
 	byte container_ver = file.GetContainerVersion();
-	if (container_ver == 0) usererror("Base grf '%s' is corrupt", filename);
+	if (container_ver == 0) usererror("Base grf '%s' is corrupt", filename.c_str());
 	ReadGRFSpriteOffsets(file);
 	if (container_ver >= 2) {
 		/* Read compression. */
@@ -119,7 +124,7 @@ void CheckExternalFiles()
 
 	const GraphicsSet *used_set = BaseGraphics::GetUsedSet();
 
-	Debug(grf, 1, "Using the {} base graphics set", used_set->name);
+	DEBUG(grf, 1, "Using the %s base graphics set", used_set->name.c_str());
 
 	static const size_t ERROR_MESSAGE_LENGTH = 256;
 	static const size_t MISSING_FILE_MESSAGE_LENGTH = 128;
@@ -137,7 +142,7 @@ void CheckExternalFiles()
 		add_pos += seprintf(add_pos, last, "Trying to load graphics set '%s', but it is incomplete. The game will probably not run correctly until you properly install this set or select another one. See section 4.1 of README.md.\n\nThe following files are corrupted or missing:\n", used_set->name.c_str());
 		for (uint i = 0; i < GraphicsSet::NUM_FILES; i++) {
 			MD5File::ChecksumResult res = GraphicsSet::CheckMD5(&used_set->files[i], BASESET_DIR);
-			if (res != MD5File::CR_MATCH) add_pos += seprintf(add_pos, last, "\t%s is %s (%s)\n", used_set->files[i].filename, res == MD5File::CR_MISMATCH ? "corrupt" : "missing", used_set->files[i].missing_warning);
+			if (res != MD5File::CR_MATCH) add_pos += seprintf(add_pos, last, "\t%s is %s (%s)\n", used_set->files[i].filename.c_str(), res == MD5File::CR_MISMATCH ? "corrupt" : "missing", used_set->files[i].missing_warning.c_str());
 		}
 		add_pos += seprintf(add_pos, last, "\n");
 	}
@@ -149,10 +154,22 @@ void CheckExternalFiles()
 		static_assert(SoundsSet::NUM_FILES == 1);
 		/* No need to loop each file, as long as there is only a single
 		 * sound file. */
-		add_pos += seprintf(add_pos, last, "\t%s is %s (%s)\n", sounds_set->files->filename, SoundsSet::CheckMD5(sounds_set->files, BASESET_DIR) == MD5File::CR_MISMATCH ? "corrupt" : "missing", sounds_set->files->missing_warning);
+		add_pos += seprintf(add_pos, last, "\t%s is %s (%s)\n", sounds_set->files->filename.c_str(), SoundsSet::CheckMD5(sounds_set->files, BASESET_DIR) == MD5File::CR_MISMATCH ? "corrupt" : "missing", sounds_set->files->missing_warning.c_str());
 	}
 
 	if (add_pos != error_msg) ShowInfoF("%s", error_msg);
+}
+
+void InitGRFGlobalVars()
+{
+	extern uint _extra_station_names_used;
+	_extra_station_names_used = 0;
+
+	extern uint8 _extra_station_names_probability;
+	_extra_station_names_probability = 0;
+
+	extern bool _allow_rocks_desert;
+	_allow_rocks_desert = false;
 }
 
 /** Actually load the sprite tables. */
@@ -161,6 +178,38 @@ static void LoadSpriteTables()
 	const GraphicsSet *used_set = BaseGraphics::GetUsedSet();
 
 	LoadGrfFile(used_set->files[GFT_BASE].filename, 0, PAL_DOS != used_set->palette);
+
+	/* Progsignal sprites. */
+	SpriteFile &progsig_file = LoadGrfFile("progsignals.grf", SPR_PROGSIGNAL_BASE, false);
+	progsig_file.flags |= SFF_PROGSIG;
+
+	/* Fill duplicate programmable pre-signal graphics sprite block */
+	for (uint i = 0; i < PROGSIGNAL_SPRITE_COUNT; i++) {
+		DupSprite(SPR_PROGSIGNAL_BASE + i, SPR_DUP_PROGSIGNAL_BASE + i);
+	}
+
+	/* Extra signal sprites. */
+	SpriteFile &extrasig_file = LoadGrfFile("extra_signals.grf", SPR_EXTRASIGNAL_BASE, false);
+	extrasig_file.flags |= SFF_PROGSIG;
+
+	/* Fill duplicate extra signal graphics sprite block */
+	for (uint i = 0; i < EXTRASIGNAL_SPRITE_COUNT; i++) {
+		DupSprite(SPR_EXTRASIGNAL_BASE + i, SPR_DUP_EXTRASIGNAL_BASE + i);
+	}
+
+	/* Tracerestrict sprites. */
+	LoadGrfFile("tracerestrict.grf", SPR_TRACERESTRICT_BASE, false);
+
+	/* Misc GUI sprites. */
+	LoadGrfFile("misc_gui.grf", SPR_MISC_GUI_BASE, false);
+
+	/* Road waypoints sprites. */
+	LoadGrfFile("road_waypoints.grf", SPR_ROAD_WAYPOINTS_BASE, false);
+
+	/* Fill duplicate original signal graphics sprite block */
+	for (uint i = 0; i < DUP_ORIGINAL_SIGNALS_SPRITE_COUNT; i++) {
+		DupSprite(SPR_ORIGINAL_SIGNALS_BASE + i, SPR_DUP_ORIGINAL_SIGNALS_BASE + i);
+	}
 
 	/*
 	 * The second basic file always starts at the given location and does
@@ -183,8 +232,15 @@ static void LoadSpriteTables()
 		);
 	}
 
+	LoadGrfFile("innerhighlight.grf", SPR_ZONING_INNER_HIGHLIGHT_BASE, false);
+
+	/* Load route step graphics */
+	LoadGrfFile("route_step.grf", SPR_ROUTE_STEP_BASE, false);
+
 	/* Initialize the unicode to sprite mapping table */
 	InitializeUnicodeGlyphMap();
+
+	InitGRFGlobalVars();
 
 	/*
 	 * Load the base and extra NewGRF with OTTD required graphics as first NewGRF.
@@ -201,7 +257,7 @@ static void LoadSpriteTables()
 	ClrBit(master->flags, GCF_INIT_ONLY);
 
 	/* Baseset extra graphics */
-	GRFConfig *extra = new GRFConfig(used_set->files[GFT_EXTRA].filename);
+	GRFConfig *extra = new GRFConfig(used_set->files[GFT_EXTRA].filename.c_str());
 
 	/* We know the palette of the base set, so if the base NewGRF is not
 	 * setting one, use the palette of the base set and not the global
@@ -223,7 +279,7 @@ static void LoadSpriteTables()
 
 	uint total_extra_graphics = SPR_NEWGRFS_BASE - SPR_OPENTTD_BASE;
 	_missing_extra_graphics = GetSpriteCountForFile(master_filename, SPR_OPENTTD_BASE, SPR_NEWGRFS_BASE);
-	Debug(sprite, 1, "{} extra sprites, {} from baseset, {} from fallback", total_extra_graphics, total_extra_graphics - _missing_extra_graphics, _missing_extra_graphics);
+	DEBUG(sprite, 1, "%u extra sprites, %u from baseset, %u from fallback", total_extra_graphics, total_extra_graphics - _missing_extra_graphics, _missing_extra_graphics);
 
 	/* The original baseset extra graphics intentionally make use of the fallback graphics.
 	 * Let's say everything which provides less than 500 sprites misses the rest intentionally. */
@@ -241,10 +297,10 @@ static void RealChangeBlitter(const char *repl_blitter)
 	const char *cur_blitter = BlitterFactory::GetCurrentBlitter()->GetName();
 	if (strcmp(cur_blitter, repl_blitter) == 0) return;
 
-	Debug(driver, 1, "Switching blitter from '{}' to '{}'... ", cur_blitter, repl_blitter);
+	DEBUG(driver, 1, "Switching blitter from '%s' to '%s'... ", cur_blitter, repl_blitter);
 	Blitter *new_blitter = BlitterFactory::SelectBlitter(repl_blitter);
 	if (new_blitter == nullptr) NOT_REACHED();
-	Debug(driver, 1, "Successfully switched to {}.", repl_blitter);
+	DEBUG(driver, 1, "Successfully switched to %s.", repl_blitter);
 
 	if (!VideoDriver::GetInstance()->AfterBlitterChange()) {
 		/* Failed to switch blitter, let's hope we can return to the old one. */
@@ -340,22 +396,153 @@ void CheckBlitter()
 	ReInitAllWindows(false);
 }
 
+void UpdateRouteStepSpriteSize()
+{
+	extern uint _vp_route_step_sprite_width;
+	extern uint _vp_route_step_base_width;
+	extern uint _vp_route_step_height_top;
+	extern uint _vp_route_step_height_bottom;
+	extern uint _vp_route_step_string_width[4];
+
+	Dimension d0 = GetSpriteSize(SPR_ROUTE_STEP_TOP);
+	_vp_route_step_sprite_width = d0.width;
+	_vp_route_step_height_top = d0.height;
+
+	_vp_route_step_base_width = (_vp_route_step_height_top + 1) * 2;
+
+	Dimension d2 = GetSpriteSize(SPR_ROUTE_STEP_BOTTOM);
+	_vp_route_step_height_bottom = d2.height;
+
+	const uint min_width = _vp_route_step_sprite_width > _vp_route_step_base_width ? _vp_route_step_sprite_width - _vp_route_step_base_width : 0;
+	uint extra = 0;
+	for (uint i = 0; i < 4; i++) {
+		SetDParamMaxDigits(0, i + 2, FS_SMALL);
+		SetDParam(1, STR_VIEWPORT_SHOW_VEHICLE_ROUTE_STEP_STATION);
+		const uint base_width = GetStringBoundingBox(STR_VIEWPORT_SHOW_VEHICLE_ROUTE_STEP, FS_SMALL).width;
+		if (i == 0) {
+			uint width = base_width;
+			auto process_string = [&](StringID str) {
+				SetDParam(1, str);
+				width = std::max(width, GetStringBoundingBox(STR_VIEWPORT_SHOW_VEHICLE_ROUTE_STEP, FS_SMALL).width);
+			};
+			process_string(STR_VIEWPORT_SHOW_VEHICLE_ROUTE_STEP_DEPOT);
+			process_string(STR_VIEWPORT_SHOW_VEHICLE_ROUTE_STEP_WAYPOINT);
+			process_string(STR_VIEWPORT_SHOW_VEHICLE_ROUTE_STEP_IMPLICIT);
+			extra = width - base_width;
+		}
+		_vp_route_step_string_width[i] = std::max(min_width, base_width + extra);
+	}
+}
+
+#if !defined(DEDICATED)
+/* multi can be density, field type, ... */
+static SpriteID GetSpriteIDForClearGround(const ClearGround cg, const Slope slope, const uint multi)
+{
+	switch (cg) {
+		case CLEAR_GRASS:
+			return GetSpriteIDForClearLand(slope, (byte) multi);
+		case CLEAR_ROUGH:
+			return GetSpriteIDForHillyLand(slope, multi);
+		case CLEAR_ROCKS:
+			return GetSpriteIDForRocks(slope, multi);
+		case CLEAR_FIELDS:
+			return GetSpriteIDForFields(slope, multi);
+		case CLEAR_SNOW:
+		case CLEAR_DESERT:
+			return GetSpriteIDForSnowDesert(slope, multi);
+		default: NOT_REACHED();
+	}
+}
+#endif /* !DEDICATED */
+
+/** Once the sprites are loaded, we can determine main colours of ground/water/... */
+void GfxDetermineMainColours()
+{
+#if !defined(DEDICATED)
+	/* Water. */
+	extern uint32 _vp_map_water_colour[5];
+	_vp_map_water_colour[0] = GetSpriteMainColour(SPR_FLAT_WATER_TILE, PAL_NONE);
+	if (BlitterFactory::GetCurrentBlitter()->GetScreenDepth() == 32) {
+		_vp_map_water_colour[1] = Blitter_32bppBase::MakeTransparent(_vp_map_water_colour[0], 256, 192).data; // lighter
+		_vp_map_water_colour[2] = Blitter_32bppBase::MakeTransparent(_vp_map_water_colour[0], 192, 256).data; // darker
+		_vp_map_water_colour[3] = _vp_map_water_colour[2];
+		_vp_map_water_colour[4] = _vp_map_water_colour[1];
+	}
+
+	/* Clear ground. */
+	extern uint32 _vp_map_vegetation_clear_colours[16][6][8];
+	memset(_vp_map_vegetation_clear_colours, 0, sizeof(_vp_map_vegetation_clear_colours));
+	const struct {
+		byte min;
+		byte max;
+	} multi[6] = {
+		{ 0, 3 }, // CLEAR_GRASS, density
+		{ 0, 7 }, // CLEAR_ROUGH, "random" based on position
+		{ 0, 1 }, // CLEAR_ROCKS, tile hash parity
+		{ 0, 7 }, // CLEAR_FIELDS, some field types
+		{ 0, 3 }, // CLEAR_SNOW, density
+		{ 1, 3 }, // CLEAR_DESERT, density
+	};
+	for (uint s = 0; s <= SLOPE_ELEVATED; s++) {
+		for (uint cg = 0; cg < 6; cg++) {
+			for (uint m = multi[cg].min; m <= multi[cg].max; m++) {
+				_vp_map_vegetation_clear_colours[s][cg][m] = GetSpriteMainColour(GetSpriteIDForClearGround((ClearGround) cg, (Slope) s, m), PAL_NONE);
+			}
+		}
+	}
+
+	/* Trees. */
+	extern uint32 _vp_map_vegetation_tree_colours[16][5][MAX_TREE_COUNT_BY_LANDSCAPE];
+	const uint base  = _tree_base_by_landscape[_settings_game.game_creation.landscape];
+	const uint count = _tree_count_by_landscape[_settings_game.game_creation.landscape];
+	for (uint tg = 0; tg < 5; tg++) {
+		for (uint i = base; i < base + count; i++) {
+			_vp_map_vegetation_tree_colours[0][tg][i - base] = GetSpriteMainColour(_tree_sprites[i].sprite, _tree_sprites[i].pal);
+		}
+		const int diff = MAX_TREE_COUNT_BY_LANDSCAPE - count;
+		if (diff > 0) {
+			for (uint i = count; i < MAX_TREE_COUNT_BY_LANDSCAPE; i++)
+				_vp_map_vegetation_tree_colours[0][tg][i] = _vp_map_vegetation_tree_colours[0][tg][i - count];
+		}
+	}
+	for (int s = 1; s <= SLOPE_ELEVATED; ++s) {
+		extern int GetSlopeTreeBrightnessAdjust(Slope slope);
+		int brightness_adjust = (BlitterFactory::GetCurrentBlitter()->GetScreenDepth() == 32) ? GetSlopeTreeBrightnessAdjust((Slope)s) * 2 : 0;
+		if (brightness_adjust != 0) {
+			for (uint tg = 0; tg < 5; tg++) {
+				for (uint i = 0; i < MAX_TREE_COUNT_BY_LANDSCAPE; i++) {
+					_vp_map_vegetation_tree_colours[s][tg][i] = Blitter_32bppBase::AdjustBrightness(Colour(_vp_map_vegetation_tree_colours[0][tg][i]), Blitter_32bppBase::DEFAULT_BRIGHTNESS + brightness_adjust).data;
+				}
+			}
+		} else {
+			memcpy(&(_vp_map_vegetation_tree_colours[s]), &(_vp_map_vegetation_tree_colours[0]), sizeof(_vp_map_vegetation_tree_colours[0]));
+		}
+	}
+#endif /* !DEDICATED */
+}
+
 /** Initialise and load all the sprites. */
 void GfxLoadSprites()
 {
-	Debug(sprite, 2, "Loading sprite set {}", _settings_game.game_creation.landscape);
+	DEBUG(sprite, 2, "Loading sprite set %d", _settings_game.game_creation.landscape);
+
+	_grf_bug_too_many_strings = false;
 
 	SwitchNewGRFBlitter();
 	VideoDriver::GetInstance()->ClearSystemSprites();
 	ClearFontCache();
 	GfxInitSpriteMem();
-	LoadSpriteTables();
 	GfxInitPalettes();
+	LoadSpriteTables();
+	GfxDetermineMainColours();
 
+	UpdateRouteStepSpriteSize();
 	UpdateCursorSize();
+
+	DEBUG(sprite, 2, "Completed loading sprite set %d", _settings_game.game_creation.landscape);
 }
 
-bool GraphicsSet::FillSetDetails(IniFile *ini, const char *path, const char *full_filename)
+bool GraphicsSet::FillSetDetails(IniFile *ini, const std::string &path, const std::string &full_filename)
 {
 	bool ret = this->BaseSet<GraphicsSet, MAX_GFT, true>::FillSetDetails(ini, path, full_filename, false);
 	if (ret) {

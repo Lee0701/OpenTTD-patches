@@ -12,6 +12,8 @@
 
 #include "../saveload.h"
 
+namespace upstream_sl {
+
 /** Original field order for SlCompanyOldAIBuildRec. */
 const SaveLoadCompat _company_old_ai_buildrec_compat[] = {
 	SLC_NULL(2, SL_MIN_VERSION, SLV_6),
@@ -125,5 +127,7 @@ const SaveLoadCompat _company_sl_compat[] = {
 	SLC_VAR("old_economy"),
 	SLC_VAR("liveries"),
 };
+
+}
 
 #endif /* SAVELOAD_COMPAT_COMPANY_H */

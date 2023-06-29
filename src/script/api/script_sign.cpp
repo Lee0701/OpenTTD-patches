@@ -15,12 +15,12 @@
 #include "../../string_func.h"
 #include "../../strings_func.h"
 #include "../../tile_map.h"
-#include "../../signs_cmd.h"
 
 #include "../../safeguards.h"
 
 /* static */ bool ScriptSign::IsValidSign(SignID sign_id)
 {
+	EnforceDeityOrCompanyModeValid(false);
 	const Sign *si = ::Sign::GetIfValid(sign_id);
 	return si != nullptr && (si->owner == ScriptObject::GetCompany() || si->owner == OWNER_DEITY);
 }
@@ -36,13 +36,14 @@
 {
 	CCountedPtr<Text> counter(name);
 
+	EnforceDeityOrCompanyModeValid(false);
 	EnforcePrecondition(false, IsValidSign(sign_id));
 	EnforcePrecondition(false, name != nullptr);
-	const char *text = name->GetDecodedText();
+	const std::string &text = name->GetDecodedText();
 	EnforcePreconditionEncodedText(false, text);
 	EnforcePreconditionCustomError(false, ::Utf8StringLength(text) < MAX_LENGTH_SIGN_NAME_CHARS, ScriptError::ERR_PRECONDITION_STRING_TOO_LONG);
 
-	return ScriptObject::Command<CMD_RENAME_SIGN>::Do(sign_id, text);
+	return ScriptObject::DoCommand(0, sign_id, 0, CMD_RENAME_SIGN, text);
 }
 
 /* static */ char *ScriptSign::GetName(SignID sign_id)
@@ -63,21 +64,23 @@
 
 /* static */ bool ScriptSign::RemoveSign(SignID sign_id)
 {
+	EnforceDeityOrCompanyModeValid(false);
 	EnforcePrecondition(false, IsValidSign(sign_id));
-	return ScriptObject::Command<CMD_RENAME_SIGN>::Do(sign_id, "");
+	return ScriptObject::DoCommand(0, sign_id, 0, CMD_RENAME_SIGN, "");
 }
 
 /* static */ SignID ScriptSign::BuildSign(TileIndex location, Text *name)
 {
 	CCountedPtr<Text> counter(name);
 
+	EnforceDeityOrCompanyModeValid(INVALID_SIGN);
 	EnforcePrecondition(INVALID_SIGN, ::IsValidTile(location));
 	EnforcePrecondition(INVALID_SIGN, name != nullptr);
-	const char *text = name->GetDecodedText();
+	const std::string &text = name->GetDecodedText();
 	EnforcePreconditionEncodedText(INVALID_SIGN, text);
 	EnforcePreconditionCustomError(INVALID_SIGN, ::Utf8StringLength(text) < MAX_LENGTH_SIGN_NAME_CHARS, ScriptError::ERR_PRECONDITION_STRING_TOO_LONG);
 
-	if (!ScriptObject::Command<CMD_PLACE_SIGN>::Do(&ScriptInstance::DoCommandReturnSignID, location, text)) return INVALID_SIGN;
+	if (!ScriptObject::DoCommand(location, 0, 0, CMD_PLACE_SIGN, text, &ScriptInstance::DoCommandReturnSignID)) return INVALID_SIGN;
 
 	/* In case of test-mode, we return SignID 0 */
 	return 0;

@@ -69,9 +69,9 @@ bool ClientNetworkContentSocketHandler::Receive_SERVER_INFO(Packet *p)
 	uint dependency_count = p->Recv_uint8();
 	ci->dependencies.reserve(dependency_count);
 	for (uint i = 0; i < dependency_count; i++) {
-		ContentID dependency_cid = (ContentID)p->Recv_uint32();
-		ci->dependencies.push_back(dependency_cid);
-		this->reverse_dependency_map.insert({ dependency_cid, ci->id });
+		ContentID cid = (ContentID)p->Recv_uint32();
+		ci->dependencies.push_back(cid);
+		this->reverse_dependency_map.insert({ cid, ci->id });
 	}
 
 	uint tag_count = p->Recv_uint8();
@@ -208,7 +208,7 @@ void ClientNetworkContentSocketHandler::RequestContentList(ContentType type)
 	Packet *p = new Packet(PACKET_CONTENT_CLIENT_INFO_LIST);
 	p->Send_uint8 ((byte)type);
 	p->Send_uint32(0xffffffff);
-	p->Send_uint8 (1);
+	p->Send_uint8 (2);
 	p->Send_string("vanilla");
 	p->Send_string(_openttd_content_version);
 
@@ -216,11 +216,10 @@ void ClientNetworkContentSocketHandler::RequestContentList(ContentType type)
 	 * add a branch in the 'compatibility' list, to filter on this. If you want
 	 * your patchpack to be mentioned in the BaNaNaS web-interface, create an
 	 * issue on https://github.com/OpenTTD/bananas-api asking for this.
+	 */
 
-	p->Send_string("patchpack"); // Or what-ever the name of your patchpack is.
-	p->Send_string(_openttd_content_version_patchpack);
-
-	*/
+	p->Send_string("jgrpp");
+	p->Send_string(_openttd_release_version);
 
 	this->SendPacket(p);
 }
@@ -265,24 +264,31 @@ void ClientNetworkContentSocketHandler::RequestContentList(ContentVector *cv, bo
 
 	this->Connect();
 
-	assert(cv->size() < 255);
-	assert(cv->size() < (TCP_MTU - sizeof(PacketSize) - sizeof(byte) - sizeof(uint8)) /
-			(sizeof(uint8) + sizeof(uint32) + (send_md5sum ? /*sizeof(ContentInfo::md5sum)*/16 : 0)));
+	const uint max_per_packet = std::min<uint>(255, (TCP_MTU - sizeof(PacketSize) - sizeof(byte) - sizeof(uint8)) /
+			(sizeof(uint8) + sizeof(uint32) + (send_md5sum ? /*sizeof(ContentInfo::md5sum)*/16 : 0))) - 1;
 
-	Packet *p = new Packet(send_md5sum ? PACKET_CONTENT_CLIENT_INFO_EXTID_MD5 : PACKET_CONTENT_CLIENT_INFO_EXTID, TCP_MTU);
-	p->Send_uint8((uint8)cv->size());
+	uint offset = 0;
 
-	for (const ContentInfo *ci : *cv) {
-		p->Send_uint8((byte)ci->type);
-		p->Send_uint32(ci->unique_id);
-		if (!send_md5sum) continue;
+	while (cv->size() > offset) {
+		Packet *p = new Packet(send_md5sum ? PACKET_CONTENT_CLIENT_INFO_EXTID_MD5 : PACKET_CONTENT_CLIENT_INFO_EXTID, TCP_MTU);
+		const uint to_send = std::min<uint>(static_cast<uint>(cv->size() - offset), max_per_packet);
+		p->Send_uint8(static_cast<uint8>(to_send));
 
-		for (uint j = 0; j < sizeof(ci->md5sum); j++) {
-			p->Send_uint8(ci->md5sum[j]);
+		for (uint i = 0; i < to_send; i++) {
+			const ContentInfo *ci = (*cv)[offset + i];
+			p->Send_uint8((byte)ci->type);
+			p->Send_uint32(ci->unique_id);
+			if (!send_md5sum) continue;
+
+			for (uint j = 0; j < sizeof(ci->md5sum); j++) {
+				p->Send_uint8(ci->md5sum[j]);
+			}
 		}
-	}
 
-	this->SendPacket(p);
+		this->SendPacket(p);
+
+		offset += to_send;
+	}
 
 	for (ContentInfo *ci : *cv) {
 		bool found = false;
@@ -311,13 +317,6 @@ void ClientNetworkContentSocketHandler::DownloadSelectedContent(uint &files, uin
 {
 	bytes = 0;
 
-#ifdef __EMSCRIPTEN__
-	/* Emscripten is loaded via an HTTPS connection. As such, it is very
-	 * difficult to make HTTP connections. So always use the TCP method of
-	 * downloading content. */
-	fallback = true;
-#endif
-
 	ContentIDList content;
 	for (const ContentInfo *ci : this->infos) {
 		if (!ci->IsSelected() || ci->state == ContentInfo::ALREADY_HERE) continue;
@@ -330,6 +329,8 @@ void ClientNetworkContentSocketHandler::DownloadSelectedContent(uint &files, uin
 
 	/* If there's nothing to download, do nothing. */
 	if (files == 0) return;
+
+	this->isCancelled = false;
 
 	if (_settings_client.network.no_http_content_downloads || fallback) {
 		this->DownloadSelectedContentFallback(content);
@@ -344,25 +345,14 @@ void ClientNetworkContentSocketHandler::DownloadSelectedContent(uint &files, uin
  */
 void ClientNetworkContentSocketHandler::DownloadSelectedContentHTTP(const ContentIDList &content)
 {
-	uint count = (uint)content.size();
-
-	/* Allocate memory for the whole request.
-	 * Requests are "id\nid\n..." (as strings), so assume the maximum ID,
-	 * which is uint32 so 10 characters long. Then the newlines and
-	 * multiply that all with the count and then add the '\0'. */
-	uint bytes = (10 + 1) * count + 1;
-	char *content_request = MallocT<char>(bytes);
-	const char *lastof = content_request + bytes - 1;
-
-	char *p = content_request;
+	std::string content_request;
 	for (const ContentID &id : content) {
-		p += seprintf(p, lastof, "%d\n", id);
+		content_request += std::to_string(id) + "\n";
 	}
 
 	this->http_response_index = -1;
 
-	new NetworkHTTPContentConnecter(NetworkContentMirrorConnectionString(), this, NETWORK_CONTENT_MIRROR_URL, content_request);
-	/* NetworkHTTPContentConnecter takes over freeing of content_request! */
+	NetworkHTTPSocketHandler::Connect(NetworkContentMirrorUriString(), this, content_request);
 }
 
 /**
@@ -513,7 +503,7 @@ bool ClientNetworkContentSocketHandler::Receive_SERVER_CONTENT(Packet *p)
 		/* We have a file opened, thus are downloading internal content */
 		size_t toRead = p->RemainingBytesToTransfer();
 		if (toRead != 0 && (size_t)p->TransferOut(TransferOutFWrite, this->curFile) != toRead) {
-			CloseWindowById(WC_NETWORK_STATUS_WINDOW, WN_NETWORK_STATUS_WINDOW_CONTENT_DOWNLOAD);
+			DeleteWindowById(WC_NETWORK_STATUS_WINDOW, WN_NETWORK_STATUS_WINDOW_CONTENT_DOWNLOAD);
 			ShowErrorMessage(STR_CONTENT_ERROR_COULD_NOT_DOWNLOAD, STR_CONTENT_ERROR_COULD_NOT_DOWNLOAD_FILE_NOT_WRITABLE, WL_ERROR);
 			this->CloseConnection();
 			fclose(this->curFile);
@@ -547,7 +537,7 @@ bool ClientNetworkContentSocketHandler::BeforeDownload()
 		std::string filename = GetFullFilename(this->curInfo, true);
 		if (filename.empty() || (this->curFile = fopen(filename.c_str(), "wb")) == nullptr) {
 			/* Unless that fails of course... */
-			CloseWindowById(WC_NETWORK_STATUS_WINDOW, WN_NETWORK_STATUS_WINDOW_CONTENT_DOWNLOAD);
+			DeleteWindowById(WC_NETWORK_STATUS_WINDOW, WN_NETWORK_STATUS_WINDOW_CONTENT_DOWNLOAD);
 			ShowErrorMessage(STR_CONTENT_ERROR_COULD_NOT_DOWNLOAD, STR_CONTENT_ERROR_COULD_NOT_DOWNLOAD_FILE_NOT_WRITABLE, WL_ERROR);
 			return false;
 		}
@@ -592,24 +582,30 @@ void ClientNetworkContentSocketHandler::AfterDownload()
 	}
 }
 
+bool ClientNetworkContentSocketHandler::IsCancelled() const
+{
+	return this->isCancelled;
+}
+
 /* Also called to just clean up the mess. */
 void ClientNetworkContentSocketHandler::OnFailure()
 {
-	/* If we fail, download the rest via the 'old' system. */
-	uint files, bytes;
-	this->DownloadSelectedContent(files, bytes, true);
-
 	this->http_response.clear();
 	this->http_response.shrink_to_fit();
 	this->http_response_index = -2;
 
 	if (this->curFile != nullptr) {
-		/* Revert the download progress when we are going for the old system. */
-		long size = ftell(this->curFile);
-		if (size > 0) this->OnDownloadProgress(this->curInfo, (int)-size);
+		this->OnDownloadProgress(this->curInfo, -1);
 
 		fclose(this->curFile);
 		this->curFile = nullptr;
+	}
+
+	/* If we fail, download the rest via the 'old' system. */
+	if (!this->isCancelled) {
+		uint files, bytes;
+
+		this->DownloadSelectedContent(files, bytes, true);
 	}
 }
 
@@ -746,7 +742,8 @@ ClientNetworkContentSocketHandler::ClientNetworkContentSocketHandler() :
 	http_response_index(-2),
 	curFile(nullptr),
 	curInfo(nullptr),
-	isConnecting(false)
+	isConnecting(false),
+	isCancelled(false)
 {
 	this->lastActivity = std::chrono::steady_clock::now();
 }
@@ -792,7 +789,10 @@ public:
 void ClientNetworkContentSocketHandler::Connect()
 {
 	if (this->sock != INVALID_SOCKET || this->isConnecting) return;
+
+	this->isCancelled = false;
 	this->isConnecting = true;
+
 	new NetworkContentConnecter(NetworkContentServerConnectionString());
 }
 
@@ -801,6 +801,7 @@ void ClientNetworkContentSocketHandler::Connect()
  */
 NetworkRecvStatus ClientNetworkContentSocketHandler::CloseConnection(bool error)
 {
+	this->isCancelled = true;
 	NetworkContentSocketHandler::CloseConnection();
 
 	if (this->sock == INVALID_SOCKET) return NETWORK_RECV_STATUS_OKAY;
@@ -852,7 +853,7 @@ void ClientNetworkContentSocketHandler::DownloadContentInfo(ContentID cid)
  * @param cid the ContentID to search for
  * @return the ContentInfo or nullptr if not found
  */
-ContentInfo *ClientNetworkContentSocketHandler::GetContent(ContentID cid) const
+ContentInfo *ClientNetworkContentSocketHandler::GetContent(ContentID cid)
 {
 	for (ContentInfo *ci : this->infos) {
 		if (ci->id == cid) return ci;
@@ -1054,11 +1055,11 @@ void ClientNetworkContentSocketHandler::CheckDependencyState(ContentInfo *ci)
 		 * After that's done run over them once again to test their children
 		 * to unselect. Don't do it immediately because it'll do exactly what
 		 * we're doing now. */
-		for (const ContentInfo *c : parents) {
-			if (c->state == ContentInfo::AUTOSELECTED) this->Unselect(c->id);
+		for (const ContentInfo *parent : parents) {
+			if (parent->state == ContentInfo::AUTOSELECTED) this->Unselect(parent->id);
 		}
-		for (const ContentInfo *c : parents) {
-			this->CheckDependencyState(this->GetContent(c->id));
+		for (const ContentInfo *parent : parents) {
+			this->CheckDependencyState(this->GetContent(parent->id));
 		}
 	}
 }

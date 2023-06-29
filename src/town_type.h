@@ -11,12 +11,15 @@
 #define TOWN_TYPE_H
 
 #include "core/enum_type.hpp"
+#include "core/smallvec_type.hpp"
 
 typedef uint16 TownID;
 struct Town;
 
+typedef std::vector<TownID> TownList;
+
 /** Supported initial town sizes */
-enum TownSize : byte {
+enum TownSize {
 	TSZ_SMALL,  ///< Small town.
 	TSZ_MEDIUM, ///< Medium town.
 	TSZ_LARGE,  ///< Large town.
@@ -125,6 +128,16 @@ struct TransportedCargoStat {
 		this->old_max = this->new_max; this->new_max = 0;
 		this->old_act = this->new_act; this->new_act = 0;
 	}
+};
+
+
+/** Town allow tunnel building setting values. It needs to be 8bits, because we save and load it as such */
+enum TownTunnelMode : byte {
+	TTM_BEGIN = 0,         ///< Used for iterations and limit testing
+	TTM_FORBIDDEN = 0,     ///< Forbidden
+	TTM_OBSTRUCTION_ONLY,  ///< Allowed only for tunnels under obstructions
+	TTM_ALLOWED,           ///< Allowed in all cases (including through hills)
+	TTM_END,               ///< Used for iterations and limit testing
 };
 
 #endif /* TOWN_TYPE_H */

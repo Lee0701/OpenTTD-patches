@@ -12,7 +12,7 @@
 #include "clear_map.h"
 #include "void_map.h"
 #include "error.h"
-#include "saveload/saveload.h"
+#include "sl/saveload.h"
 #include "bmp.h"
 #include "gfx_func.h"
 #include "fios.h"
@@ -27,7 +27,7 @@
  * Do not allow images for which the longest side is twice the maximum number of
  * tiles along the longest side of the (tile) map.
  */
-static const uint MAX_HEIGHTMAP_SIDE_LENGTH_IN_PIXELS = 2 * MAX_MAP_SIZE;
+static const uint MAX_HEIGHTMAP_SIDE_LENGTH_IN_PIXELS = 2 * (1 << 16);
 
 /*
  * Maximum size in pixels of the heightmap image.
@@ -188,7 +188,7 @@ static bool ReadHeightmapPNG(const char *filename, uint *x, uint *y, byte **map)
 	}
 
 	if (map != nullptr) {
-		*map = MallocT<byte>(width * height);
+		*map = MallocT<byte>(static_cast<size_t>(width) * height);
 		ReadHeightmapPNGImageData(*map, png_ptr, info_ptr);
 	}
 
@@ -303,7 +303,7 @@ static bool ReadHeightmapBMP(const char *filename, uint *x, uint *y, byte **map)
 			return false;
 		}
 
-		*map = MallocT<byte>(info.width * info.height);
+		*map = MallocT<byte>(static_cast<size_t>(info.width) * info.height);
 		ReadHeightmapBMPImageData(*map, &info, &data);
 	}
 

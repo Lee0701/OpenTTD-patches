@@ -19,6 +19,8 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 static uint32 _map_dim_x;
 static uint32 _map_dim_y;
 
@@ -379,3 +381,5 @@ static const ChunkHandlerRef map_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _map_chunk_handlers(map_chunk_handlers);
+
+}

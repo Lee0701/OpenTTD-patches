@@ -16,8 +16,6 @@
 #include "../../engine_base.h"
 #include "../../articulated_vehicles.h"
 #include "../../string_func.h"
-#include "../../economy_cmd.h"
-#include "../../engine_cmd.h"
 #include "table/strings.h"
 
 #include "../../safeguards.h"
@@ -111,13 +109,15 @@ int32 ScriptEventEnginePreview::GetVehicleType()
 
 bool ScriptEventEnginePreview::AcceptPreview()
 {
+	EnforceCompanyModeValid(false);
 	if (!this->IsEngineValid()) return false;
-	return ScriptObject::Command<CMD_WANT_ENGINE_PREVIEW>::Do(this->engine);
+	return ScriptObject::DoCommand(0, this->engine, 0, CMD_WANT_ENGINE_PREVIEW);
 }
 
 bool ScriptEventCompanyAskMerger::AcceptMerger()
 {
-	return ScriptObject::Command<CMD_BUY_COMPANY>::Do((::CompanyID)this->owner);
+	EnforceCompanyModeValid(false);
+	return ScriptObject::DoCommand(0, this->owner, 0, CMD_BUY_COMPANY);
 }
 
 ScriptEventAdminPort::ScriptEventAdminPort(const std::string &json) :

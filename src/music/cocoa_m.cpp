@@ -67,7 +67,7 @@ static void DoSetVolume()
 		}
 	}
 	if (output_unit == nullptr) {
-		Debug(driver, 1, "cocoa_m: Failed to get output node to set volume");
+		DEBUG(driver, 1, "cocoa_m: Failed to get output node to set volume");
 		return;
 	}
 
@@ -119,7 +119,7 @@ void MusicDriver_Cocoa::PlaySong(const MusicSongInfo &song)
 {
 	std::string filename = MidiFile::GetSMFFile(song);
 
-	Debug(driver, 2, "cocoa_m: trying to play '{}'", filename);
+	DEBUG(driver, 2, "cocoa_m: trying to play '%s'", filename.c_str());
 
 	this->StopSong();
 	if (_sequence != nullptr) {
@@ -130,7 +130,7 @@ void MusicDriver_Cocoa::PlaySong(const MusicSongInfo &song)
 	if (filename.empty()) return;
 
 	if (NewMusicSequence(&_sequence) != noErr) {
-		Debug(driver, 0, "cocoa_m: Failed to create music sequence");
+		DEBUG(driver, 0, "cocoa_m: Failed to create music sequence");
 		return;
 	}
 
@@ -138,7 +138,7 @@ void MusicDriver_Cocoa::PlaySong(const MusicSongInfo &song)
 	CFAutoRelease<CFURLRef> url(CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault, (const UInt8*)os_file.c_str(), os_file.length(), false));
 
 	if (MusicSequenceFileLoad(_sequence, url.get(), kMusicSequenceFile_AnyType, 0) != noErr) {
-		Debug(driver, 0, "cocoa_m: Failed to load MIDI file");
+		DEBUG(driver, 0, "cocoa_m: Failed to load MIDI file");
 		return;
 	}
 
@@ -148,7 +148,7 @@ void MusicDriver_Cocoa::PlaySong(const MusicSongInfo &song)
 	MusicSequenceGetAUGraph(_sequence, &graph);
 	AUGraphOpen(graph);
 	if (AUGraphInitialize(graph) != noErr) {
-		Debug(driver, 0, "cocoa_m: Failed to initialize AU graph");
+		DEBUG(driver, 0, "cocoa_m: Failed to initialize AU graph");
 		return;
 	}
 
@@ -173,7 +173,7 @@ void MusicDriver_Cocoa::PlaySong(const MusicSongInfo &song)
 	if (MusicPlayerStart(_player) != noErr) return;
 	_playing = true;
 
-	Debug(driver, 3, "cocoa_m: playing '{}'", filename);
+	DEBUG(driver, 3, "cocoa_m: playing '%s'", filename.c_str());
 }
 
 

@@ -33,16 +33,17 @@ private:
 	FT_Face face;  ///< The font face associated with this font.
 
 	void SetFontSize(FontSize fs, FT_Face face, int pixels);
-	virtual const void *InternalGetFontTable(uint32 tag, size_t &length);
-	virtual const Sprite *InternalGetGlyph(GlyphID key, bool aa);
+	const void *InternalGetFontTable(uint32 tag, size_t &length) override;
+	const Sprite *InternalGetGlyph(GlyphID key, bool aa) override;
 
 public:
 	FreeTypeFontCache(FontSize fs, FT_Face face, int pixels);
 	~FreeTypeFontCache();
-	virtual void ClearFontCache();
-	virtual GlyphID MapCharToGlyph(WChar key);
-	virtual const char *GetFontName() { return face->family_name; }
-	virtual bool IsBuiltInFont() { return false; }
+	void ClearFontCache() override;
+	GlyphID MapCharToGlyph(WChar key) override;
+	const char *GetFontName() override { return face->family_name; }
+	bool IsBuiltInFont() override { return false; }
+	const void *GetOSHandle() override { return &face; }
 };
 
 FT_Library _library = nullptr;
@@ -65,14 +66,14 @@ void FreeTypeFontCache::SetFontSize(FontSize fs, FT_Face face, int pixels)
 {
 	if (pixels == 0) {
 		/* Try to determine a good height based on the minimal height recommended by the font. */
-		int scaled_height = ScaleGUITrad(this->GetDefaultFontHeight(this->fs));
+		int scaled_height = ScaleGUITrad(FontCache::GetDefaultFontHeight(this->fs));
 		pixels = scaled_height;
 
 		TT_Header *head = (TT_Header *)FT_Get_Sfnt_Table(this->face, ft_sfnt_head);
 		if (head != nullptr) {
 			/* Font height is minimum height plus the difference between the default
 			 * height for this font size and the small size. */
-			int diff = scaled_height - ScaleGUITrad(this->GetDefaultFontHeight(FS_SMALL));
+			int diff = scaled_height - ScaleGUITrad(FontCache::GetDefaultFontHeight(FS_SMALL));
 			/* Clamp() is not used as scaled_height could be greater than MAX_FONT_SIZE, which is not permitted in Clamp(). */
 			pixels = std::min(std::max(std::min<int>(head->Lowest_Rec_PPEM, MAX_FONT_MIN_REC_SIZE) + diff, scaled_height), MAX_FONT_SIZE);
 		}
@@ -109,8 +110,10 @@ void FreeTypeFontCache::SetFontSize(FontSize fs, FT_Face face, int pixels)
 		this->height       = this->ascender - this->descender;
 	} else {
 		/* Both FT_Set_Pixel_Sizes and FT_Select_Size failed. */
-		Debug(fontcache, 0, "Font size selection failed. Using FontCache defaults.");
+		DEBUG(fontcache, 0, "Font size selection failed. Using FontCache defaults.");
 	}
+
+	font_height_cache[this->fs] = this->GetHeight();
 }
 
 /**
@@ -122,14 +125,7 @@ void FreeTypeFontCache::SetFontSize(FontSize fs, FT_Face face, int pixels)
  */
 void LoadFreeTypeFont(FontSize fs)
 {
-	FontCacheSubSetting *settings = nullptr;
-	switch (fs) {
-		default: NOT_REACHED();
-		case FS_SMALL:  settings = &_fcsettings.small;  break;
-		case FS_NORMAL: settings = &_fcsettings.medium; break;
-		case FS_LARGE:  settings = &_fcsettings.large;  break;
-		case FS_MONO:   settings = &_fcsettings.mono;   break;
-	}
+	FontCacheSubSetting *settings = GetFontCacheSubSetting(fs);
 
 	if (settings->font.empty()) return;
 
@@ -139,7 +135,7 @@ void LoadFreeTypeFont(FontSize fs)
 			return;
 		}
 
-		Debug(fontcache, 2, "Initialized");
+		DEBUG(fontcache, 2, "Initialized");
 	}
 
 	const char *font_name = settings->font.c_str();
@@ -168,7 +164,7 @@ void LoadFreeTypeFont(FontSize fs)
 	if (error != FT_Err_Ok) error = GetFontByFaceName(font_name, &face);
 
 	if (error == FT_Err_Ok) {
-		Debug(fontcache, 2, "Requested '{}', using '{} {}'", font_name, face->family_name, face->style_name);
+		DEBUG(fontcache, 2, "Requested '%s', using '%s %s'", font_name, face->family_name, face->style_name);
 
 		/* Attempt to select the unicode character map */
 		error = FT_Select_Charmap(face, ft_encoding_unicode);
@@ -197,8 +193,7 @@ void LoadFreeTypeFont(FontSize fs)
 
 	FT_Done_Face(face);
 
-	static const char *SIZE_TO_NAME[] = { "medium", "small", "large", "mono" };
-	ShowInfoF("Unable to use '%s' for %s font, FreeType reported error 0x%X, using sprite font instead", font_name, SIZE_TO_NAME[fs], error);
+	ShowInfoF("Unable to use '%s' for %s font, FreeType reported error 0x%X, using sprite font instead", font_name, FontSizeToName(fs), error);
 	return;
 
 found_face:
@@ -248,8 +243,8 @@ const Sprite *FreeTypeFontCache::InternalGetGlyph(GlyphID key, bool aa)
 
 	/* FreeType has rendered the glyph, now we allocate a sprite and copy the image into it */
 	SpriteLoader::Sprite sprite;
-	sprite.AllocateData(ZOOM_LVL_NORMAL, width * height);
-	sprite.type = ST_FONT;
+	sprite.AllocateData(ZOOM_LVL_NORMAL, static_cast<size_t>(width) * height);
+	sprite.type = SpriteType::Font;
 	sprite.colours = (aa ? SCC_PAL | SCC_ALPHA : SCC_PAL);
 	sprite.width = width;
 	sprite.height = height;

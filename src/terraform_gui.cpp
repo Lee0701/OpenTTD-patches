@@ -31,12 +31,9 @@
 #include "hotkeys.h"
 #include "engine_base.h"
 #include "terraform_gui.h"
-#include "terraform_cmd.h"
+#include "cheat_func.h"
+#include "town_gui.h"
 #include "zoom_func.h"
-#include "rail_cmd.h"
-#include "landscape_cmd.h"
-#include "terraform_cmd.h"
-#include "object_cmd.h"
 
 #include "widgets/terraform_widget.h"
 
@@ -44,12 +41,21 @@
 
 #include "safeguards.h"
 
-void CcTerraform(Commands cmd, const CommandCost &result, Money, TileIndex tile)
+enum DemolishConfirmMode {
+	DCM_OFF,
+	DCM_INDUSTRY,
+	DCM_INDUSTRY_RAIL_STATION,
+};
+
+void CcTerraform(const CommandCost &result, TileIndex tile, uint32 p1, uint32 p2, uint64 p3, uint32 cmd)
 {
 	if (result.Succeeded()) {
 		if (_settings_client.sound.confirm) SndPlayTileFx(SND_1F_CONSTRUCTION_OTHER, tile);
 	} else {
-		SetRedErrorSquare(tile);
+		TileIndex err_tile = result.GetTile();
+		if (err_tile == INVALID_TILE || IsValidTile(err_tile)) {
+			SetRedErrorSquare(err_tile);
+		}
 	}
 }
 
@@ -64,7 +70,7 @@ static void GenerateDesertArea(TileIndex end, TileIndex start)
 	TileArea ta(start, end);
 	for (TileIndex tile : ta) {
 		SetTropicZone(tile, (_ctrl_pressed) ? TROPICZONE_NORMAL : TROPICZONE_DESERT);
-		Command<CMD_LANDSCAPE_CLEAR>::Post(tile);
+		DoCommandP(tile, 0, 0, CMD_LANDSCAPE_CLEAR);
 		MarkTileDirtyByTile(tile);
 	}
 	old_generating_world.Restore();
@@ -99,6 +105,34 @@ static void GenerateRockyArea(TileIndex end, TileIndex start)
 	if (success && _settings_client.sound.confirm) SndPlayTileFx(SND_1F_CONSTRUCTION_OTHER, end);
 }
 
+/** Checks if the area contains any structures that are important enough to query about first */
+static bool IsQueryConfirmIndustryOrRailStationInArea(TileIndex start_tile, TileIndex end_tile, bool diagonal)
+{
+	if (_settings_client.gui.demolish_confirm_mode == DCM_OFF) return false;
+
+	OrthogonalOrDiagonalTileIterator tile_iterator(end_tile, start_tile, diagonal);
+
+	bool destroying_industry_or_station = false;
+
+	for (; *tile_iterator != INVALID_TILE; ++tile_iterator) {
+		if ((_cheats.magic_bulldozer.value && IsTileType(*tile_iterator, MP_INDUSTRY)) ||
+				(_settings_client.gui.demolish_confirm_mode == DCM_INDUSTRY_RAIL_STATION && IsRailStationTile(*tile_iterator))) {
+			destroying_industry_or_station = true;
+			break;
+		}
+	}
+
+	return destroying_industry_or_station;
+}
+
+static CommandContainer _demolish_area_command;
+
+static void DemolishAreaConfirmationCallback(Window*, bool confirmed) {
+	if (confirmed) {
+		DoCommandP(&_demolish_area_command);
+	}
+}
+
 /**
  * A central place to handle all X_AND_Y dragged GUI functions.
  * @param proc       Procedure related to the dragging
@@ -118,23 +152,33 @@ bool GUIPlaceProcDragXY(ViewportDragDropSelectionProcess proc, TileIndex start_t
 	}
 
 	switch (proc) {
-		case DDSP_DEMOLISH_AREA:
-			Command<CMD_CLEAR_AREA>::Post(STR_ERROR_CAN_T_CLEAR_THIS_AREA, CcPlaySound_EXPLOSION, end_tile, start_tile, _ctrl_pressed);
+		case DDSP_DEMOLISH_AREA: {
+			_demolish_area_command = NewCommandContainerBasic(end_tile, start_tile, _ctrl_pressed ? 1 : 0, CMD_CLEAR_AREA | CMD_MSG(STR_ERROR_CAN_T_CLEAR_THIS_AREA), CcPlaySound_EXPLOSION);
+
+			if (!_shift_pressed && IsQueryConfirmIndustryOrRailStationInArea(start_tile, end_tile, _ctrl_pressed)) {
+				ShowQuery(STR_QUERY_CLEAR_AREA_CAPTION, STR_CLEAR_AREA_CONFIRMATION_TEXT, nullptr, DemolishAreaConfirmationCallback);
+			} else {
+				DemolishAreaConfirmationCallback(nullptr, true);
+			}
 			break;
+		}
 		case DDSP_RAISE_AND_LEVEL_AREA:
-			Command<CMD_LEVEL_LAND>::Post(STR_ERROR_CAN_T_RAISE_LAND_HERE, CcTerraform, end_tile, start_tile, _ctrl_pressed, LM_RAISE);
+			DoCommandP(end_tile, start_tile, LM_RAISE << 1 | (_ctrl_pressed ? 1 : 0), CMD_LEVEL_LAND | CMD_MSG(STR_ERROR_CAN_T_RAISE_LAND_HERE), CcTerraform);
 			break;
 		case DDSP_LOWER_AND_LEVEL_AREA:
-			Command<CMD_LEVEL_LAND>::Post(STR_ERROR_CAN_T_LOWER_LAND_HERE, CcTerraform, end_tile, start_tile, _ctrl_pressed, LM_LOWER);
+			DoCommandP(end_tile, start_tile, LM_LOWER << 1 | (_ctrl_pressed ? 1 : 0), CMD_LEVEL_LAND | CMD_MSG(STR_ERROR_CAN_T_LOWER_LAND_HERE), CcTerraform);
 			break;
 		case DDSP_LEVEL_AREA:
-			Command<CMD_LEVEL_LAND>::Post(STR_ERROR_CAN_T_LEVEL_LAND_HERE, CcTerraform, end_tile, start_tile, _ctrl_pressed, LM_LEVEL);
+			DoCommandP(end_tile, start_tile, LM_LEVEL << 1 | (_ctrl_pressed ? 1 : 0), CMD_LEVEL_LAND | CMD_MSG(STR_ERROR_CAN_T_LEVEL_LAND_HERE), CcTerraform);
 			break;
 		case DDSP_CREATE_ROCKS:
 			GenerateRockyArea(end_tile, start_tile);
 			break;
 		case DDSP_CREATE_DESERT:
 			GenerateDesertArea(end_tile, start_tile);
+			break;
+		case DDSP_BUY_LAND:
+			DoCommandP(end_tile, start_tile, _ctrl_pressed ? 1 : 0, CMD_PURCHASE_LAND_AREA | CMD_MSG(STR_ERROR_CAN_T_PURCHASE_THIS_LAND), CcPlaySound_CONSTRUCTION_RAIL);
 			break;
 		default:
 			return false;
@@ -150,6 +194,11 @@ bool GUIPlaceProcDragXY(ViewportDragDropSelectionProcess proc, TileIndex start_t
 void PlaceProc_DemolishArea(TileIndex tile)
 {
 	VpStartPlaceSizing(tile, VPM_X_AND_Y, DDSP_DEMOLISH_AREA);
+}
+
+static void PlaceProc_Measure(TileIndex tile)
+{
+	VpStartPlaceSizing(tile, VPM_A_B_LINE, DDSP_MEASURE);
 }
 
 /** Terra form toolbar managing class. */
@@ -172,7 +221,8 @@ struct TerraformToolbarWindow : Window {
 	{
 		/* Don't show the place object button when there are no objects to place. */
 		NWidgetStacked *show_object = this->GetWidget<NWidgetStacked>(WID_TT_SHOW_PLACE_OBJECT);
-		show_object->SetDisplayedPlane(ObjectClass::GetUIClassCount() != 0 ? 0 : SZSP_NONE);
+		show_object->SetDisplayedPlane(ObjectClass::HasUIClass() ? 0 : SZSP_NONE);
+		SetWidgetDisabledState(WID_TT_BUY_LAND, _settings_game.construction.purchase_land_permitted == 0);
 	}
 
 	void OnClick(Point pt, int widget, int click_count) override
@@ -209,6 +259,11 @@ struct TerraformToolbarWindow : Window {
 				ShowBuildTreesToolbar();
 				break;
 
+			case WID_TT_MEASUREMENT_TOOL:
+				HandlePlacePushButton(this, WID_TT_MEASUREMENT_TOOL, SPR_CURSOR_QUERY, HT_RECT | HT_MAP);
+				this->last_user_action = widget;
+				break;
+
 			case WID_TT_PLACE_SIGN: // Place sign button
 				HandlePlacePushButton(this, WID_TT_PLACE_SIGN, SPR_CURSOR_SIGN, HT_RECT);
 				this->last_user_action = widget;
@@ -242,7 +297,23 @@ struct TerraformToolbarWindow : Window {
 				break;
 
 			case WID_TT_BUY_LAND: // Buy land button
-				VpStartPlaceSizing(tile, VPM_X_AND_Y, DDSP_BUILD_OBJECT);
+				switch (_settings_game.construction.purchase_land_permitted) {
+					case 0:
+					case 1:
+						DoCommandP(tile, OBJECT_OWNED_LAND, 0, CMD_BUILD_OBJECT | CMD_MSG(STR_ERROR_CAN_T_PURCHASE_THIS_LAND), CcPlaySound_CONSTRUCTION_RAIL);
+						break;
+
+					case 2:
+						VpStartPlaceSizing(tile, VPM_X_AND_Y, DDSP_BUY_LAND);
+						break;
+
+					default:
+						NOT_REACHED();
+				}
+				break;
+
+			case WID_TT_MEASUREMENT_TOOL:
+				PlaceProc_Measure(tile);
 				break;
 
 			case WID_TT_PLACE_SIGN: // Place sign button
@@ -274,17 +345,11 @@ struct TerraformToolbarWindow : Window {
 				case DDSP_RAISE_AND_LEVEL_AREA:
 				case DDSP_LOWER_AND_LEVEL_AREA:
 				case DDSP_LEVEL_AREA:
+				case DDSP_BUY_LAND:
 					GUIPlaceProcDragXY(select_proc, start_tile, end_tile);
 					break;
-				case DDSP_BUILD_OBJECT:
-					if (!_settings_game.construction.freeform_edges) {
-						/* When end_tile is MP_VOID, the error tile will not be visible to the
-							* user. This happens when terraforming at the southern border. */
-						if (TileX(end_tile) == MapMaxX()) end_tile += TileDiffXY(-1, 0);
-						if (TileY(end_tile) == MapMaxY()) end_tile += TileDiffXY(0, -1);
-					}
-					Command<CMD_BUILD_OBJECT_AREA>::Post(STR_ERROR_CAN_T_PURCHASE_THIS_LAND, CcPlaySound_CONSTRUCTION_RAIL,
-						end_tile, start_tile, OBJECT_OWNED_LAND, 0, (_ctrl_pressed ? true : false));
+				case DDSP_MEASURE:
+					//nothing to do, just draw a tooltip
 					break;
 			}
 		}
@@ -318,6 +383,7 @@ static Hotkey terraform_hotkeys[] = {
 	Hotkey('D' | WKC_GLOBAL_HOTKEY, "dynamite", WID_TT_DEMOLISH),
 	Hotkey('U', "buyland", WID_TT_BUY_LAND),
 	Hotkey('I', "trees", WID_TT_PLANT_TREES),
+	Hotkey('R' | WKC_SHIFT, "ruler", WID_TT_MEASUREMENT_TOOL),
 	Hotkey('O', "placesign", WID_TT_PLACE_SIGN),
 	Hotkey('P', "placeobject", WID_TT_PLACE_OBJECT),
 	HOTKEY_LIST_END
@@ -346,6 +412,8 @@ static const NWidgetPart _nested_terraform_widgets[] = {
 								SetFill(0, 1), SetDataTip(SPR_IMG_BUY_LAND, STR_LANDSCAPING_TOOLTIP_PURCHASE_LAND),
 		NWidget(WWT_PUSHIMGBTN, COLOUR_DARK_GREEN, WID_TT_PLANT_TREES), SetMinimalSize(22, 22),
 								SetFill(0, 1), SetDataTip(SPR_IMG_PLANTTREES, STR_SCENEDIT_TOOLBAR_PLANT_TREES),
+		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_TT_MEASUREMENT_TOOL), SetMinimalSize(22,22),
+								SetFill(0, 1), SetDataTip(SPR_IMG_QUERY, STR_LANDSCAPING_TOOLTIP_RULER_TOOL),
 		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_TT_PLACE_SIGN), SetMinimalSize(22, 22),
 								SetFill(0, 1), SetDataTip(SPR_IMG_SIGN, STR_SCENEDIT_TOOLBAR_PLACE_SIGN),
 		NWidget(NWID_SELECTION, INVALID_COLOUR, WID_TT_SHOW_PLACE_OBJECT),
@@ -379,7 +447,7 @@ Window *ShowTerraformToolbar(Window *link)
 	}
 
 	/* Delete the terraform toolbar to place it again. */
-	CloseWindowById(WC_SCEN_LAND_GEN, 0, true);
+	DeleteWindowById(WC_SCEN_LAND_GEN, 0, true);
 	w = AllocateWindowDescFront<TerraformToolbarWindow>(&_terraform_desc, 0);
 	/* Align the terraform toolbar under the main toolbar. */
 	w->top -= w->height;
@@ -401,15 +469,15 @@ static byte _terraform_size = 1;
  * @todo : Incorporate into game itself to allow for ingame raising/lowering of
  *         larger chunks at the same time OR remove altogether, as we have 'level land' ?
  * @param tile The top-left tile where the terraforming will start
- * @param mode true for raising, false for lowering land
+ * @param mode 1 for raising, 0 for lowering land
  */
-static void CommonRaiseLowerBigLand(TileIndex tile, bool mode)
+static void CommonRaiseLowerBigLand(TileIndex tile, int mode)
 {
 	if (_terraform_size == 1) {
 		StringID msg =
 			mode ? STR_ERROR_CAN_T_RAISE_LAND_HERE : STR_ERROR_CAN_T_LOWER_LAND_HERE;
 
-		Command<CMD_TERRAFORM_LAND>::Post(msg, CcTerraform, tile, SLOPE_N, mode);
+		DoCommandP(tile, SLOPE_N, (uint32)mode, CMD_TERRAFORM_LAND | CMD_MSG(msg), CcTerraform);
 	} else {
 		assert(_terraform_size != 0);
 		TileArea ta(tile, _terraform_size, _terraform_size);
@@ -436,7 +504,7 @@ static void CommonRaiseLowerBigLand(TileIndex tile, bool mode)
 
 		for (TileIndex tile2 : ta) {
 			if (TileHeight(tile2) == h) {
-				Command<CMD_TERRAFORM_LAND>::Post(tile2, SLOPE_N, mode);
+				DoCommandP(tile2, SLOPE_N, (uint32)mode, CMD_TERRAFORM_LAND);
 			}
 		}
 	}
@@ -480,6 +548,9 @@ static const NWidgetPart _nested_scen_edit_land_gen_widgets[] = {
 			NWidget(WWT_PUSHIMGBTN, COLOUR_GREY, WID_ETT_PLACE_OBJECT), SetMinimalSize(23, 22),
 										SetFill(0, 1), SetDataTip(SPR_IMG_TRANSMITTER, STR_SCENEDIT_TOOLBAR_PLACE_OBJECT),
 			NWidget(NWID_SPACER), SetFill(1, 0),
+			NWidget(WWT_IMGBTN, COLOUR_GREY, WID_ETT_PLACE_HOUSE), SetMinimalSize(23, 22),
+										SetFill(0, 1), SetDataTip(SPR_IMG_TOWN, STR_SCENEDIT_TOOLBAR_PLACE_HOUSE),
+			NWidget(NWID_SPACER), SetFill(1, 0),
 		EndContainer(),
 		NWidget(NWID_HORIZONTAL),
 			NWidget(NWID_SPACER), SetFill(1, 0),
@@ -498,7 +569,12 @@ static const NWidgetPart _nested_scen_edit_land_gen_widgets[] = {
 		NWidget(WWT_TEXTBTN, COLOUR_GREY, WID_ETT_NEW_SCENARIO), SetMinimalSize(160, 12),
 								SetFill(1, 0), SetDataTip(STR_TERRAFORM_SE_NEW_WORLD, STR_TERRAFORM_TOOLTIP_GENERATE_RANDOM_LAND), SetPadding(0, 2, 0, 2),
 		NWidget(WWT_TEXTBTN, COLOUR_GREY, WID_ETT_RESET_LANDSCAPE), SetMinimalSize(160, 12),
-								SetFill(1, 0), SetDataTip(STR_TERRAFORM_RESET_LANDSCAPE, STR_TERRAFORM_RESET_LANDSCAPE_TOOLTIP), SetPadding(1, 2, 2, 2),
+								SetFill(1, 0), SetDataTip(STR_TERRAFORM_RESET_LANDSCAPE, STR_TERRAFORM_RESET_LANDSCAPE_TOOLTIP), SetPadding(1, 2, 0, 2),
+		NWidget(NWID_SELECTION, INVALID_COLOUR, WID_ETT_SHOW_PUBLIC_ROADS),
+			NWidget(WWT_TEXTBTN, COLOUR_GREY, WID_ETT_PUBLIC_ROADS), SetMinimalSize(160, 12),
+									SetFill(1, 0), SetDataTip(STR_TERRAFORM_PUBLIC_ROADS, STR_TERRAFORM_PUBLIC_ROADS_TOOLTIP), SetPadding(1, 2, 0, 2),
+		EndContainer(),
+		NWidget(NWID_SPACER), SetMinimalSize(0, 2),
 	EndContainer(),
 };
 
@@ -525,7 +601,7 @@ static void ResetLandscapeConfirmationCallback(Window *w, bool confirmed)
 		/* Delete all station signs */
 		for (BaseStation *st : BaseStation::Iterate()) {
 			/* There can be buoys, remove them */
-			if (IsBuoyTile(st->xy)) Command<CMD_LANDSCAPE_CLEAR>::Do(DC_EXEC | DC_BANKRUPT, st->xy);
+			if (IsBuoyTile(st->xy)) DoCommand(st->xy, 0, 0, DC_EXEC | DC_BANKRUPT, CMD_LANDSCAPE_CLEAR);
 			if (!st->IsInUse()) delete st;
 		}
 
@@ -543,8 +619,7 @@ struct ScenarioEditorLandscapeGenerationWindow : Window {
 	ScenarioEditorLandscapeGenerationWindow(WindowDesc *desc, WindowNumber window_number) : Window(desc)
 	{
 		this->CreateNestedTree();
-		NWidgetStacked *show_desert = this->GetWidget<NWidgetStacked>(WID_ETT_SHOW_PLACE_DESERT);
-		show_desert->SetDisplayedPlane(_settings_game.game_creation.landscape == LT_TROPIC ? 0 : SZSP_NONE);
+		this->SetButtonStates();
 		this->FinishInitNested(window_number);
 		this->last_user_action = WIDGET_LIST_END;
 	}
@@ -622,6 +697,10 @@ struct ScenarioEditorLandscapeGenerationWindow : Window {
 				ShowBuildObjectPicker();
 				break;
 
+			case WID_ETT_PLACE_HOUSE: // Place house button
+				ShowBuildHousePicker();
+				break;
+
 			case WID_ETT_INCREASE_SIZE:
 			case WID_ETT_DECREASE_SIZE: { // Increase/Decrease terraform size
 				int size = (widget == WID_ETT_INCREASE_SIZE) ? 1 : -1;
@@ -644,6 +723,12 @@ struct ScenarioEditorLandscapeGenerationWindow : Window {
 			case WID_ETT_RESET_LANDSCAPE: // Reset landscape
 				ShowQuery(STR_QUERY_RESET_LANDSCAPE_CAPTION, STR_RESET_LANDSCAPE_CONFIRMATION_TEXT, nullptr, ResetLandscapeConfirmationCallback);
 				break;
+
+			case WID_ETT_PUBLIC_ROADS: { // Build public roads
+				extern void GeneratePublicRoads();
+				GeneratePublicRoads();
+				break;
+			}
 
 			default: NOT_REACHED();
 		}
@@ -668,11 +753,11 @@ struct ScenarioEditorLandscapeGenerationWindow : Window {
 				break;
 
 			case WID_ETT_LOWER_LAND: // Lower land button
-				CommonRaiseLowerBigLand(tile, false);
+				CommonRaiseLowerBigLand(tile, 0);
 				break;
 
 			case WID_ETT_RAISE_LAND: // Raise land button
-				CommonRaiseLowerBigLand(tile, true);
+				CommonRaiseLowerBigLand(tile, 1);
 				break;
 
 			case WID_ETT_LEVEL_LAND: // Level land button
@@ -707,6 +792,7 @@ struct ScenarioEditorLandscapeGenerationWindow : Window {
 				case DDSP_LOWER_AND_LEVEL_AREA:
 				case DDSP_LEVEL_AREA:
 				case DDSP_DEMOLISH_AREA:
+				case DDSP_BUY_LAND:
 					GUIPlaceProcDragXY(select_proc, start_tile, end_tile);
 					break;
 			}
@@ -717,6 +803,27 @@ struct ScenarioEditorLandscapeGenerationWindow : Window {
 	{
 		this->RaiseButtons();
 		this->SetDirty();
+	}
+
+	/**
+	 * Some data on this window has become invalid.
+	 * @param data Information about the changed data.
+	 * @param gui_scope Whether the call is done from GUI scope. You may not do everything when not in GUI scope. See #InvalidateWindowData() for details.
+	 */
+	void OnInvalidateData(int data = 0, bool gui_scope = true) override
+	{
+		if (!gui_scope) return;
+
+		this->SetButtonStates();
+		this->ReInit();
+	}
+
+	void SetButtonStates()
+	{
+		NWidgetStacked *show_desert = this->GetWidget<NWidgetStacked>(WID_ETT_SHOW_PLACE_DESERT);
+		show_desert->SetDisplayedPlane(_settings_game.game_creation.landscape == LT_TROPIC ? 0 : SZSP_NONE);
+		NWidgetStacked *show_public_roads = this->GetWidget<NWidgetStacked>(WID_ETT_SHOW_PUBLIC_ROADS);
+		show_public_roads->SetDisplayedPlane(_settings_game.game_creation.build_public_roads != 0 ? 0 : SZSP_NONE);
 	}
 
 	static HotkeyList hotkeys;
@@ -743,6 +850,7 @@ static Hotkey terraform_editor_hotkeys[] = {
 	Hotkey('R', "rocky", WID_ETT_PLACE_ROCKS),
 	Hotkey('T', "desert", WID_ETT_PLACE_DESERT),
 	Hotkey('O', "object", WID_ETT_PLACE_OBJECT),
+	Hotkey('H', "house", WID_ETT_PLACE_HOUSE),
 	HOTKEY_LIST_END
 };
 

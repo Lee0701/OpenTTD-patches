@@ -63,6 +63,12 @@ static const RoadTypeInfo _original_roadtypes[] = {
 		/* flags */
 		ROTFB_TOWN_BUILD,
 
+		/* extra flags */
+		RXTFB_NONE,
+
+		/* collision mode */
+		RTCM_NORMAL,
+
 		/* cost multiplier */
 		8,
 
@@ -142,6 +148,12 @@ static const RoadTypeInfo _original_roadtypes[] = {
 
 		/* flags */
 		ROTFB_CATENARY | ROTFB_NO_HOUSES,
+
+		/* extra flags */
+		RXTFB_NONE,
+
+		/* collision mode */
+		RTCM_NORMAL,
 
 		/* cost multiplier */
 		16,

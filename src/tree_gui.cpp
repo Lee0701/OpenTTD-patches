@@ -19,7 +19,7 @@
 #include "strings_func.h"
 #include "zoom_func.h"
 #include "tree_map.h"
-#include "tree_cmd.h"
+#include "viewport_func.h"
 
 #include "widgets/tree_widget.h"
 
@@ -30,21 +30,8 @@
 #include "safeguards.h"
 
 void PlaceTreesRandomly();
+void RemoveAllTrees();
 uint PlaceTreeGroupAroundTile(TileIndex tile, TreeType treetype, uint radius, uint count, bool set_zone);
-
-/** Tree Sprites with their palettes */
-const PalSpriteID tree_sprites[] = {
-	{ 1621, PAL_NONE }, { 1635, PAL_NONE }, { 1656, PAL_NONE }, { 1579, PAL_NONE },
-	{ 1607, PAL_NONE }, { 1593, PAL_NONE }, { 1614, PAL_NONE }, { 1586, PAL_NONE },
-	{ 1663, PAL_NONE }, { 1677, PAL_NONE }, { 1691, PAL_NONE }, { 1705, PAL_NONE },
-	{ 1711, PAL_NONE }, { 1746, PAL_NONE }, { 1753, PAL_NONE }, { 1732, PAL_NONE },
-	{ 1739, PAL_NONE }, { 1718, PAL_NONE }, { 1725, PAL_NONE }, { 1760, PAL_NONE },
-	{ 1838, PAL_NONE }, { 1844, PAL_NONE }, { 1866, PAL_NONE }, { 1871, PAL_NONE },
-	{ 1899, PAL_NONE }, { 1935, PAL_NONE }, { 1928, PAL_NONE }, { 1915, PAL_NONE },
-	{ 1887, PAL_NONE }, { 1908, PAL_NONE }, { 1824, PAL_NONE }, { 1943, PAL_NONE },
-	{ 1950, PAL_NONE }, { 1957, PALETTE_TO_GREEN }, { 1964, PALETTE_TO_RED },        { 1971, PAL_NONE },
-	{ 1978, PAL_NONE }, { 1985, PALETTE_TO_RED, },  { 1992, PALETTE_TO_PALE_GREEN }, { 1999, PALETTE_TO_YELLOW }, { 2006, PALETTE_TO_RED }
-};
 
 /**
  * Calculate the maximum size of all tree sprites
@@ -64,8 +51,8 @@ static Dimension GetMaxTreeSpriteSize()
 	offset.y = 0;
 
 	for (int i = base; i < base + count; i++) {
-		if (i >= (int)lengthof(tree_sprites)) return size;
-		this_size = GetSpriteSize(tree_sprites[i].sprite, &offset);
+		if (i >= (int)lengthof(_tree_sprites)) return size;
+		this_size = GetSpriteSize(_tree_sprites[i].sprite, &offset);
 		size.width = std::max<int>(size.width, 2 * std::max<int>(this_size.width, -offset.x));
 		size.height = std::max<int>(size.height, std::max<int>(this_size.height, -offset.y));
 	}
@@ -103,7 +90,7 @@ class BuildTreesWindow : public Window
 		if (this->tree_to_plant >= 0) {
 			/* Activate placement */
 			if (_settings_client.sound.confirm) SndPlayFx(SND_15_BEEP);
-			SetObjectToPlace(SPR_CURSOR_TREE, PAL_NONE, HT_RECT, this->window_class, this->window_number);
+			SetObjectToPlace(SPR_CURSOR_TREE, PAL_NONE, HT_RECT | HT_DIAGONAL, this->window_class, this->window_number);
 			this->tree_to_plant = current_tree; // SetObjectToPlace may call ResetObjectToPlace which may reset tree_to_plant to -1
 		} else {
 			/* Deactivate placement */
@@ -169,7 +156,7 @@ public:
 		if (widget >= WID_BT_TYPE_BUTTON_FIRST) {
 			const int index = widget - WID_BT_TYPE_BUTTON_FIRST;
 			/* Trees "grow" in the centre on the bottom line of the buttons */
-			DrawSprite(tree_sprites[index].sprite, tree_sprites[index].pal, CenterBounds(r.left, r.right, 0), r.bottom - ScaleGUITrad(BUTTON_BOTTOM_OFFSET));
+			DrawSprite(_tree_sprites[index].sprite, _tree_sprites[index].pal, CenterBounds(r.left, r.right, 0), r.bottom - ScaleGUITrad(BUTTON_BOTTOM_OFFSET));
 		}
 	}
 
@@ -184,7 +171,13 @@ public:
 			case WID_BT_MANY_RANDOM: // place trees randomly over the landscape
 				if (_settings_client.sound.confirm) SndPlayFx(SND_15_BEEP);
 				PlaceTreesRandomly();
-				MarkWholeScreenDirty();
+				MarkWholeNonMapViewportsDirty();
+				break;
+
+			case WID_BT_REMOVE_ALL: // remove all trees over the landscape
+				if (_settings_client.sound.confirm) SndPlayFx(SND_15_BEEP);
+				RemoveAllTrees();
+				MarkWholeNonMapViewportsDirty();
 				break;
 
 			case WID_BT_MODE_NORMAL:
@@ -231,7 +224,7 @@ public:
 			TileIndex tile = TileVirtXY(pt.x, pt.y);
 
 			if (this->mode == PM_NORMAL) {
-				Command<CMD_PLANT_TREE>::Post(tile, tile, this->tree_to_plant);
+				DoCommandP(tile, this->tree_to_plant, tile, CMD_PLANT_TREE);
 			} else {
 				this->DoPlantForest(tile);
 			}
@@ -241,7 +234,7 @@ public:
 	void OnPlaceMouseUp(ViewportPlaceMethod select_method, ViewportDragDropSelectionProcess select_proc, Point pt, TileIndex start_tile, TileIndex end_tile) override
 	{
 		if (_game_mode != GM_EDITOR && this->mode == PM_NORMAL && pt.x != -1 && select_proc == DDSP_PLANT_TREES) {
-			Command<CMD_PLANT_TREE>::Post(STR_ERROR_CAN_T_PLANT_TREE_HERE, end_tile, start_tile, this->tree_to_plant);
+			DoCommandP(end_tile, this->tree_to_plant | ((_ctrl_pressed ? 1 : 0) << 8), start_tile, CMD_PLANT_TREE | CMD_MSG(STR_ERROR_CAN_T_PLANT_TREE_HERE));
 		}
 	}
 
@@ -310,6 +303,8 @@ static const NWidgetPart _nested_build_trees_widgets[] = {
 					EndContainer(),
 					NWidget(NWID_SPACER), SetMinimalSize(0, 1),
 					NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_BT_MANY_RANDOM), SetDataTip(STR_TREES_RANDOM_TREES_BUTTON, STR_TREES_RANDOM_TREES_TOOLTIP),
+					NWidget(NWID_SPACER), SetMinimalSize(0, 1),
+					NWidget(WWT_PUSHTXTBTN, COLOUR_GREY, WID_BT_REMOVE_ALL), SetDataTip(STR_TREES_REMOVE_TREES_BUTTON, STR_TREES_REMOVE_TREES_TOOLTIP),
 				EndContainer(),
 			EndContainer(),
 		EndContainer(),

@@ -20,7 +20,9 @@ TrackBits GetReservedTrackbits(TileIndex t);
 void SetRailStationPlatformReservation(TileIndex start, DiagDirection dir, bool b);
 
 bool TryReserveRailTrack(TileIndex tile, Track t, bool trigger_stations = true);
+bool TryReserveRailTrackdir(const Train *v, TileIndex tile, Trackdir td, bool trigger_stations = true);
 void UnreserveRailTrack(TileIndex tile, Track t);
+void UnreserveRailTrackdir(TileIndex tile, Trackdir td);
 
 /** This struct contains information about the end of a reserved path. */
 struct PBSTileInfo {
@@ -42,11 +44,136 @@ struct PBSTileInfo {
 	PBSTileInfo(TileIndex _t, Trackdir _td, bool _okay) : tile(_t), trackdir(_td), okay(_okay) {}
 };
 
-PBSTileInfo FollowTrainReservation(const Train *v, Vehicle **train_on_res = nullptr);
+struct PBSWaitingPositionRestrictedSignalInfo {
+	TileIndex tile = INVALID_TILE;
+	Trackdir  trackdir = INVALID_TRACKDIR;
+};
+
+enum TrainReservationLookAheadItemType : byte {
+	TRLIT_STATION                = 0,     ///< Station/waypoint
+	TRLIT_REVERSE                = 1,     ///< Reverse behind signal
+	TRLIT_TRACK_SPEED            = 2,     ///< Track or bridge speed limit
+	TRLIT_SPEED_RESTRICTION      = 3,     ///< Speed restriction
+	TRLIT_SIGNAL                 = 4,     ///< Signal
+	TRLIT_CURVE_SPEED            = 5,     ///< Curve speed limit
+};
+
+enum TrainReservationSignalLookAheadItemFlags {
+	TRSLAI_NO_ASPECT_INC   = 0,           ///< This signal does not increase the signal aspect (e.g. banner repeater)
+	TRSLAI_NEXT_ONLY       = 1,           ///< This signal only permits lookahead up to the next physical signal, even if that has TRSLAI_NO_ASPECT_INC (e.g. shunt)
+	TRSLAI_COMBINED        = 2,           ///< This signal is a combined normal/shunt signal, special handling
+	TRSLAI_COMBINED_SHUNT  = 3,           ///< This signal is a combined normal/shunt signal, in shunt mode
+};
+
+struct TrainReservationLookAheadItem {
+	int32 start;
+	int32 end;
+	int16 z_pos;
+	uint16 data_id;
+	uint16 data_aux;
+	TrainReservationLookAheadItemType type;
+};
+
+struct TrainReservationLookAheadCurve {
+	int32 position;
+	DirDiff dir_diff;
+};
+
+enum TrainReservationLookAheadFlags {
+	TRLF_TB_EXIT_FREE      = 0,           ///< Reservation ends at signalled tunnel/bridge entrance and the corresponding exit is free, but may not be reserved
+	TRLF_DEPOT_END         = 1,           ///< Reservation ends at a depot
+	TRLF_APPLY_ADVISORY    = 2,           ///< Apply advisory speed limit on next iteration
+	TRLF_CHUNNEL           = 3,           ///< Reservation ends at a signalled chunnel entrance
+};
+
+struct TrainReservationLookAhead {
+	TileIndex reservation_end_tile;       ///< Tile the reservation ends.
+	Trackdir  reservation_end_trackdir;   ///< The reserved trackdir on the end tile.
+	int32 current_position;               ///< Current position of the train on the reservation
+	int32 reservation_end_position;       ///< Position of the end of the reservation
+	int32 lookahead_end_position;         ///< Position of the end of the reservation within the lookahead distance
+	int32 next_extend_position;           ///< Next position to try extending the reservation at the sighting distance of the next mid-reservation signal
+	int16 reservation_end_z;              ///< The z coordinate of the reservation end
+	int16 tunnel_bridge_reserved_tiles;   ///< How many tiles a reservation into the tunnel/bridge currently extends into the wormhole
+	uint16 flags;                         ///< Flags (TrainReservationLookAheadFlags)
+	uint16 speed_restriction;
+	std::deque<TrainReservationLookAheadItem> items;
+	std::deque<TrainReservationLookAheadCurve> curves;
+	int32 cached_zpos = 0;                ///< Cached z position as used in TrainDecelerationStats
+	uint8 zpos_refresh_remaining = 0;     ///< Remaining position updates before next refresh of cached_zpos
+
+	int32 RealEndPosition() const
+	{
+		return this->reservation_end_position - (this->tunnel_bridge_reserved_tiles * TILE_SIZE);
+	}
+
+	void AddStation(int tiles, StationID id, int16 z_pos)
+	{
+		int end = this->RealEndPosition();
+		this->items.push_back({ end, end + (((int)TILE_SIZE) * tiles), z_pos, id, 0, TRLIT_STATION });
+	}
+
+	void AddReverse(int16 z_pos)
+	{
+		int end = this->RealEndPosition();
+		this->items.push_back({ end, end, z_pos, 0, 0, TRLIT_REVERSE });
+	}
+
+	void AddTrackSpeedLimit(uint16 speed, int offset, int duration, int16 z_pos)
+	{
+		int end = this->RealEndPosition();
+		this->items.push_back({ end + offset, end + offset + duration, z_pos, speed, 0, TRLIT_TRACK_SPEED });
+	}
+
+	void AddSpeedRestriction(uint16 speed, int offset, int duration, int16 z_pos)
+	{
+		int end = this->RealEndPosition();
+		this->items.push_back({ end + offset, end + offset + duration, z_pos, speed, 0, TRLIT_SPEED_RESTRICTION });
+		this->speed_restriction = speed;
+	}
+
+	void AddSignal(uint16 target_speed, int offset, int16 z_pos, uint16 flags)
+	{
+		int end = this->RealEndPosition();
+		this->items.push_back({ end + offset, end + offset, z_pos, target_speed, flags, TRLIT_SIGNAL });
+	}
+
+	void AddCurveSpeedLimit(uint16 target_speed, int offset, int16 z_pos)
+	{
+		int end = this->RealEndPosition();
+		this->items.push_back({ end + offset, end + offset, z_pos, target_speed, 0, TRLIT_CURVE_SPEED });
+	}
+
+	void SetNextExtendPosition();
+
+	void SetNextExtendPositionIfUnset()
+	{
+		if (this->next_extend_position <= this->current_position) this->SetNextExtendPosition();
+	}
+};
+
+/** Flags for FollowTrainReservation */
+enum FollowTrainReservationFlags {
+	FTRF_NONE                 = 0,        ///< No flags
+	FTRF_IGNORE_LOOKAHEAD     = 0x01,     ///< No use of cached lookahead
+	FTRF_OKAY_UNUSED          = 0x02,     ///< 'okay' return value is not used
+};
+DECLARE_ENUM_AS_BIT_SET(FollowTrainReservationFlags)
+
+bool ValidateLookAhead(const Train *v);
+PBSTileInfo FollowTrainReservation(const Train *v, Vehicle **train_on_res = nullptr, FollowTrainReservationFlags flags = FTRF_NONE);
+void ApplyAvailableFreeTunnelBridgeTiles(TrainReservationLookAhead *lookahead, int free_tiles, TileIndex tile, TileIndex end);
+void TryCreateLookAheadForTrainInTunnelBridge(Train *t);
+void SetTrainReservationLookaheadEnd(Train *v);
+void FillTrainReservationLookAhead(Train *v);
+bool TrainReservationPassesThroughTile(const Train *v, TileIndex search_tile);
 bool IsSafeWaitingPosition(const Train *v, TileIndex tile, Trackdir trackdir, bool include_line_end, bool forbid_90deg = false);
-bool IsWaitingPositionFree(const Train *v, TileIndex tile, Trackdir trackdir, bool forbid_90deg = false);
+bool IsWaitingPositionFree(const Train *v, TileIndex tile, Trackdir trackdir, bool forbid_90deg = false, PBSWaitingPositionRestrictedSignalInfo *restricted_signal_info = nullptr);
 
 Train *GetTrainForReservation(TileIndex tile, Track track);
+CommandCost CheckTrainReservationPreventsTrackModification(TileIndex tile, Track track);
+CommandCost CheckTrainReservationPreventsTrackModification(const Train *v);
+CommandCost CheckTrainInTunnelBridgePreventsTrackModification(TileIndex start, TileIndex end);
 
 /**
  * Check whether some of tracks is reserved on a tile.

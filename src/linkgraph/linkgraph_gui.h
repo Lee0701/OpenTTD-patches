@@ -23,15 +23,15 @@
  * Only the cargo type of the most saturated linkgraph is taken into account.
  */
 struct LinkProperties {
-	LinkProperties() : cargo(CT_INVALID), capacity(0), usage(0), planned(0), shared(false) {}
+	LinkProperties() : capacity(0), usage(0), planned(0), cargo(CT_INVALID), time(0), shared(false) {}
 
 	/** Return the usage of the link to display. */
 	uint Usage() const { return std::max(this->usage, this->planned); }
 
-	CargoID cargo; ///< Cargo type of the link.
 	uint capacity; ///< Capacity of the link.
 	uint usage;    ///< Actual usage of the link.
 	uint planned;  ///< Planned usage of the link.
+	CargoID cargo; ///< Cargo type of the link.
 	uint32 time;   ///< Travel time of the link.
 	bool shared;   ///< If this is a shared link to be drawn dashed.
 };
@@ -42,9 +42,22 @@ struct LinkProperties {
  */
 class LinkGraphOverlay {
 public:
-	typedef std::map<StationID, LinkProperties> StationLinkMap;
-	typedef std::map<StationID, StationLinkMap> LinkMap;
-	typedef std::vector<std::pair<StationID, uint> > StationSupplyList;
+	struct StationSupplyInfo {
+		StationID id;
+		uint quantity;
+		Point pt;
+	};
+
+	struct LinkInfo {
+		StationID from_id;
+		StationID to_id;
+		Point from_pt;
+		Point to_pt;
+		LinkProperties prop;
+	};
+
+	typedef std::vector<StationSupplyInfo> StationSupplyList;
+	typedef std::vector<LinkInfo> LinkList;
 
 	static const uint8 LINK_COLOURS[][12];
 
@@ -56,13 +69,17 @@ public:
 	 * @param company_mask Bitmask of companies to be shown.
 	 * @param scale Desired thickness of lines and size of station dots.
 	 */
-	LinkGraphOverlay(Window *w, uint wid, CargoTypes cargo_mask, uint32 company_mask, uint scale) :
-			window(w), widget_id(wid), cargo_mask(cargo_mask), company_mask(company_mask), scale(scale)
+	LinkGraphOverlay(Window *w, uint wid, CargoTypes cargo_mask, CompanyMask company_mask, uint scale) :
+			window(w), widget_id(wid), cargo_mask(cargo_mask), company_mask(company_mask), scale(scale), dirty(true)
 	{}
 
-	void Draw(const DrawPixelInfo *dpi);
+	void RebuildCache(bool incremental = false);
+	bool CacheStillValid() const;
+	void MarkStationViewportLinksDirty(const Station *st);
+	void PrepareDraw();
+	void Draw(const DrawPixelInfo *dpi) const;
 	void SetCargoMask(CargoTypes cargo_mask);
-	void SetCompanyMask(uint32 company_mask);
+	void SetCompanyMask(CompanyMask company_mask);
 
 	bool ShowTooltip(Point pt, TooltipCloseCondition close_cond);
 
@@ -73,31 +90,32 @@ public:
 	CargoTypes GetCargoMask() { return this->cargo_mask; }
 
 	/** Get a bitmask of the currently shown companies. */
-	uint32 GetCompanyMask() { return this->company_mask; }
+	CompanyMask GetCompanyMask() { return this->company_mask; }
 
 protected:
 	Window *window;                    ///< Window to be drawn into.
 	const uint widget_id;              ///< ID of Widget in Window to be drawn to.
 	CargoTypes cargo_mask;             ///< Bitmask of cargos to be displayed.
-	uint32 company_mask;               ///< Bitmask of companies to be displayed.
-	LinkMap cached_links;              ///< Cache for links to reduce recalculation.
+	CompanyMask company_mask;          ///< Bitmask of companies to be displayed.
+	LinkList cached_links;             ///< Cache for links to reduce recalculation.
 	StationSupplyList cached_stations; ///< Cache for stations to be drawn.
+	Rect cached_region;                ///< Region covered by cached_links and cached_stations.
 	uint scale;                        ///< Width of link lines.
 	bool dirty;                        ///< Set if overlay should be rebuilt.
+	uint64 last_update_number = 0;     ///< Last window update number
 
 	Point GetStationMiddle(const Station *st) const;
 
-	void AddLinks(const Station *sta, const Station *stb);
+	void RefreshDrawCache();
 	void DrawLinks(const DrawPixelInfo *dpi) const;
 	void DrawStationDots(const DrawPixelInfo *dpi) const;
-	void DrawContent(Point pta, Point ptb, const LinkProperties &cargo) const;
+	void DrawContent(const DrawPixelInfo *dpi, Point pta, Point ptb, const LinkProperties &cargo) const;
 	bool IsLinkVisible(Point pta, Point ptb, const DrawPixelInfo *dpi, int padding = 0) const;
 	bool IsPointVisible(Point pt, const DrawPixelInfo *dpi, int padding = 0) const;
-	void GetWidgetDpi(DrawPixelInfo *dpi) const;
-	void RebuildCache();
+	void GetWidgetDpi(DrawPixelInfo *dpi, uint margin = 0) const;
 
-	static void AddStats(CargoID new_cargo, uint new_cap, uint new_usg, uint new_flow, uint32 time, bool new_shared, LinkProperties &cargo);
-	static void DrawVertex(int x, int y, int size, int colour, int border_colour);
+	static void AddStats(CargoID new_cargo, uint new_cap, uint new_usg, uint new_plan, uint32 time, bool new_shared, LinkProperties &cargo);
+	static void DrawVertex(const DrawPixelInfo *dpi, int x, int y, int size, int colour, int border_colour);
 };
 
 void ShowLinkGraphLegend();
@@ -118,6 +136,7 @@ public:
 
 private:
 	LinkGraphOverlay *overlay;
+	size_t num_cargo;
 
 	void UpdateOverlayCompanies();
 	void UpdateOverlayCargoes();

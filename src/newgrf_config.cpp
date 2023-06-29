@@ -27,18 +27,24 @@
 #include "fileio_func.h"
 #include "fios.h"
 
+#include "thread.h"
+#include <mutex>
+#include <condition_variable>
+#if defined(__MINGW32__)
+#include "3rdparty/mingw-std-threads/mingw.mutex.h"
+#include "3rdparty/mingw-std-threads/mingw.condition_variable.h"
+#endif
+
 #include "safeguards.h"
 
 
 /**
  * Create a new GRFConfig.
- * @param filename Set the filename of this GRFConfig to filename. The argument
- *   is copied so the original string isn't needed after the constructor.
+ * @param filename Set the filename of this GRFConfig to filename.
  */
-GRFConfig::GRFConfig(const char *filename) :
-	num_valid_params(lengthof(param))
+GRFConfig::GRFConfig(const std::string &filename) :
+	filename(filename), num_valid_params(lengthof(param))
 {
-	if (filename != nullptr) this->filename = stredup(filename);
 }
 
 /**
@@ -48,6 +54,7 @@ GRFConfig::GRFConfig(const char *filename) :
 GRFConfig::GRFConfig(const GRFConfig &config) :
 	ZeroedMemoryAllocator(),
 	ident(config.ident),
+	filename(config.filename),
 	name(config.name),
 	info(config.info),
 	url(config.url),
@@ -63,8 +70,7 @@ GRFConfig::GRFConfig(const GRFConfig &config) :
 {
 	MemCpyT<uint8>(this->original_md5sum, config.original_md5sum, lengthof(this->original_md5sum));
 	MemCpyT<uint32>(this->param, config.param, lengthof(this->param));
-	if (config.filename != nullptr) this->filename = stredup(config.filename);
-	if (config.error != nullptr) this->error = new GRFError(*config.error);
+	if (config.error != nullptr) this->error = std::make_unique<GRFError>(*config.error);
 	for (uint i = 0; i < config.param_info.size(); i++) {
 		if (config.param_info[i] == nullptr) {
 			this->param_info.push_back(nullptr);
@@ -77,12 +83,6 @@ GRFConfig::GRFConfig(const GRFConfig &config) :
 /** Cleanup a GRFConfig object. */
 GRFConfig::~GRFConfig()
 {
-	/* GCF_COPY as in NOT stredupped/alloced the filename */
-	if (!HasBit(this->flags, GCF_COPY)) {
-		free(this->filename);
-		delete this->error;
-	}
-
 	for (uint i = 0; i < this->param_info.size(); i++) delete this->param_info[i];
 }
 
@@ -105,7 +105,7 @@ void GRFConfig::CopyParams(const GRFConfig &src)
 const char *GRFConfig::GetName() const
 {
 	const char *name = GetGRFStringFromGRFText(this->name);
-	return StrEmpty(name) ? this->filename : name;
+	return StrEmpty(name) ? this->filename.c_str() : name;
 }
 
 /**
@@ -172,6 +172,8 @@ GRFConfig *_grfconfig;
 GRFConfig *_grfconfig_newgame;
 GRFConfig *_grfconfig_static;
 uint _missing_extra_graphics = 0;
+
+bool _grf_bug_too_many_strings = false;
 
 /**
  * Construct a new GRFError.
@@ -307,7 +309,7 @@ size_t GRFGetSizeOfDataSection(FILE *f)
 			/* Valid container version 2, get data section size. */
 			size_t offset = ((size_t)data[13] << 24) | ((size_t)data[12] << 16) | ((size_t)data[11] << 8) | (size_t)data[10];
 			if (offset >= 1 * 1024 * 1024 * 1024) {
-				Debug(grf, 0, "Unexpectedly large offset for NewGRF");
+				DEBUG(grf, 0, "Unexpectedly large offset for NewGRF");
 				/* Having more than 1 GiB of data is very implausible. Mostly because then
 				 * all pools in OpenTTD are flooded already. Or it's just Action C all over.
 				 * In any case, the offsets to graphics will likely not work either. */
@@ -320,6 +322,74 @@ size_t GRFGetSizeOfDataSection(FILE *f)
 	return SIZE_MAX;
 }
 
+struct GRFMD5SumState {
+	GRFConfig *config;
+	size_t size;
+	FILE *f;
+};
+
+static uint _grf_md5_parallel = 0;
+static uint _grf_md5_threads = 0;
+static std::mutex _grf_md5_lock;
+static std::vector<GRFMD5SumState> _grf_md5_pending;
+static std::condition_variable _grf_md5_full_cv;
+static std::condition_variable _grf_md5_empty_cv;
+static std::condition_variable _grf_md5_done_cv;
+static const uint GRF_MD5_PENDING_MAX = 8;
+
+static void CalcGRFMD5SumFromState(const GRFMD5SumState &state)
+{
+	Md5 checksum;
+	uint8 buffer[1024];
+	size_t len;
+	size_t size = state.size;
+	while ((len = fread(buffer, 1, (size > sizeof(buffer)) ? sizeof(buffer) : size, state.f)) != 0 && size != 0) {
+		size -= len;
+		checksum.Append(buffer, len);
+	}
+	checksum.Finish(state.config->ident.md5sum);
+
+	FioFCloseFile(state.f);
+}
+
+void CalcGRFMD5Thread()
+{
+	std::unique_lock<std::mutex> lk(_grf_md5_lock);
+	while (_grf_md5_parallel > 0 || !_grf_md5_pending.empty()) {
+		if (_grf_md5_pending.empty()) {
+			_grf_md5_empty_cv.wait(lk);
+		} else {
+			const bool full = _grf_md5_pending.size() == GRF_MD5_PENDING_MAX;
+			GRFMD5SumState state = _grf_md5_pending.back();
+			_grf_md5_pending.pop_back();
+			lk.unlock();
+			if (full) _grf_md5_full_cv.notify_one();
+			if (!_exit_game) CalcGRFMD5SumFromState(state);
+			lk.lock();
+		}
+	}
+	_grf_md5_threads--;
+	if (_grf_md5_threads == 0) {
+		_grf_md5_done_cv.notify_all();
+	}
+}
+
+void CalcGRFMD5ThreadingStart()
+{
+	_grf_md5_parallel = std::thread::hardware_concurrency();
+	if (_grf_md5_parallel <= 1) _grf_md5_parallel = 0;
+}
+
+void CalcGRFMD5ThreadingEnd()
+{
+	if (_grf_md5_parallel) {
+		std::unique_lock<std::mutex> lk(_grf_md5_lock);
+		_grf_md5_parallel = 0;
+		_grf_md5_empty_cv.notify_all();
+		_grf_md5_done_cv.wait(lk, []() { return _grf_md5_threads == 0; });
+	}
+}
+
 /**
  * Calculate the MD5 sum for a GRF, and store it in the config.
  * @param config GRF to compute.
@@ -328,13 +398,10 @@ size_t GRFGetSizeOfDataSection(FILE *f)
  */
 static bool CalcGRFMD5Sum(GRFConfig *config, Subdirectory subdir)
 {
-	FILE *f;
-	Md5 checksum;
-	uint8 buffer[1024];
-	size_t len, size;
+	size_t size;
 
 	/* open the file */
-	f = FioFOpenFile(config->filename, "rb", subdir, &size);
+	FILE *f = FioFOpenFile(config->filename, "rb", subdir, &size);
 	if (f == nullptr) return false;
 
 	long start = ftell(f);
@@ -346,14 +413,29 @@ static bool CalcGRFMD5Sum(GRFConfig *config, Subdirectory subdir)
 	}
 
 	/* calculate md5sum */
-	while ((len = fread(buffer, 1, (size > sizeof(buffer)) ? sizeof(buffer) : size, f)) != 0 && size != 0) {
-		size -= len;
-		checksum.Append(buffer, len);
+	GRFMD5SumState state { config, size, f };
+	if (_grf_md5_parallel == 0) {
+		CalcGRFMD5SumFromState(state);
+		return true;
 	}
-	checksum.Finish(config->ident.md5sum);
 
-	FioFCloseFile(f);
-
+	std::unique_lock<std::mutex> lk(_grf_md5_lock);
+	if (_grf_md5_pending.size() >= GRF_MD5_PENDING_MAX) {
+		_grf_md5_full_cv.wait(lk);
+	}
+	_grf_md5_pending.push_back(state);
+	bool notify_reader = (_grf_md5_pending.size() == 1); // queue was empty
+	if ((_grf_md5_threads == 0) || ((_grf_md5_pending.size() > 1) && (_grf_md5_threads < _grf_md5_parallel))) {
+		_grf_md5_threads++;
+		if (!StartNewThread(nullptr, "ottd:grf-md5", &CalcGRFMD5Thread)) {
+			_grf_md5_parallel = 0;
+			lk.unlock();
+			CalcGRFMD5Thread();
+			return true;
+		}
+	}
+	lk.unlock();
+	if (notify_reader) _grf_md5_empty_cv.notify_one();
 	return true;
 }
 
@@ -524,7 +606,7 @@ GRFListCompatibility IsGoodGRFConfigList(GRFConfig *grfconfig)
 			f = FindGRFConfig(c->ident.grfid, FGCM_COMPATIBLE, nullptr, c->version);
 			if (f != nullptr) {
 				md5sumToString(buf, lastof(buf), c->ident.md5sum);
-				Debug(grf, 1, "NewGRF {:08X} ({}) not found; checksum {}. Compatibility mode on", BSWAP32(c->ident.grfid), c->filename, buf);
+				DEBUG(grf, 1, "NewGRF %08X (%s) not found; checksum %s, name: '%s'. Compatibility mode on", BSWAP32(c->ident.grfid), c->GetDisplayPath(), buf, GetDefaultLangGRFStringFromGRFText(c->name));
 				if (!HasBit(c->flags, GCF_COMPATIBLE)) {
 					/* Preserve original_md5sum after it has been assigned */
 					SetBit(c->flags, GCF_COMPATIBLE);
@@ -538,21 +620,20 @@ GRFListCompatibility IsGoodGRFConfigList(GRFConfig *grfconfig)
 
 			/* No compatible grf was found, mark it as disabled */
 			md5sumToString(buf, lastof(buf), c->ident.md5sum);
-			Debug(grf, 0, "NewGRF {:08X} ({}) not found; checksum {}", BSWAP32(c->ident.grfid), c->filename, buf);
+			DEBUG(grf, 0, "NewGRF %08X (%s) not found; checksum %s, name: '%s'", BSWAP32(c->ident.grfid), c->GetDisplayPath(), buf, GetDefaultLangGRFStringFromGRFText(c->name));
 
 			c->status = GCS_NOT_FOUND;
 			res = GLC_NOT_FOUND;
 		} else {
 compatible_grf:
-			Debug(grf, 1, "Loading GRF {:08X} from {}", BSWAP32(f->ident.grfid), f->filename);
+			DEBUG(grf, 1, "Loading GRF %08X from %s", BSWAP32(f->ident.grfid), f->GetDisplayPath());
 			/* The filename could be the filename as in the savegame. As we need
 			 * to load the GRF here, we need the correct filename, so overwrite that
 			 * in any case and set the name and info when it is not set already.
 			 * When the GCF_COPY flag is set, it is certain that the filename is
 			 * already a local one, so there is no need to replace it. */
 			if (!HasBit(c->flags, GCF_COPY)) {
-				free(c->filename);
-				c->filename = stredup(f->filename);
+				c->filename = f->filename;
 				memcpy(c->ident.md5sum, f->ident.md5sum, sizeof(c->ident.md5sum));
 				c->name = f->name;
 				c->info = f->name;
@@ -583,6 +664,7 @@ int _skip_all_newgrf_scanning = 0;
 class GRFFileScanner : FileScanner {
 	std::chrono::steady_clock::time_point next_update; ///< The next moment we do update the screen.
 	uint num_scanned; ///< The number of GRFs we have scanned.
+	std::vector<GRFConfig *> grfs;
 
 public:
 	GRFFileScanner() : num_scanned(0)
@@ -600,8 +682,42 @@ public:
 			return 0;
 		}
 
+		CalcGRFMD5ThreadingStart();
 		GRFFileScanner fs;
+		fs.grfs.clear();
 		int ret = fs.Scan(".grf", NEWGRF_DIR);
+		CalcGRFMD5ThreadingEnd();
+
+		for (GRFConfig *c : fs.grfs) {
+			bool added = true;
+			if (_all_grfs == nullptr) {
+				_all_grfs = c;
+			} else {
+				/* Insert file into list at a position determined by its
+				 * name, so the list is sorted as we go along */
+				GRFConfig **pd, *d;
+				bool stop = false;
+				for (pd = &_all_grfs; (d = *pd) != nullptr; pd = &d->next) {
+					if (c->ident.grfid == d->ident.grfid && memcmp(c->ident.md5sum, d->ident.md5sum, sizeof(c->ident.md5sum)) == 0) added = false;
+					/* Because there can be multiple grfs with the same name, make sure we checked all grfs with the same name,
+					 *  before inserting the entry. So insert a new grf at the end of all grfs with the same name, instead of
+					 *  just after the first with the same name. Avoids doubles in the list. */
+					if (StrCompareIgnoreCase(c->GetName(), d->GetName()) <= 0) {
+						stop = true;
+					} else if (stop) {
+						break;
+					}
+				}
+				if (added) {
+					c->next = d;
+					*pd = c;
+				} else {
+					delete c;
+					ret--;
+				}
+			}
+		}
+
 		/* The number scanned and the number returned may not be the same;
 		 * duplicate NewGRFs and base sets are ignored in the return value. */
 		_settings_client.gui.last_newgrf_count = fs.num_scanned;
@@ -616,40 +732,16 @@ bool GRFFileScanner::AddFile(const std::string &filename, size_t basepath_length
 
 	GRFConfig *c = new GRFConfig(filename.c_str() + basepath_length);
 
-	bool added = true;
-	if (FillGRFDetails(c, false)) {
-		if (_all_grfs == nullptr) {
-			_all_grfs = c;
-		} else {
-			/* Insert file into list at a position determined by its
-			 * name, so the list is sorted as we go along */
-			GRFConfig **pd, *d;
-			bool stop = false;
-			for (pd = &_all_grfs; (d = *pd) != nullptr; pd = &d->next) {
-				if (c->ident.grfid == d->ident.grfid && memcmp(c->ident.md5sum, d->ident.md5sum, sizeof(c->ident.md5sum)) == 0) added = false;
-				/* Because there can be multiple grfs with the same name, make sure we checked all grfs with the same name,
-				 *  before inserting the entry. So insert a new grf at the end of all grfs with the same name, instead of
-				 *  just after the first with the same name. Avoids doubles in the list. */
-				if (strcasecmp(c->GetName(), d->GetName()) <= 0) {
-					stop = true;
-				} else if (stop) {
-					break;
-				}
-			}
-			if (added) {
-				c->next = d;
-				*pd = c;
-			}
-		}
-	} else {
-		added = false;
+	bool added = FillGRFDetails(c, false);
+	if (added) {
+		this->grfs.push_back(c);
 	}
 
 	this->num_scanned++;
 
 	const char *name = nullptr;
 	if (c->name != nullptr) name = GetGRFStringFromGRFText(c->name);
-	if (name == nullptr) name = c->filename;
+	if (name == nullptr) name = c->filename.c_str();
 	UpdateNewGRFScanStatus(this->num_scanned, name);
 	VideoDriver::GetInstance()->GameLoopPause();
 
@@ -670,7 +762,7 @@ bool GRFFileScanner::AddFile(const std::string &filename, size_t basepath_length
  */
 static bool GRFSorter(GRFConfig * const &c1, GRFConfig * const &c2)
 {
-	return strnatcmp(c1->GetName(), c2->GetName()) < 0;
+	return StrNaturalCompare(c1->GetName(), c2->GetName()) < 0;
 }
 
 /**
@@ -682,10 +774,10 @@ void DoScanNewGRFFiles(NewGRFScanCallback *callback)
 	ClearGRFConfigList(&_all_grfs);
 	TarScanner::DoScan(TarScanner::NEWGRF);
 
-	Debug(grf, 1, "Scanning for NewGRFs");
+	DEBUG(grf, 1, "Scanning for NewGRFs");
 	uint num = GRFFileScanner::DoScan();
 
-	Debug(grf, 1, "Scan complete, found {} files", num);
+	DEBUG(grf, 1, "Scan complete, found %d files", num);
 	if (num != 0 && _all_grfs != nullptr) {
 		/* Sort the linked list using quicksort.
 		 * For that we first have to make an array, then sort and
@@ -715,7 +807,7 @@ void DoScanNewGRFFiles(NewGRFScanCallback *callback)
 	InvalidateWindowData(WC_GAME_OPTIONS, WN_GAME_OPTIONS_NEWGRF_STATE, GOID_NEWGRF_RESCANNED, true);
 	if (!_exit_game && callback != nullptr) callback->OnNewGRFsScanned();
 
-	CloseWindowByClass(WC_MODAL_PROGRESS);
+	DeleteWindowByClass(WC_MODAL_PROGRESS);
 	SetModalProgress(false);
 	MarkWholeScreenDirty();
 }
@@ -802,5 +894,5 @@ char *GRFBuildParamList(char *dst, const GRFConfig *c, const char *last)
  */
 const char *GRFConfig::GetTextfile(TextfileType type) const
 {
-	return ::GetTextfile(type, NEWGRF_DIR, this->filename);
+	return ::GetTextfile(type, NEWGRF_DIR, this->filename.c_str());
 }

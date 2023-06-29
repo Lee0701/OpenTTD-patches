@@ -14,6 +14,7 @@
 #include "vehicle_type.h"
 #include "cargo_type.h"
 #include "track_type.h"
+#include "track_func.h"
 #include "tile_map.h"
 
 /** The returned bits of VehicleEnterTile. */
@@ -40,8 +41,8 @@ DECLARE_ENUM_AS_BIT_SET(VehicleEnterTileStatus)
 
 /** Tile information, used while rendering the tile */
 struct TileInfo {
-	uint x;         ///< X position of the tile in unit coordinates
-	uint y;         ///< Y position of the tile in unit coordinates
+	int x;          ///< X position of the tile in unit coordinates
+	int y;          ///< Y position of the tile in unit coordinates
 	Slope tileh;    ///< Slope of the tile
 	TileIndex tile; ///< Tile index
 	int z;          ///< Height
@@ -59,21 +60,41 @@ struct TileDesc {
 	StringID airport_name;      ///< Name of the airport
 	StringID airport_tile_name; ///< Name of the airport tile
 	const char *grf;            ///< newGRF used for the tile contents
-	uint64 dparam[2];           ///< Parameters of the \a str string
+	uint64 dparam[4];           ///< Parameters of the \a str string
 	StringID railtype;          ///< Type of rail on the tile.
+	StringID railtype2;         ///< Type of second rail on the tile.
 	uint16 rail_speed;          ///< Speed limit of rail (bridges and track)
+	uint16 rail_speed2;         ///< Speed limit of second rail (bridges and track)
 	StringID roadtype;          ///< Type of road on the tile.
 	uint16 road_speed;          ///< Speed limit of road (bridges and track)
 	StringID tramtype;          ///< Type of tram on the tile.
 	uint16 tram_speed;          ///< Speed limit of tram (bridges and track)
 };
 
+struct DrawTileProcParams {
+	int min_visible_height;
+	bool no_ground_tiles;
+};
+
 /**
  * Tile callback function signature for drawing a tile and its contents to the screen
  * @param ti Information about the tile to draw
  */
-typedef void DrawTileProc(TileInfo *ti);
-typedef int GetSlopeZProc(TileIndex tile, uint x, uint y);
+typedef void DrawTileProc(TileInfo *ti, DrawTileProcParams params);
+
+/**
+ * Tile callback function signature for obtaining the world \c Z coordinate of a given
+ * point of a tile.
+ *
+ * @param tile The queries tile for the Z coordinate.
+ * @param x World X coordinate in tile "units".
+ * @param y World Y coordinate in tile "units".
+ * @param ground_vehicle Whether to get the Z coordinate of the ground vehicle, or the ground.
+ * @return World Z coordinate at tile ground (vehicle) level, including slopes and foundations.
+ * @see GetSlopePixelZ
+ */
+typedef int GetSlopeZProc(TileIndex tile, uint x, uint y, bool ground_vehicle);
+
 typedef CommandCost ClearTileProc(TileIndex tile, DoCommandFlag flags);
 
 /**
@@ -161,7 +182,19 @@ struct TileTypeProcs {
 
 extern const TileTypeProcs * const _tile_type_procs[16];
 
+enum TileTrackStatusSubMode {
+	TTSSM_ROAD_RTT_MASK       =    0xFF,
+	TTSSM_ROAD_ROADTYPE_MASK  =  0xFF00,
+	TTSSM_NO_RED_SIGNALS      = 0x10000,
+};
+
 TrackStatus GetTileTrackStatus(TileIndex tile, TransportType mode, uint sub_mode, DiagDirection side = INVALID_DIAGDIR);
+
+inline TrackdirBits GetTileTrackdirBits(TileIndex tile, TransportType mode, uint sub_mode, DiagDirection side = INVALID_DIAGDIR)
+{
+	return TrackStatusToTrackdirBits(GetTileTrackStatus(tile, mode, sub_mode | TTSSM_NO_RED_SIGNALS, side));
+}
+
 VehicleEnterTileStatus VehicleEnterTile(Vehicle *v, TileIndex tile, int x, int y);
 void ChangeTileOwner(TileIndex tile, Owner old_owner, Owner new_owner);
 void GetTileDesc(TileIndex tile, TileDesc *td);
@@ -179,13 +212,6 @@ static inline void AddProducedCargo(TileIndex tile, CargoArray &produced)
 	AddProducedCargoProc *proc = _tile_type_procs[GetTileType(tile)]->add_produced_cargo_proc;
 	if (proc == nullptr) return;
 	proc(tile, produced);
-}
-
-static inline void AnimateTile(TileIndex tile)
-{
-	AnimateTileProc *proc = _tile_type_procs[GetTileType(tile)]->animate_tile_proc;
-	assert(proc != nullptr);
-	proc(tile);
 }
 
 static inline bool ClickTile(TileIndex tile)

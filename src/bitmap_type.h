@@ -10,6 +10,7 @@
 #ifndef BITMAP_TYPE_HPP
 #define BITMAP_TYPE_HPP
 
+#include "tilearea_type.h"
 #include <vector>
 
 /** Represents a tile area containing containing individually set tiles.
@@ -101,6 +102,11 @@ public:
 	{
 		return this->Contains(tile) && this->data[Index(tile)];
 	}
+
+	inline bool operator==(const BitmapTileArea &other) const
+	{
+		return TileArea::operator==(other) && this->data == other.data;
+	}
 };
 
 /** Iterator to iterate over all tiles belonging to a bitmaptilearea. */
@@ -126,9 +132,9 @@ public:
 		return *this;
 	}
 
-	virtual TileIterator *Clone() const
+	virtual std::unique_ptr<TileIterator> Clone() const
 	{
-		return new BitmapTileIterator(*this);
+		return std::make_unique<BitmapTileIterator>(*this);
 	}
 };
 

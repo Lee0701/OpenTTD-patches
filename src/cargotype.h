@@ -23,7 +23,7 @@
 typedef uint32 CargoLabel;
 
 /** Town growth effect when delivering cargo. */
-enum TownEffect : byte {
+enum TownEffect {
 	TE_BEGIN = 0,
 	TE_NONE = TE_BEGIN, ///< Cargo has no effect.
 	TE_PASSENGERS,      ///< Cargo behaves passenger-like.
@@ -89,6 +89,15 @@ struct CargoSpec {
 	inline CargoID Index() const
 	{
 		return this - CargoSpec::array;
+	}
+
+	/**
+	 * Determine CargoTypes bit of this cargospec
+	 * @return CargoTypes bit
+	 */
+	inline CargoTypes CargoTypesBit() const
+	{
+		return static_cast<CargoTypes>(1) << this->Index();
 	}
 
 	/**
@@ -190,6 +199,9 @@ CargoID GetDefaultCargoID(LandscapeID l, CargoType ct);
 void InitializeSortedCargoSpecs();
 extern std::vector<const CargoSpec *> _sorted_cargo_specs;
 extern span<const CargoSpec *> _sorted_standard_cargo_specs;
+
+uint ConvertCargoQuantityToDisplayQuantity(CargoID cargo, uint quantity);
+uint ConvertDisplayQuantityToCargoQuantity(CargoID cargo, uint quantity);
 
 /**
  * Does cargo \a c have cargo class \a cc?

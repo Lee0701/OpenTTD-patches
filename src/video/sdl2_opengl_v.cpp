@@ -30,6 +30,10 @@
 #include <SDL.h>
 #include <mutex>
 #include <condition_variable>
+#if defined(__MINGW32__)
+#include "../3rdparty/mingw-std-threads/mingw.mutex.h"
+#include "../3rdparty/mingw-std-threads/mingw.condition_variable.h"
+#endif
 #include <GL/gl.h>
 #include "../3rdparty/opengl/glext.h"
 #include "opengl.h"
@@ -150,7 +154,10 @@ bool VideoDriver_SDL_OpenGL::AllocateBackingStore(int w, int h, bool force)
 	SDL_GL_SwapWindow(this->sdl_window);
 	_screen.dst_ptr = this->GetVideoPointer();
 
-	CopyPalette(this->local_palette, true);
+	_cur_palette.first_dirty = 0;
+	_cur_palette.count_dirty = 256;
+	this->local_palette = _cur_palette;
+	_cur_palette.count_dirty = 0;
 
 	return res;
 }

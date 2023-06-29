@@ -12,6 +12,7 @@ add_files(
     cargo_const.h
     clear_land.h
     control_codes.h
+    darklight_colours.h
     elrail_data.h
     engines.h
     genland.h
@@ -34,7 +35,7 @@ add_files(
     town_land.h
     townname.h
     track_land.h
-    train_sprites.h
+    train_cmd.h
     tree_land.h
     unicode.h
     water_land.h

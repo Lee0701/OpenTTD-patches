@@ -13,6 +13,12 @@
 #include "water_map.h"
 #include "object_type.h"
 
+enum ObjectGround {
+	OBJECT_GROUND_GRASS       = 0, ///< Grass or bare
+	OBJECT_GROUND_SNOW_DESERT = 1, ///< Snow or desert
+	OBJECT_GROUND_SHORE       = 2, ///< Shore
+};
+
 ObjectType GetObjectType(TileIndex t);
 
 /**
@@ -46,7 +52,7 @@ static inline bool IsObjectTypeTile(TileIndex t, ObjectType type)
  */
 static inline ObjectID GetObjectIndex(TileIndex t)
 {
-	assert(IsTileType(t, MP_OBJECT));
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
 	return _m[t].m2 | _m[t].m5 << 16;
 }
 
@@ -58,10 +64,121 @@ static inline ObjectID GetObjectIndex(TileIndex t)
  */
 static inline byte GetObjectRandomBits(TileIndex t)
 {
-	assert(IsTileType(t, MP_OBJECT));
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
 	return _m[t].m3;
 }
 
+/**
+ * Get the ground type of ths tile.
+ * @param t The tile to get the ground type of.
+ * @pre IsTileType(t, MP_OBJECT)
+ * @return The ground type.
+ */
+static inline ObjectGround GetObjectGroundType(TileIndex t)
+{
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
+	return (ObjectGround)GB(_m[t].m4, 2, 2);
+}
+
+/**
+ * Get the ground density of this tile.
+ * Only meaningful for some ground types.
+ * @param t The tile to get the density of.
+ * @pre IsTileType(t, MP_OBJECT)
+ * @return the density
+ */
+static inline uint GetObjectGroundDensity(TileIndex t)
+{
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
+	return GB(_m[t].m4, 0, 2);
+}
+
+/**
+ * Set the ground density of this tile.
+ * Only meaningful for some ground types.
+ * @param t The tile to set the density of.
+ * @param d the new density
+ * @pre IsTileType(t, MP_OBJECT)
+ */
+static inline void SetObjectGroundDensity(TileIndex t, uint d)
+{
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
+	SB(_m[t].m4, 0, 2, d);
+}
+
+/**
+ * Get the counter used to advance to the next ground density type.
+ * @param t The tile to get the counter of.
+ * @pre IsTileType(t, MP_OBJECT)
+ * @return The value of the counter
+ */
+static inline uint GetObjectGroundCounter(TileIndex t)
+{
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
+	return GB(_m[t].m4, 5, 3);
+}
+
+/**
+ * Increments the counter used to advance to the next ground density type.
+ * @param t the tile to increment the counter of
+ * @param c the amount to increment the counter with
+ * @pre IsTileType(t, MP_OBJECT)
+ */
+static inline void AddObjectGroundCounter(TileIndex t, int c)
+{
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
+	_m[t].m4 += c << 5;
+}
+
+/**
+ * Sets the counter used to advance to the next ground density type.
+ * @param t The tile to set the counter of.
+ * @param c The amount to set the counter to.
+ * @pre IsTileType(t, MP_OBJECT)
+ */
+static inline void SetObjectGroundCounter(TileIndex t, uint c)
+{
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
+	SB(_m[t].m4, 5, 3, c);
+}
+
+
+/**
+ * Sets ground type and density in one go, also sets the counter to 0
+ * @param t       the tile to set the ground type and density for
+ * @param type    the new ground type of the tile
+ * @param density the density of the ground tile
+ * @pre IsTileType(t, MP_OBJECT)
+ */
+static inline void SetObjectGroundTypeDensity(TileIndex t, ObjectGround type, uint density)
+{
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
+	_m[t].m4 = 0 << 5 | type << 2 | density;
+}
+
+static inline ObjectEffectiveFoundationType GetObjectEffectiveFoundationType(TileIndex t)
+{
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
+	return (ObjectEffectiveFoundationType)GB(_me[t].m6, 0, 2);
+}
+
+static inline void SetObjectEffectiveFoundationType(TileIndex t, ObjectEffectiveFoundationType foundation_type)
+{
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
+	SB(_me[t].m6, 0, 2, foundation_type);
+}
+
+static inline bool GetObjectHasViewportMapViewOverride(TileIndex t)
+{
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
+	return HasBit(_m[t].m4, 4);
+}
+
+static inline void SetObjectHasViewportMapViewOverride(TileIndex t, bool map_view_override)
+{
+	dbg_assert_tile(IsTileType(t, MP_OBJECT), t);
+	SB(_m[t].m4, 4, 1, map_view_override ? 1 : 0);
+}
 
 /**
  * Make an Object tile.

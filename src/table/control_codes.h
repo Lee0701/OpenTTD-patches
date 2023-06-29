@@ -47,6 +47,8 @@ enum StringControlCode {
 	SCC_COMPANY_NAME,
 	SCC_PRESIDENT_NAME,
 	SCC_ENGINE_NAME,
+	SCC_TR_SLOT_NAME,
+	SCC_TR_COUNTER_NAME,
 
 	SCC_CURRENCY_SHORT,
 	SCC_CURRENCY_LONG,
@@ -65,10 +67,21 @@ enum StringControlCode {
 	SCC_VELOCITY,
 	SCC_HEIGHT,
 
+	SCC_POWER_WEIGHT_RATIO,
+	SCC_FORCE_WEIGHT_RATIO,
+
 	SCC_DATE_TINY,
 	SCC_DATE_SHORT,
 	SCC_DATE_LONG,
 	SCC_DATE_ISO,
+	SCC_DATE_WALLCLOCK_TINY,
+	SCC_DATE_WALLCLOCK_SHORT,
+	SCC_DATE_WALLCLOCK_LONG,
+	SCC_DATE_WALLCLOCK_ISO,
+
+	SCC_TIME_HHMM,
+	SCC_TT_TICKS,
+	SCC_TT_TICKS_LONG,
 
 	/* Must be consecutive */
 	SCC_STRING1,
@@ -78,12 +91,15 @@ enum StringControlCode {
 	SCC_STRING5,
 	SCC_STRING6,
 	SCC_STRING7,
+	SCC_STRING8,
 
 
 	SCC_STRING,
 	SCC_COMMA,
 	SCC_DECIMAL,
+	SCC_DECIMAL1,
 	SCC_NUM,
+	SCC_PLUS_NUM,
 	SCC_ZEROFILL_NUM,
 	SCC_HEX,
 	SCC_BYTES,
@@ -117,6 +133,8 @@ enum StringControlCode {
 	SCC_PUSH_COLOUR,
 	SCC_POP_COLOUR,
 
+	SCC_CONSUME_ARG,
+
 	/**
 	 * The next variables are part of a NewGRF subsystem for creating text strings.
 	 * It uses a "stack" of bytes and reads from there.
@@ -148,6 +166,7 @@ enum StringControlCode {
 	SCC_NEWGRF_PRINT_WORD_CARGO_SHORT,                ///< 9A 1C: Read 2 + 2 bytes from the stack as cargo type (translated) and unsigned cargo amount
 	SCC_NEWGRF_PRINT_WORD_CARGO_TINY,                 ///< 9A 1D: Read 2 + 2 bytes from the stack as cargo type (translated) and unsigned cargo amount
 	SCC_NEWGRF_PRINT_WORD_CARGO_NAME,                 ///< 9A 1E: Read 2 bytes from the stack as cargo name
+	SCC_NEWGRF_PRINT_DWORD_FORCE,                     ///< 9A 21: Read 4 bytes from the stack as unsigned force
 	SCC_NEWGRF_PUSH_WORD,                             ///< 9A 03: Pushes 2 bytes onto the stack
 	SCC_NEWGRF_UNPRINT,                               ///< 9A 04: "Unprints" the given number of bytes from the string
 	SCC_NEWGRF_DISCARD_WORD,                          ///< 85: Discard the next two bytes

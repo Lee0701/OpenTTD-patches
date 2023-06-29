@@ -46,7 +46,7 @@ bool NetworkCoordinatorSocketHandler::HandlePacket(Packet *p)
 		case PACKET_COORDINATOR_GC_TURN_CONNECT:       return this->Receive_GC_TURN_CONNECT(p);
 
 		default:
-			Debug(net, 0, "[tcp/coordinator] Received invalid packet type {}", type);
+			DEBUG(net, 0, "[tcp/coordinator] Received invalid packet type %u", type);
 			return false;
 	}
 }
@@ -64,12 +64,11 @@ bool NetworkCoordinatorSocketHandler::ReceivePackets()
 	 *
 	 * What arbitrary number to choose is the ultimate question though.
 	 */
-	Packet *p;
+	std::unique_ptr<Packet> p;
 	static const int MAX_PACKETS_TO_RECEIVE = 42;
 	int i = MAX_PACKETS_TO_RECEIVE;
 	while (--i != 0 && (p = this->ReceivePacket()) != nullptr) {
-		bool cont = this->HandlePacket(p);
-		delete p;
+		bool cont = this->HandlePacket(p.get());
 		if (!cont) return true;
 	}
 
@@ -83,7 +82,7 @@ bool NetworkCoordinatorSocketHandler::ReceivePackets()
  */
 bool NetworkCoordinatorSocketHandler::ReceiveInvalidPacket(PacketCoordinatorType type)
 {
-	Debug(net, 0, "[tcp/coordinator] Received illegal packet type {}", type);
+	DEBUG(net, 0, "[tcp/coordinator] Received illegal packet type %u", type);
 	return false;
 }
 

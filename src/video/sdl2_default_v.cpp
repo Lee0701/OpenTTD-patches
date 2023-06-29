@@ -26,6 +26,10 @@
 #include <SDL.h>
 #include <mutex>
 #include <condition_variable>
+#if defined(__MINGW32__)
+#include "../3rdparty/mingw-std-threads/mingw.mutex.h"
+#include "../3rdparty/mingw-std-threads/mingw.condition_variable.h"
+#endif
 #ifdef __EMSCRIPTEN__
 #	include <emscripten.h>
 #	include <emscripten/html5.h>
@@ -62,7 +66,10 @@ void VideoDriver_SDL_Default::MakePalette()
 		if (_sdl_palette == nullptr) usererror("SDL2: Couldn't allocate palette: %s", SDL_GetError());
 	}
 
-	CopyPalette(this->local_palette, true);
+	_cur_palette.first_dirty = 0;
+	_cur_palette.count_dirty = 256;
+	this->local_palette = _cur_palette;
+	_cur_palette.count_dirty = 0;
 	this->UpdatePalette();
 
 	if (_sdl_surface != _sdl_real_surface) {

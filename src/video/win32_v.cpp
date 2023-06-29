@@ -26,6 +26,7 @@
 #include <windows.h>
 #include <imm.h>
 #include <versionhelpers.h>
+#include <algorithm>
 
 #include "../safeguards.h"
 
@@ -46,7 +47,8 @@ bool _window_maximize;
 static Dimension _bck_resolution;
 DWORD _imm_props;
 
-static Palette _local_palette; ///< Current palette to use for drawing.
+/** Local copy of the palette for use in the drawing thread. */
+static Palette _local_palette;
 
 bool VideoDriver_Win32Base::ClaimMousePointer()
 {
@@ -237,7 +239,7 @@ static LRESULT HandleCharMsg(uint keycode, WChar charcode)
 
 	/* Did we get a lead surrogate? If yes, store and exit. */
 	if (Utf16IsLeadSurrogate(charcode)) {
-		if (prev_char != 0) Debug(driver, 1, "Got two UTF-16 lead surrogates, dropping the first one");
+		if (prev_char != 0) DEBUG(driver, 1, "Got two UTF-16 lead surrogates, dropping the first one");
 		prev_char = charcode;
 		return 0;
 	}
@@ -247,7 +249,7 @@ static LRESULT HandleCharMsg(uint keycode, WChar charcode)
 		if (Utf16IsTrailSurrogate(charcode)) {
 			charcode = Utf16DecodeSurrogate(prev_char, charcode);
 		} else {
-			Debug(driver, 1, "Got an UTF-16 lead surrogate without a trail surrogate, dropping the lead surrogate");
+			DEBUG(driver, 1, "Got an UTF-16 lead surrogate without a trail surrogate, dropping the lead surrogate");
 		}
 	}
 	prev_char = 0;
@@ -675,7 +677,7 @@ LRESULT CALLBACK WndProcGdi(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		}
 
 		case WM_DPICHANGED: {
-			auto did_adjust = AdjustGUIZoom(true);
+			auto did_adjust = AdjustGUIZoom(AGZM_AUTOMATIC);
 
 			/* Resize the window to match the new DPI setting. */
 			RECT *prcNewWindow = (RECT *)lParam;
@@ -815,7 +817,7 @@ void VideoDriver_Win32Base::Initialize()
 	this->width  = this->width_org  = _cur_resolution.width;
 	this->height = this->height_org = _cur_resolution.height;
 
-	Debug(driver, 2, "Resolution for display: {}x{}", _cur_resolution.width, _cur_resolution.height);
+	DEBUG(driver, 2, "Resolution for display: %ux%u", _cur_resolution.width, _cur_resolution.height);
 }
 
 void VideoDriver_Win32Base::Stop()
@@ -833,24 +835,24 @@ void VideoDriver_Win32Base::MakeDirty(int left, int top, int width, int height)
 
 void VideoDriver_Win32Base::CheckPaletteAnim()
 {
-	if (!CopyPalette(_local_palette)) return;
+	if (_cur_palette.count_dirty == 0) return;
+
+	_local_palette = _cur_palette;
+	_cur_palette.count_dirty = 0;
 	this->MakeDirty(0, 0, _screen.width, _screen.height);
 }
 
 void VideoDriver_Win32Base::InputLoop()
 {
 	bool old_ctrl_pressed = _ctrl_pressed;
+	bool old_shift_pressed = _shift_pressed;
 
-	_ctrl_pressed = this->has_focus && GetAsyncKeyState(VK_CONTROL) < 0;
-	_shift_pressed = this->has_focus && GetAsyncKeyState(VK_SHIFT) < 0;
+	_ctrl_pressed = (this->has_focus && GetAsyncKeyState(VK_CONTROL) < 0) != _invert_ctrl;
+	_shift_pressed = (this->has_focus && GetAsyncKeyState(VK_SHIFT) < 0) != _invert_shift;
 
-#if defined(_DEBUG)
-	this->fast_forward_key_pressed = _shift_pressed;
-#else
 	/* Speedup when pressing tab, except when using ALT+TAB
 	 * to switch to another application. */
 	this->fast_forward_key_pressed = this->has_focus && GetAsyncKeyState(VK_TAB) < 0 && GetAsyncKeyState(VK_MENU) >= 0;
-#endif
 
 	/* Determine which directional keys are down. */
 	if (this->has_focus) {
@@ -864,6 +866,7 @@ void VideoDriver_Win32Base::InputLoop()
 	}
 
 	if (old_ctrl_pressed != _ctrl_pressed) HandleCtrlChanged();
+	if (old_shift_pressed != _shift_pressed) HandleShiftChanged();
 }
 
 bool VideoDriver_Win32Base::PollEvent()
@@ -897,7 +900,11 @@ void VideoDriver_Win32Base::ClientSizeChanged(int w, int h, bool force)
 {
 	/* Allocate backing store of the new size. */
 	if (this->AllocateBackingStore(w, h, force)) {
-		CopyPalette(_local_palette, true);
+		/* Mark all palette colours dirty. */
+		_cur_palette.first_dirty = 0;
+		_cur_palette.count_dirty = 256;
+		_local_palette = _cur_palette;
+		_cur_palette.count_dirty = 0;
 
 		BlitterFactory::GetCurrentBlitter()->PostResize();
 
@@ -919,7 +926,7 @@ bool VideoDriver_Win32Base::ToggleFullscreen(bool full_screen)
 {
 	bool res = this->MakeWindow(full_screen);
 
-	InvalidateWindowClassesData(WC_GAME_OPTIONS, 3);
+	this->InvalidateGameOptionsWindow();
 	return res;
 }
 
@@ -972,11 +979,10 @@ float VideoDriver_Win32Base::GetDPIScale()
 	static bool init_done = false;
 	if (!init_done) {
 		init_done = true;
-		static DllLoader _user32(L"user32.dll");
-		static DllLoader _shcore(L"shcore.dll");
-		_GetDpiForWindow = _user32.GetProcAddress("GetDpiForWindow");
-		_GetDpiForSystem = _user32.GetProcAddress("GetDpiForSystem");
-		_GetDpiForMonitor = _shcore.GetProcAddress("GetDpiForMonitor");
+
+		_GetDpiForWindow = GetProcAddressT<PFNGETDPIFORWINDOW>(GetModuleHandle(L"User32"), "GetDpiForWindow");
+		_GetDpiForSystem = GetProcAddressT<PFNGETDPIFORSYSTEM>(GetModuleHandle(L"User32"), "GetDpiForSystem");
+		_GetDpiForMonitor = GetProcAddressT<PFNGETDPIFORMONITOR>(LoadLibrary(L"Shcore.dll"), "GetDpiForMonitor");
 	}
 
 	UINT cur_dpi = 0;
@@ -1094,7 +1100,9 @@ bool VideoDriver_Win32GDI::AfterBlitterChange()
 
 void VideoDriver_Win32GDI::MakePalette()
 {
-	CopyPalette(_local_palette, true);
+	_cur_palette.first_dirty = 0;
+	_cur_palette.count_dirty = 256;
+	_local_palette = _cur_palette;
 
 	LOGPALETTE *pal = (LOGPALETTE*)alloca(sizeof(LOGPALETTE) + (256 - 1) * sizeof(PALETTEENTRY));
 
@@ -1380,7 +1388,7 @@ void VideoDriver_Win32OpenGL::ToggleVsync(bool vsync)
 	if (_wglSwapIntervalEXT != nullptr) {
 		_wglSwapIntervalEXT(vsync);
 	} else if (vsync) {
-		Debug(driver, 0, "OpenGL: Vsync requested, but not supported by driver");
+		DEBUG(driver, 0, "OpenGL: Vsync requested, but not supported by driver");
 	}
 }
 

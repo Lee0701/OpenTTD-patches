@@ -12,9 +12,10 @@
 
 #include "tile_type.h"
 
-void AddAnimatedTile(TileIndex tile);
+void AddAnimatedTile(TileIndex tile, bool mark_dirty = true);
 void DeleteAnimatedTile(TileIndex tile);
 void AnimateAnimatedTiles();
+void UpdateAllAnimatedTileSpeeds();
 void InitializeAnimatedTiles();
 
 #endif /* ANIMATED_TILE_FUNC_H */

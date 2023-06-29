@@ -29,6 +29,12 @@ enum CompanyValueWidgets {
 	WID_CV_RESIZE,     ///< Resize button.
 };
 
+/** Extra widgets of the #DeliveredCargoGraphWindow class. */
+enum DeliveredCargoGraphWindowWidgets {
+	WID_DCG_BY_COMPANY = 0x40, ///< By company button.
+	WID_DCG_BY_CARGO,          ///< By cargo button.
+};
+
 /** Widget of the #PerformanceHistoryGraphWindow class. */
 enum PerformanceHistoryGraphWidgets {
 	WID_PHG_KEY,                  ///< Key button.
@@ -49,6 +55,22 @@ enum CargoPaymentRatesWidgets {
 	WID_CPR_DISABLE_CARGOES, ///< Disable cargoes button.
 	WID_CPR_MATRIX,          ///< Cargo list.
 	WID_CPR_MATRIX_SCROLLBAR,///< Cargo list scrollbar.
+	WID_CPR_DAYS,            ///< Days in transit mode.
+	WID_CPR_SPEED,           ///< Speed mode.
+};
+
+/** Widget of the #StationCargoGraphWindow class. */
+enum StationCargoWidgets {
+	WID_SCG_CAPTION,          ///< Window title
+	WID_SCG_BACKGROUND,       ///< Background of the window.
+	WID_SCG_HEADER,           ///< Header.
+	WID_SCG_GRAPH,            ///< Graph itself.
+	WID_SCG_RESIZE,           ///< Resize button.
+	WID_SCG_FOOTER,           ///< Footer.
+	WID_SCG_ENABLE_CARGOES,   ///< Enable cargoes button.
+	WID_SCG_DISABLE_CARGOES,  ///< Disable cargoes button.
+	WID_SCG_MATRIX,           ///< Cargo list.
+	WID_SCG_MATRIX_SCROLLBAR, ///< Cargo list scrollbar.
 };
 
 /** Widget of the #PerformanceRatingDetailWindow class. */
@@ -58,6 +80,16 @@ enum PerformanceRatingDetailsWidgets {
 
 	WID_PRD_COMPANY_FIRST, ///< First company.
 	WID_PRD_COMPANY_LAST  = WID_PRD_COMPANY_FIRST + MAX_COMPANIES - 1, ///< Last company.
+};
+
+/** Widget of the #ExcludingCargoBaseGraphWindow class. */
+enum ExcludingCargoBaseGraphWindowWidgets {
+	WID_ECBG_FOOTER = 0x80,   ///< Footer.
+	WID_ECBG_ENABLE_CARGOES,  ///< Enable cargoes button.
+	WID_ECBG_DISABLE_CARGOES, ///< Disable cargoes button.
+	WID_ECBG_MATRIX,          ///< Cargo list.
+	WID_ECBG_MATRIX_SCROLLBAR,///< Cargo list scrollbar.
+	WID_ECBG_CARGO_FIRST,     ///< First cargo in the list.
 };
 
 #endif /* WIDGETS_GRAPH_WIDGET_H */

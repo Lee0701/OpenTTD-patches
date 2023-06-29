@@ -17,11 +17,15 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 /** Save and load the mapping between a spec and the NewGRF it came from. */
 static const SaveLoad _newgrf_mapping_desc[] = {
 	SLE_VAR(EntityIDMapping, grfid,         SLE_UINT32),
-	SLE_VAR(EntityIDMapping, entity_id,     SLE_UINT8),
-	SLE_VAR(EntityIDMapping, substitute_id, SLE_UINT8),
+	SLE_CONDVAR(EntityIDMapping, entity_id,     SLE_FILE_U8 | SLE_VAR_U16, SL_MIN_VERSION,            SLV_EXTEND_ENTITY_MAPPING),
+	SLE_CONDVAR(EntityIDMapping, entity_id,     SLE_UINT16,                SLV_EXTEND_ENTITY_MAPPING, SL_MAX_VERSION),
+	SLE_CONDVAR(EntityIDMapping, substitute_id, SLE_FILE_U8 | SLE_VAR_U16, SL_MIN_VERSION,            SLV_EXTEND_ENTITY_MAPPING),
+	SLE_CONDVAR(EntityIDMapping, substitute_id, SLE_UINT16,                SLV_EXTEND_ENTITY_MAPPING, SL_MAX_VERSION),
 };
 
 /**
@@ -29,14 +33,8 @@ static const SaveLoad _newgrf_mapping_desc[] = {
  */
 void NewGRFMappingChunkHandler::Save() const
 {
-	SlTableHeader(_newgrf_mapping_desc);
-
-	for (uint i = 0; i < this->mapping.GetMaxMapping(); i++) {
-		if (this->mapping.mapping_ID[i].grfid == 0 &&
-			this->mapping.mapping_ID[i].entity_id == 0) continue;
-		SlSetArrayIndex(i);
-		SlObject(&this->mapping.mapping_ID[i], _newgrf_mapping_desc);
-	}
+	// removed
+	NOT_REACHED();
 }
 
 /**
@@ -55,13 +53,13 @@ void NewGRFMappingChunkHandler::Load() const
 	int index;
 	while ((index = SlIterateArray()) != -1) {
 		if ((uint)index >= max_id) SlErrorCorrupt("Too many NewGRF entity mappings");
-		SlObject(&this->mapping.mapping_ID[index], slt);
+		SlObject(&this->mapping.mappings[index], slt);
 	}
 }
 
 
 static const SaveLoad _grfconfig_desc[] = {
-	    SLE_STR(GRFConfig, filename,         SLE_STR,    0x40),
+	   SLE_SSTR(GRFConfig, filename,         SLE_STR),
 	    SLE_VAR(GRFConfig, ident.grfid,      SLE_UINT32),
 	    SLE_ARR(GRFConfig, ident.md5sum,     SLE_UINT8,  16),
 	SLE_CONDVAR(GRFConfig, version,          SLE_UINT32, SLV_151, SL_MAX_VERSION),
@@ -129,3 +127,5 @@ static const ChunkHandlerRef newgrf_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _newgrf_chunk_handlers(newgrf_chunk_handlers);
+
+}

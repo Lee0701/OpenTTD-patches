@@ -8,6 +8,7 @@
 /** @file widget.cpp Handling of the default/simple widgets. */
 
 #include "stdafx.h"
+#include "core/backup_type.hpp"
 #include "company_func.h"
 #include "window_gui.h"
 #include "viewport_func.h"
@@ -485,15 +486,16 @@ static inline void DrawImageButtons(const Rect &r, WidgetType type, Colours colo
  * @param colour  Colour of the text.
  * @param str     Text to draw.
  * @param align   Alignment of the text.
+ * @param fs      Font size of the text.
  */
-static inline void DrawLabel(const Rect &r, WidgetType type, bool clicked, TextColour colour, StringID str, StringAlignment align)
+static inline void DrawLabel(const Rect &r, WidgetType type, bool clicked, TextColour colour, StringID str, StringAlignment align, FontSize fs)
 {
 	if (str == STR_NULL) return;
 	if ((type & WWT_MASK) == WWT_TEXTBTN_2 && clicked) str++;
-	Dimension d = GetStringBoundingBox(str);
+	Dimension d = GetStringBoundingBox(str, fs);
 	Point p = GetAlignedPosition(r, d, align);
 	int o = clicked ? WidgetDimensions::scaled.pressed : 0;
-	DrawString(r.left + o, r.right + o, p.y + o, str, colour, align);
+	DrawString(r.left + o, r.right + o, p.y + o, str, colour, align, false, fs);
 }
 
 /**
@@ -502,12 +504,13 @@ static inline void DrawLabel(const Rect &r, WidgetType type, bool clicked, TextC
  * @param colour Colour of the text.
  * @param str    Text to draw.
  * @param align  Alignment of the text.
+ * @param fs     Font size of the text.
  */
-static inline void DrawText(const Rect &r, TextColour colour, StringID str, StringAlignment align)
+static inline void DrawText(const Rect &r, TextColour colour, StringID str, StringAlignment align, FontSize fs)
 {
-	Dimension d = GetStringBoundingBox(str);
+	Dimension d = GetStringBoundingBox(str, fs);
 	Point p = GetAlignedPosition(r, d, align);
-	if (str != STR_NULL) DrawString(r.left, r.right, p.y, str, colour, align);
+	if (str != STR_NULL) DrawString(r.left, r.right, p.y, str, colour, align, false, fs);
 }
 
 /**
@@ -517,11 +520,12 @@ static inline void DrawText(const Rect &r, TextColour colour, StringID str, Stri
  * @param text_colour Colour of the text.
  * @param str         Text to draw.
  * @param align       Alignment of the text.
+ * @param fs          Font size of the text.
  */
-static inline void DrawInset(const Rect &r, Colours colour, TextColour text_colour, StringID str, StringAlignment align)
+static inline void DrawInset(const Rect &r, Colours colour, TextColour text_colour, StringID str, StringAlignment align, FontSize fs)
 {
 	DrawFrameRect(r.left, r.top, r.right, r.bottom, colour, FR_LOWERED | FR_DARKENED);
-	if (str != STR_NULL) DrawString(r.Shrink(WidgetDimensions::scaled.inset), str, text_colour, align);
+	if (str != STR_NULL) DrawString(r.Shrink(WidgetDimensions::scaled.inset), str, text_colour, align, false, fs);
 }
 
 /**
@@ -671,12 +675,13 @@ static inline void DrawHorizontalScrollbar(const Rect &r, Colours colour, bool l
  * @param text_colour Colour of the text.
  * @param str         Text of the frame.
  * @param align       Alignment of the text in the frame.
+ * @param fs          Font size of the text.
  */
-static inline void DrawFrame(const Rect &r, Colours colour, TextColour text_colour, StringID str, StringAlignment align)
+static inline void DrawFrame(const Rect &r, Colours colour, TextColour text_colour, StringID str, StringAlignment align, FontSize fs)
 {
 	int x2 = r.left; // by default the left side is the left side of the widget
 
-	if (str != STR_NULL) x2 = DrawString(r.left + WidgetDimensions::scaled.frametext.left, r.right - WidgetDimensions::scaled.frametext.right, r.top, str, text_colour, align);
+	if (str != STR_NULL) x2 = DrawString(r.left + WidgetDimensions::scaled.frametext.left, r.right - WidgetDimensions::scaled.frametext.right, r.top, str, text_colour, align, false, fs);
 
 	int c1 = _colour_gradient[colour][3];
 	int c2 = _colour_gradient[colour][7];
@@ -800,8 +805,9 @@ static inline void DrawCloseBox(const Rect &r, Colours colour)
  * @param text_colour Colour of the text.
  * @param str         Text to draw in the bar.
  * @param align       Alignment of the text.
+ * @param fs          Font size of the text.
  */
-void DrawCaption(const Rect &r, Colours colour, Owner owner, TextColour text_colour, StringID str, StringAlignment align)
+void DrawCaption(const Rect &r, Colours colour, Owner owner, TextColour text_colour, StringID str, StringAlignment align, FontSize fs)
 {
 	bool company_owned = owner < MAX_COMPANIES;
 
@@ -816,7 +822,7 @@ void DrawCaption(const Rect &r, Colours colour, Owner owner, TextColour text_col
 	if (str != STR_NULL) {
 		Dimension d = GetStringBoundingBox(str);
 		Point p = GetAlignedPosition(r, d, align);
-		DrawString(r.left + WidgetDimensions::scaled.captiontext.left, r.right - WidgetDimensions::scaled.captiontext.left, p.y, str, text_colour, align);
+		DrawString(r.left + WidgetDimensions::scaled.captiontext.left, r.right - WidgetDimensions::scaled.captiontext.left, p.y, str, text_colour, align, false, fs);
 	}
 }
 
@@ -1021,11 +1027,10 @@ NWidgetBase::NWidgetBase(WidgetType tp) : ZeroedMemoryAllocator()
  * Mark the widget as 'dirty' (in need of repaint).
  * @param w Window owning the widget.
  */
-void NWidgetBase::SetDirty(const Window *w) const
+void NWidgetBase::SetDirty(Window *w)
 {
-	int abs_left = w->left + this->pos_x;
-	int abs_top = w->top + this->pos_y;
-	AddDirtyBlock(abs_left, abs_top, abs_left + this->current_x, abs_top + this->current_y);
+	this->base_flags |= WBF_DIRTY;
+	w->flags |= WF_WIDGETS_DIRTY;
 }
 
 /**
@@ -1133,6 +1138,18 @@ void NWidgetResizeBase::SetResize(uint resize_x, uint resize_y)
 	this->resize_y = resize_y;
 }
 
+/**
+ * Set absolute (post-scaling) minimal size of the widget.
+ * @param min_y Vertical minimal size of the widget.
+ * @return true iff the widget minimum size has changed.
+ */
+bool NWidgetResizeBase::UpdateVerticalSize(uint min_y)
+{
+	if (min_y == this->min_y) return false;
+	this->min_y = min_y;
+	return true;
+}
+
 void NWidgetResizeBase::AssignSizePosition(SizingType sizing, uint x, uint y, uint given_width, uint given_height, bool rtl)
 {
 	this->StoreSizePosition(sizing, x, y, given_width, given_height);
@@ -1155,6 +1172,7 @@ NWidgetCore::NWidgetCore(WidgetType tp, Colours colour, uint fill_x, uint fill_y
 	this->tool_tip = tool_tip;
 	this->scrollbar_index = -1;
 	this->text_colour = TC_BLACK;
+	this->text_size = FS_NORMAL;
 	this->align = SA_CENTER;
 }
 
@@ -1180,12 +1198,14 @@ void NWidgetCore::SetDataTip(uint32 widget_data, StringID tool_tip)
 }
 
 /**
- * Set the text colour of the nested widget.
+ * Set the text style of the nested widget.
  * @param colour TextColour to use.
+ * @param size Font size to use.
  */
-void NWidgetCore::SetTextColour(TextColour colour)
+void NWidgetCore::SetTextStyle(TextColour colour, FontSize size)
 {
 	this->text_colour = colour;
+	this->text_size = size;
 }
 
 /**
@@ -1214,6 +1234,11 @@ void NWidgetCore::FillNestedArray(NWidgetBase **array, uint length)
 NWidgetCore *NWidgetCore::GetWidgetFromPos(int x, int y)
 {
 	return (IsInsideBS(x, this->pos_x, this->current_x) && IsInsideBS(y, this->pos_y, this->current_y)) ? this : nullptr;
+}
+
+void NWidgetCore::FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets)
+{
+	if (this->base_flags & WBF_DIRTY) dirty_widgets.push_back(this);
 }
 
 /**
@@ -1375,6 +1400,8 @@ void NWidgetStacked::FillNestedArray(NWidgetBase **array, uint length)
 
 void NWidgetStacked::Draw(const Window *w)
 {
+	if (this->IsOutsideDrawArea()) return;
+	this->base_flags &= ~WBF_DIRTY;
 	if (this->shown_plane >= SZSP_BEGIN) return;
 
 	int plane = 0;
@@ -1400,6 +1427,21 @@ NWidgetCore *NWidgetStacked::GetWidgetFromPos(int x, int y)
 		}
 	}
 	return nullptr;
+}
+
+void NWidgetStacked::FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets)
+{
+	if (this->base_flags & WBF_DIRTY) {
+		dirty_widgets.push_back(this);
+	} else {
+		int plane = 0;
+		for (NWidgetBase *child_wid = this->head; child_wid != nullptr; plane++, child_wid = child_wid->next) {
+			if (plane == this->shown_plane) {
+				child_wid->FillDirtyWidgets(dirty_widgets);
+				return;
+			}
+		}
+	}
 }
 
 /**
@@ -1446,6 +1488,8 @@ void NWidgetPIPContainer::SetPIP(uint8 pip_pre, uint8 pip_inter, uint8 pip_post)
 
 void NWidgetPIPContainer::Draw(const Window *w)
 {
+	if (this->IsOutsideDrawArea()) return;
+	this->base_flags &= ~WBF_DIRTY;
 	for (NWidgetBase *child_wid = this->head; child_wid != nullptr; child_wid = child_wid->next) {
 		child_wid->Draw(w);
 	}
@@ -1460,6 +1504,17 @@ NWidgetCore *NWidgetPIPContainer::GetWidgetFromPos(int x, int y)
 		if (nwid != nullptr) return nwid;
 	}
 	return nullptr;
+}
+
+void NWidgetPIPContainer::FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets)
+{
+	if (this->base_flags & WBF_DIRTY) {
+		dirty_widgets.push_back(this);
+	} else {
+		for (NWidgetBase *child_wid = this->head; child_wid != nullptr; child_wid = child_wid->next) {
+			child_wid->FillDirtyWidgets(dirty_widgets);
+		}
+	}
 }
 
 /** Horizontal container widget. */
@@ -1833,7 +1888,7 @@ void NWidgetSpacer::Draw(const Window *w)
 	/* Spacer widget is never visible. */
 }
 
-void NWidgetSpacer::SetDirty(const Window *w) const
+void NWidgetSpacer::SetDirty(Window *w)
 {
 	/* Spacer widget never need repainting. */
 }
@@ -1841,6 +1896,11 @@ void NWidgetSpacer::SetDirty(const Window *w) const
 NWidgetCore *NWidgetSpacer::GetWidgetFromPos(int x, int y)
 {
 	return nullptr;
+}
+
+void NWidgetSpacer::FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets)
+{
+	/* Spacer widget never need repainting. */
 }
 
 NWidgetMatrix::NWidgetMatrix() : NWidgetPIPContainer(NWID_MATRIX, NC_EQUALSIZE), index(-1), clicked(-1), count(-1)
@@ -1979,11 +2039,11 @@ NWidgetCore *NWidgetMatrix::GetWidgetFromPos(int x, int y)
 	bool rtl = _current_text_dir == TD_RTL;
 
 	int widget_col = (rtl ?
-				-x + (int)this->pip_post + (int)this->pos_x + base_offs_x + (int)this->widget_w - 1 - (int)this->pip_inter :
-				 x - (int)this->pip_pre  - (int)this->pos_x - base_offs_x
+				-x + (int)this->pip_post + this->pos_x + base_offs_x + this->widget_w - 1 - (int)this->pip_inter :
+				 x - (int)this->pip_pre  - this->pos_x - base_offs_x
 			) / this->widget_w;
 
-	int widget_row = (y - base_offs_y - (int)this->pip_pre - (int)this->pos_y) / this->widget_h;
+	int widget_row = (y - base_offs_y - (int)this->pip_pre - this->pos_y) / this->widget_h;
 
 	int sub_wid = (widget_row + start_y) * this->widgets_x + start_x + widget_col;
 	if (sub_wid >= this->count) return nullptr;
@@ -2000,8 +2060,18 @@ NWidgetCore *NWidgetMatrix::GetWidgetFromPos(int x, int y)
 	return child->GetWidgetFromPos(x, y);
 }
 
+void NWidgetMatrix::FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets)
+{
+	if (this->base_flags & WBF_DIRTY) {
+		dirty_widgets.push_back(this);
+	}
+}
+
 /* virtual */ void NWidgetMatrix::Draw(const Window *w)
 {
+	if (this->IsOutsideDrawArea()) return;
+	this->base_flags &= ~WBF_DIRTY;
+
 	/* Fill the background. */
 	GfxFillRect(this->pos_x, this->pos_y, this->pos_x + this->current_x - 1, this->pos_y + this->current_y - 1, _colour_gradient[this->colour & 0xF][5]);
 
@@ -2009,8 +2079,7 @@ NWidgetCore *NWidgetMatrix::GetWidgetFromPos(int x, int y)
 	bool rtl = _current_text_dir == TD_RTL;
 	DrawPixelInfo tmp_dpi;
 	if (!FillDrawPixelInfo(&tmp_dpi, this->pos_x + (rtl ? this->pip_post : this->pip_pre), this->pos_y + this->pip_pre, this->current_x - this->pip_pre - this->pip_post, this->current_y - this->pip_pre - this->pip_post)) return;
-	DrawPixelInfo *old_dpi = _cur_dpi;
-	_cur_dpi = &tmp_dpi;
+	AutoRestoreBackup dpi_backup(_cur_dpi, &tmp_dpi);
 
 	/* Get the appropriate offsets so we can draw the right widgets. */
 	NWidgetCore *child = dynamic_cast<NWidgetCore *>(this->head);
@@ -2043,9 +2112,6 @@ NWidgetCore *NWidgetMatrix::GetWidgetFromPos(int x, int y)
 			child->Draw(w);
 		}
 	}
-
-	/* Restore the clipping area. */
-	_cur_dpi = old_dpi;
 }
 
 /**
@@ -2166,7 +2232,7 @@ void NWidgetBackground::SetupSmallestSize(Window *w, bool init_array)
 			this->smallest_y += this->child->padding.Vertical();
 
 			if (this->index >= 0) w->SetStringParameters(this->index);
-			this->smallest_x = std::max(this->smallest_x, GetStringBoundingBox(this->widget_data).width + WidgetDimensions::scaled.frametext.Horizontal());
+			this->smallest_x = std::max(this->smallest_x, GetStringBoundingBox(this->widget_data, this->text_size).width + WidgetDimensions::scaled.frametext.Horizontal());
 		} else if (this->type == WWT_INSET) {
 			/* Apply automatic padding for bevel thickness. */
 			this->child->padding = WidgetDimensions::scaled.bevel;
@@ -2181,7 +2247,7 @@ void NWidgetBackground::SetupSmallestSize(Window *w, bool init_array)
 		if (w != nullptr) { // A non-nullptr window pointer acts as switch to turn dynamic widget size on.
 			if (this->type == WWT_FRAME || this->type == WWT_INSET) {
 				if (this->index >= 0) w->SetStringParameters(this->index);
-				Dimension background = GetStringBoundingBox(this->widget_data);
+				Dimension background = GetStringBoundingBox(this->widget_data, this->text_size);
 				background.width += (this->type == WWT_FRAME) ? (WidgetDimensions::scaled.frametext.Horizontal()) : (WidgetDimensions::scaled.inset.Horizontal());
 				d = maxdim(d, background);
 			}
@@ -2225,6 +2291,9 @@ void NWidgetBackground::FillNestedArray(NWidgetBase **array, uint length)
 
 void NWidgetBackground::Draw(const Window *w)
 {
+	if (this->IsOutsideDrawArea()) return;
+	this->base_flags &= ~WBF_DIRTY;
+
 	if (this->current_x == 0 || this->current_y == 0) return;
 
 	Rect r = this->GetCurrentRect();
@@ -2240,12 +2309,12 @@ void NWidgetBackground::Draw(const Window *w)
 
 		case WWT_FRAME:
 			if (this->index >= 0) w->SetStringParameters(this->index);
-			DrawFrame(r, this->colour, this->text_colour, this->widget_data, this->align);
+			DrawFrame(r, this->colour, this->text_colour, this->widget_data, this->align, this->text_size);
 			break;
 
 		case WWT_INSET:
 			if (this->index >= 0) w->SetStringParameters(this->index);
-			DrawInset(r, this->colour, this->text_colour, this->widget_data, this->align);
+			DrawInset(r, this->colour, this->text_colour, this->widget_data, this->align, this->text_size);
 			break;
 
 		default:
@@ -2268,6 +2337,15 @@ NWidgetCore *NWidgetBackground::GetWidgetFromPos(int x, int y)
 		if (nwid == nullptr) nwid = this;
 	}
 	return nwid;
+}
+
+void NWidgetBackground::FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets)
+{
+	if (this->base_flags & WBF_DIRTY) {
+		dirty_widgets.push_back(this);
+	} else {
+		if (this->child != nullptr) this->child->FillDirtyWidgets(dirty_widgets);
+	}
 }
 
 NWidgetBase *NWidgetBackground::GetWidgetOfType(WidgetType tp)
@@ -2295,21 +2373,16 @@ void NWidgetViewport::SetupSmallestSize(Window *w, bool init_array)
 
 void NWidgetViewport::Draw(const Window *w)
 {
-	if (this->current_x == 0 || this->current_y == 0) return;
+	if (this->current_x == 0 || this->current_y == 0 || this->IsOutsideDrawArea()) return;
+	this->base_flags &= ~WBF_DIRTY;
 
 	if (this->disp_flags & ND_NO_TRANSPARENCY) {
 		TransparencyOptionBits to_backup = _transparency_opt;
 		_transparency_opt &= (1 << TO_SIGNS) | (1 << TO_LOADING); // Disable all transparency, except textual stuff
-		w->DrawViewport();
+		w->DrawViewport(this->disp_flags);
 		_transparency_opt = to_backup;
 	} else {
-		w->DrawViewport();
-	}
-
-	/* Optionally shade the viewport. */
-	if (this->disp_flags & (ND_SHADE_GREY | ND_SHADE_DIMMED)) {
-		GfxFillRect(this->pos_x, this->pos_y, this->pos_x + this->current_x - 1, this->pos_y + this->current_y - 1,
-				(this->disp_flags & ND_SHADE_DIMMED) ? PALETTE_TO_TRANSPARENT : PALETTE_NEWSPAPER, FILLRECT_RECOLOUR);
+		w->DrawViewport(this->disp_flags);
 	}
 }
 
@@ -2322,6 +2395,7 @@ void NWidgetViewport::Draw(const Window *w)
 void NWidgetViewport::InitializeViewport(Window *w, uint32 follow_flags, ZoomLevel zoom)
 {
 	InitializeWindowViewport(w, this->pos_x, this->pos_y, this->current_x, this->current_y, follow_flags, zoom);
+	w->viewport_widget = this;
 }
 
 /**
@@ -2334,11 +2408,12 @@ void NWidgetViewport::UpdateViewportCoordinates(Window *w)
 	if (vp != nullptr) {
 		vp->left = w->left + this->pos_x;
 		vp->top  = w->top + this->pos_y;
-		vp->width  = this->current_x;
-		vp->height = this->current_y;
+		vp->width  = w->IsShaded() ? 0 : this->current_x;
+		vp->height = w->IsShaded() ? 0 : this->current_y;
 
 		vp->virtual_width  = ScaleByZoom(vp->width, vp->zoom);
 		vp->virtual_height = ScaleByZoom(vp->height, vp->zoom);
+		UpdateViewportSizeZoom(vp);
 	}
 }
 
@@ -2489,6 +2564,9 @@ void NWidgetScrollbar::SetupSmallestSize(Window *w, bool init_array)
 
 void NWidgetScrollbar::Draw(const Window *w)
 {
+	if (this->IsOutsideDrawArea()) return;
+	this->base_flags &= ~WBF_DIRTY;
+
 	if (this->current_x == 0 || this->current_y == 0) return;
 
 	Rect r = this->GetCurrentRect();
@@ -2784,7 +2862,7 @@ void NWidgetLeaf::SetupSmallestSize(Window *w, bool init_array)
 		case WWT_TEXTBTN_2: {
 			padding = {WidgetDimensions::scaled.framerect.Horizontal(), WidgetDimensions::scaled.framerect.Vertical()};
 			if (this->index >= 0) w->SetStringParameters(this->index);
-			Dimension d2 = GetStringBoundingBox(this->widget_data);
+			Dimension d2 = GetStringBoundingBox(this->widget_data, this->text_size);
 			d2.width += padding.width;
 			d2.height += padding.height;
 			size = maxdim(size, d2);
@@ -2793,13 +2871,13 @@ void NWidgetLeaf::SetupSmallestSize(Window *w, bool init_array)
 		case WWT_LABEL:
 		case WWT_TEXT: {
 			if (this->index >= 0) w->SetStringParameters(this->index);
-			size = maxdim(size, GetStringBoundingBox(this->widget_data));
+			size = maxdim(size, GetStringBoundingBox(this->widget_data, this->text_size));
 			break;
 		}
 		case WWT_CAPTION: {
 			padding = {WidgetDimensions::scaled.captiontext.Horizontal(), WidgetDimensions::scaled.captiontext.Vertical()};
 			if (this->index >= 0) w->SetStringParameters(this->index);
-			Dimension d2 = GetStringBoundingBox(this->widget_data);
+			Dimension d2 = GetStringBoundingBox(this->widget_data, this->text_size);
 			d2.width += padding.width;
 			d2.height += padding.height;
 			size = maxdim(size, d2);
@@ -2813,9 +2891,9 @@ void NWidgetLeaf::SetupSmallestSize(Window *w, bool init_array)
 				NWidgetLeaf::dropdown_dimension.width += WidgetDimensions::scaled.vscrollbar.Horizontal();
 				NWidgetLeaf::dropdown_dimension.height += WidgetDimensions::scaled.vscrollbar.Vertical();
 			}
-			padding = {WidgetDimensions::scaled.dropdowntext.Horizontal() + NWidgetLeaf::dropdown_dimension.width, WidgetDimensions::scaled.dropdowntext.Vertical()};
+			padding = {WidgetDimensions::scaled.dropdowntext.Horizontal() + NWidgetLeaf::dropdown_dimension.width + WidgetDimensions::scaled.fullbevel.Horizontal(), WidgetDimensions::scaled.dropdowntext.Vertical()};
 			if (this->index >= 0) w->SetStringParameters(this->index);
-			Dimension d2 = GetStringBoundingBox(this->widget_data);
+			Dimension d2 = GetStringBoundingBox(this->widget_data, this->text_size);
 			d2.width += padding.width;
 			d2.height = std::max(d2.height + padding.height, NWidgetLeaf::dropdown_dimension.height);
 			size = maxdim(size, d2);
@@ -2837,17 +2915,20 @@ void NWidgetLeaf::SetupSmallestSize(Window *w, bool init_array)
 
 void NWidgetLeaf::Draw(const Window *w)
 {
+	if (this->IsOutsideDrawArea()) return;
+	this->base_flags &= ~WBF_DIRTY;
+
 	if (this->current_x == 0 || this->current_y == 0) return;
 
-	/* Setup a clipping rectangle... */
+	/* Setup a clipping rectangle... for WWT_EMPTY or WWT_TEXT, an extra scaled pixel is allowed vertically in case text shadow encroaches. */
+	int extra_y = (this->type == WWT_EMPTY || this->type == WWT_TEXT) ? ScaleGUITrad(1) : 0;
 	DrawPixelInfo new_dpi;
-	if (!FillDrawPixelInfo(&new_dpi, this->pos_x, this->pos_y, this->current_x, this->current_y)) return;
+	if (!FillDrawPixelInfo(&new_dpi, this->pos_x, this->pos_y, this->current_x, this->current_y + extra_y)) return;
 	/* ...but keep coordinates relative to the window. */
 	new_dpi.left += this->pos_x;
 	new_dpi.top += this->pos_y;
 
-	DrawPixelInfo *old_dpi = _cur_dpi;
-	_cur_dpi = &new_dpi;
+	AutoRestoreBackup dpi_backup(_cur_dpi, &new_dpi);
 
 	Rect r = this->GetCurrentRect();
 
@@ -2872,7 +2953,7 @@ void NWidgetLeaf::Draw(const Window *w)
 		case WWT_TEXTBTN_2:
 			if (this->index >= 0) w->SetStringParameters(this->index);
 			DrawFrameRect(r.left, r.top, r.right, r.bottom, this->colour, (clicked) ? FR_LOWERED : FR_NONE);
-			DrawLabel(r, this->type, clicked, this->text_colour, this->widget_data, this->align);
+			DrawLabel(r, this->type, clicked, this->text_colour, this->widget_data, this->align, this->text_size);
 			break;
 
 		case WWT_ARROWBTN:
@@ -2891,12 +2972,12 @@ void NWidgetLeaf::Draw(const Window *w)
 
 		case WWT_LABEL:
 			if (this->index >= 0) w->SetStringParameters(this->index);
-			DrawLabel(r, this->type, clicked, this->text_colour, this->widget_data, this->align);
+			DrawLabel(r, this->type, clicked, this->text_colour, this->widget_data, this->align, this->text_size);
 			break;
 
 		case WWT_TEXT:
 			if (this->index >= 0) w->SetStringParameters(this->index);
-			DrawText(r, this->text_colour, this->widget_data, this->align);
+			DrawText(r, this->text_colour, this->widget_data, this->align, this->text_size);
 			break;
 
 		case WWT_MATRIX:
@@ -2911,7 +2992,7 @@ void NWidgetLeaf::Draw(const Window *w)
 
 		case WWT_CAPTION:
 			if (this->index >= 0) w->SetStringParameters(this->index);
-			DrawCaption(r, this->colour, w->owner, this->text_colour, this->widget_data, this->align);
+			DrawCaption(r, this->colour, w->owner, this->text_colour, this->widget_data, this->align, this->text_size);
 			break;
 
 		case WWT_SHADEBOX:
@@ -2961,8 +3042,6 @@ void NWidgetLeaf::Draw(const Window *w)
 	if (this->IsDisabled()) {
 		GfxFillRect(r.Shrink(WidgetDimensions::scaled.bevel), _colour_gradient[this->colour & 0xF][2], FILLRECT_CHECKER);
 	}
-
-	_cur_dpi = old_dpi;
 }
 
 /**
@@ -3089,10 +3168,10 @@ static int MakeNWidget(const NWidgetPart *parts, int count, NWidgetBase **dest, 
 				break;
 			}
 
-			case WPT_TEXTCOLOUR: {
+			case WPT_TEXTSTYLE: {
 				NWidgetCore *nwc = dynamic_cast<NWidgetCore *>(*dest);
 				if (nwc != nullptr) {
-					nwc->SetTextColour(parts->u.colour.colour);
+					nwc->SetTextStyle(parts->u.text_style.colour, parts->u.text_style.size);
 				}
 				break;
 			}

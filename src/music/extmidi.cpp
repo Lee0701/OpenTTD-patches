@@ -101,8 +101,10 @@ void MusicDriver_ExtMidi::StopSong()
 
 bool MusicDriver_ExtMidi::IsSongPlaying()
 {
-	if (this->pid != -1 && waitpid(this->pid, nullptr, WNOHANG) == this->pid) {
+	int status = 0;
+	if (this->pid != -1 && waitpid(this->pid, &status, WNOHANG) == this->pid) {
 		this->pid = -1;
+		if (WIFEXITED(status) && WEXITSTATUS(status) == 255) this->failed = true;
 	}
 	if (this->pid == -1 && this->song[0] != '\0') this->DoPlay();
 	return this->pid != -1;
@@ -110,11 +112,12 @@ bool MusicDriver_ExtMidi::IsSongPlaying()
 
 void MusicDriver_ExtMidi::SetVolume(byte vol)
 {
-	Debug(driver, 1, "extmidi: set volume not implemented");
+	DEBUG(driver, 1, "extmidi: set volume not implemented");
 }
 
 void MusicDriver_ExtMidi::DoPlay()
 {
+	this->failed = false;
 	this->pid = fork();
 	switch (this->pid) {
 		case 0: {
@@ -123,11 +126,11 @@ void MusicDriver_ExtMidi::DoPlay()
 			if (d != -1 && dup2(d, 1) != -1 && dup2(d, 2) != -1) {
 				execvp(this->params[0], this->params);
 			}
-			_exit(1);
+			_exit(255);
 		}
 
 		case -1:
-			Debug(driver, 0, "extmidi: couldn't fork: {}", strerror(errno));
+			DEBUG(driver, 0, "extmidi: couldn't fork: %s", strerror(errno));
 			FALLTHROUGH;
 
 		default:
@@ -153,7 +156,7 @@ void MusicDriver_ExtMidi::DoStop()
 		CSleep(10);
 	}
 
-	Debug(driver, 0, "extmidi: gracefully stopping failed, trying the hard way");
+	DEBUG(driver, 0, "extmidi: gracefully stopping failed, trying the hard way");
 	/* Gracefully stopping failed. Do it the hard way
 	 * and wait till the process finally died. */
 	kill(this->pid, SIGKILL);

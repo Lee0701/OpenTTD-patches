@@ -161,6 +161,7 @@ static std::vector<WChar> NSStringToUTF32(NSString *s)
 	return unicode_str;
 }
 
+#ifdef HAVE_TOUCHBAR_SUPPORT
 static void CGDataFreeCallback(void *, const void *data, size_t)
 {
 	delete[] (const uint32 *)data;
@@ -191,6 +192,7 @@ static NSImage *NSImageFromSprite(SpriteID sprite_id, ZoomLevel zoom)
 
 	return [ [ [ NSImage alloc ] initWithCGImage:bitmap.get() size:NSZeroSize ] autorelease ];
 }
+#endif /* HAVE_TOUCHBAR_SUPPORT */
 
 
 /**
@@ -348,7 +350,7 @@ bool CocoaSetupApplication()
 
 	/* Tell the dock about us */
 	OSStatus returnCode = TransformProcessType(&psn, kProcessTransformToForegroundApplication);
-	if (returnCode != 0) Debug(driver, 0, "Could not change to foreground application. Error {}", (int)returnCode);
+	if (returnCode != 0) DEBUG(driver, 0, "Could not change to foreground application. Error %d", (int)returnCode);
 
 	/* Disable the system-wide tab feature as we only have one window. */
 	if ([ NSWindow respondsToSelector:@selector(setAllowsAutomaticWindowTabbing:) ]) {
@@ -841,9 +843,9 @@ void CocoaDialog(const char *title, const char *message, const char *buttonLabel
 		if (!EditBoxInGlobalFocus() || IsInsideMM(pressed_key & ~WKC_SPECIAL_KEYS, WKC_F1, WKC_PAUSE + 1)) {
 			HandleKeypress(pressed_key, unicode);
 		}
-		Debug(driver, 3, "cocoa_v: QZ_KeyEvent: {:x} ({:x}), down, mapping: {:x}", keycode, (int)unicode, pressed_key);
+		DEBUG(driver, 3, "cocoa_v: QZ_KeyEvent: %x (%x), down, mapping: %x", keycode, unicode, pressed_key);
 	} else {
-		Debug(driver, 3, "cocoa_v: QZ_KeyEvent: {:x} ({:x}), up", keycode, (int)unicode);
+		DEBUG(driver, 3, "cocoa_v: QZ_KeyEvent: %x (%x), up", keycode, unicode);
 	}
 
 	return interpret_keys;
@@ -1057,10 +1059,11 @@ void CocoaDialog(const char *title, const char *message, const char *buttonLabel
 
 	Point pt = { (int)view_pt.x, (int)[ self frame ].size.height - (int)view_pt.y };
 
-	const char *ch = _focused_window->GetTextCharacterAtPosition(pt);
-	if (ch == nullptr) return NSNotFound;
+	auto index = _focused_window->GetTextCharacterAtPosition(pt);
+	if (index == -1) return NSNotFound;
 
-	return CountUtf16Units(_focused_window->GetFocusedText(), ch);
+	auto text = _focused_window->GetFocusedText();
+	return CountUtf16Units(text, text + index);
 }
 
 /** Get the bounding rect for the given range. */
@@ -1269,7 +1272,7 @@ void CocoaDialog(const char *title, const char *message, const char *buttonLabel
 /** Screen the window is on changed. */
 - (void)windowDidChangeBackingProperties:(NSNotification *)notification
 {
-	bool did_adjust = AdjustGUIZoom(true);
+	bool did_adjust = AdjustGUIZoom(AGZM_AUTOMATIC);
 
 	/* Reallocate screen buffer if necessary. */
 	driver->AllocateBackingStore();

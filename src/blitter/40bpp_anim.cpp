@@ -31,9 +31,56 @@ void Blitter_40bppAnim::SetPixel(void *video, int x, int y, uint8 colour)
 	if (_screen_disable_anim) {
 		Blitter_32bppOptimized::SetPixel(video, x, y, colour);
 	} else {
-		*((Colour *)video + x + y * _screen.pitch) = _black_colour;
+		size_t y_offset = static_cast<size_t>(y) * _screen.pitch;
+		*((Colour *)video + x + y_offset) = _black_colour;
 
-		VideoDriver::GetInstance()->GetAnimBuffer()[((uint32 *)video - (uint32 *)_screen.dst_ptr) + x + y * _screen.pitch] = colour;
+		VideoDriver::GetInstance()->GetAnimBuffer()[((uint32 *)video - (uint32 *)_screen.dst_ptr) + x + y_offset] = colour;
+	}
+}
+
+void Blitter_40bppAnim::SetPixel32(void *video, int x, int y, uint8 colour, uint32 colour32)
+{
+	if (_screen_disable_anim) {
+		Blitter_32bppOptimized::SetPixel32(video, x, y, colour, colour32);
+	} else {
+		size_t y_offset = static_cast<size_t>(y) * _screen.pitch;
+		*((Colour *)video + x + y_offset) = colour32;
+
+		VideoDriver::GetInstance()->GetAnimBuffer()[((uint32 *)video - (uint32 *)_screen.dst_ptr) + x + y_offset] = 0;
+	}
+}
+
+void Blitter_40bppAnim::SetRect(void *video, int x, int y, const uint8 *colours, uint lines, uint width, uint pitch)
+{
+	if (_screen_disable_anim) {
+		Blitter_32bppOptimized::SetRect(video, x, y, colours, lines, width, pitch);
+	} else {
+		Colour *dst = (Colour *)video + x + y * _screen.pitch;
+		uint8 *dstanim = ((uint32 *)dst - (uint32 *)_screen.dst_ptr) + VideoDriver::GetInstance()->GetAnimBuffer();
+		do {
+			memset((uint32 *)dst, _black_colour.data, width * sizeof(uint32));
+			memcpy(dstanim, colours, width * sizeof(uint8));
+			dst += _screen.pitch;
+			dstanim += _screen.pitch;
+			colours += pitch;
+		} while (--lines);
+	}
+}
+
+void Blitter_40bppAnim::SetRect32(void *video, int x, int y, const uint32 *colours, uint lines, uint width, uint pitch)
+{
+	if (_screen_disable_anim) {
+		Blitter_32bppOptimized::SetRect32(video, x, y, colours, lines, width, pitch);
+	} else {
+		Colour *dst = (Colour *)video + x + y * _screen.pitch;
+		uint8 *dstanim = ((uint32 *)dst - (uint32 *)_screen.dst_ptr) + VideoDriver::GetInstance()->GetAnimBuffer();
+		do {
+			memcpy((uint32 *)dst, colours, width * sizeof(uint32));
+			memset(dstanim, 0, width * sizeof(uint8));
+			dst += _screen.pitch;
+			dstanim += _screen.pitch;
+			colours += pitch;
+		} while (--lines);
 	}
 }
 
@@ -61,6 +108,11 @@ void Blitter_40bppAnim::DrawRect(void *video, int width, int height, uint8 colou
 		video = (uint32 *)video + _screen.pitch;
 		anim_line += _screen.pitch;
 	} while (--height);
+}
+
+void Blitter_40bppAnim::DrawRectAt(void *video, int x, int y, int width, int height, uint8 colour)
+{
+	this->Blitter_40bppAnim::DrawRect((Colour *)video + x + y * _screen.pitch, width, height, colour);
 }
 
 void Blitter_40bppAnim::DrawLine(void *video, int x, int y, int x2, int y2, int screen_width, int screen_height, uint8 colour, int width, int dash)
@@ -181,17 +233,25 @@ inline void Blitter_40bppAnim::Draw(const Blitter::BlitterParams *bp, ZoomLevel 
 			switch (mode) {
 				case BM_COLOUR_REMAP:
 				case BM_CRASH_REMAP:
+				case BM_COLOUR_REMAP_WITH_BRIGHTNESS:
 					if (src_px->a == 255) {
 						do {
 							uint8 m = GB(*src_n, 0, 8);
 							/* In case the m-channel is zero, only apply the crash remap by darkening the RGB colour. */
 							if (m == 0) {
+								Colour c = *src_px;
+								if (mode == BM_COLOUR_REMAP_WITH_BRIGHTNESS) c = AdjustBrightness(c, DEFAULT_BRIGHTNESS + bp->brightness_adjust);
+								if (mode == BM_CRASH_REMAP) c = this->MakeDark(c);
 								*dst = mode == BM_CRASH_REMAP ? this->MakeDark(*src_px) : *src_px;
 								*anim = 0;
 							} else {
 								uint r = remap[m];
 								if (r != 0) {
-									*dst = src_px->data;
+									if (mode == BM_COLOUR_REMAP_WITH_BRIGHTNESS) {
+										*dst = Colour(GetColourBrightness(*src_px) + bp->brightness_adjust, 0, 0);
+									} else {
+										*dst = src_px->data;
+									}
 									*anim = r;
 								}
 							}
@@ -205,13 +265,17 @@ inline void Blitter_40bppAnim::Draw(const Blitter::BlitterParams *bp, ZoomLevel 
 							uint8 m = GB(*src_n, 0, 8);
 							Colour b = this->RealizeBlendedColour(*anim, *dst);
 							if (m == 0) {
-								Colour c = mode == BM_CRASH_REMAP ? this->MakeDark(*src_px) : *src_px;
+								Colour c = *src_px;
+								if (mode == BM_COLOUR_REMAP_WITH_BRIGHTNESS) c = AdjustBrightness(c, DEFAULT_BRIGHTNESS + bp->brightness_adjust);
+								if (mode == BM_CRASH_REMAP) c = this->MakeDark(c);
 								*dst = this->ComposeColourRGBANoCheck(c.r, c.g, c.b, src_px->a, b);
 								*anim = 0;
 							} else {
 								uint r = remap[m];
 								if (r != 0) {
-									*dst = this->ComposeColourPANoCheck(this->LookupColourInPalette(r), src_px->a, b);
+									Colour c = this->LookupColourInPalette(r);
+									if (mode == BM_COLOUR_REMAP_WITH_BRIGHTNESS) c = AdjustBrightness(c, DEFAULT_BRIGHTNESS + bp->brightness_adjust);
+									*dst = this->ComposeColourPANoCheck(c, src_px->a, b);
 									*anim = 0; // Animation colours don't work with alpha-blending.
 								}
 							}
@@ -266,7 +330,15 @@ inline void Blitter_40bppAnim::Draw(const Blitter::BlitterParams *bp, ZoomLevel 
 					if (src_px->a == 255) {
 						do {
 							*anim++ = GB(*src_n, 0, 8);
-							*dst++ = src_px->data;
+							Colour c = *src_px;
+							if (mode == BM_NORMAL_WITH_BRIGHTNESS) {
+								if (GB(*src_n, 0, 8) == 0) {
+									c = AdjustBrightness(c, DEFAULT_BRIGHTNESS + bp->brightness_adjust);
+								} else {
+									c = Colour(GetColourBrightness(c) + bp->brightness_adjust, 0, 0);
+								}
+							}
+							*dst++ = c;
 							src_px++;
 							src_n++;
 						} while (--n != 0);
@@ -277,10 +349,14 @@ inline void Blitter_40bppAnim::Draw(const Blitter::BlitterParams *bp, ZoomLevel 
 							Colour b = this->RealizeBlendedColour(*anim, *dst);
 
 							if (m == 0) {
-								*dst = this->ComposeColourRGBANoCheck(src_px->r, src_px->g, src_px->b, src_px->a, b);
+								Colour c = *src_px;
+								if (mode == BM_NORMAL_WITH_BRIGHTNESS) c = AdjustBrightness(c, DEFAULT_BRIGHTNESS + bp->brightness_adjust);
+								*dst = this->ComposeColourRGBANoCheck(c.r, c.g, c.b, c.a, b);
 								*anim = 0;
 							} else {
-								*dst = this->ComposeColourPANoCheck(this->LookupColourInPalette(m), src_px->a, b);
+								Colour c = this->LookupColourInPalette(m);
+								if (mode == BM_NORMAL_WITH_BRIGHTNESS) c = Colour(GetColourBrightness(c) + bp->brightness_adjust, 0, 0);
+								*dst = this->ComposeColourPANoCheck(c, src_px->a, b);
 								*anim = m;
 							}
 
@@ -324,6 +400,8 @@ void Blitter_40bppAnim::Draw(Blitter::BlitterParams *bp, BlitterMode mode, ZoomL
 		case BM_TRANSPARENT:  Draw<BM_TRANSPARENT> (bp, zoom); return;
 		case BM_CRASH_REMAP:  Draw<BM_CRASH_REMAP> (bp, zoom); return;
 		case BM_BLACK_REMAP:  Draw<BM_BLACK_REMAP> (bp, zoom); return;
+		case BM_NORMAL_WITH_BRIGHTNESS:  Draw<BM_NORMAL_WITH_BRIGHTNESS> (bp, zoom); return;
+		case BM_COLOUR_REMAP_WITH_BRIGHTNESS:  Draw<BM_COLOUR_REMAP_WITH_BRIGHTNESS> (bp, zoom); return;
 	}
 }
 
@@ -353,7 +431,7 @@ void Blitter_40bppAnim::DrawColourMappingRect(void *dst, int width, int height, 
 			anim = anim - width + _screen.pitch;
 		} while (--height);
 	} else if (pal == PALETTE_NEWSPAPER) {
-		const uint8 *remap = GetNonSprite(pal, ST_RECOLOUR) + 1;
+		const uint8 *remap = GetNonSprite(pal, SpriteType::Recolour) + 1;
 		do {
 			for (int i = 0; i != width; i++) {
 				if (*anim == 0) *udst = MakeGrey(*udst);
@@ -365,7 +443,7 @@ void Blitter_40bppAnim::DrawColourMappingRect(void *dst, int width, int height, 
 			anim = anim - width + _screen.pitch;
 		} while (--height);
 	} else {
-		const uint8 *remap = GetNonSprite(pal, ST_RECOLOUR) + 1;
+		const uint8 *remap = GetNonSprite(pal, SpriteType::Recolour) + 1;
 		do {
 			for (int i = 0; i != width; i++) {
 				*anim = remap[*anim];
@@ -448,7 +526,7 @@ void Blitter_40bppAnim::CopyImageToBuffer(const void *video, void *dst, int widt
 	}
 }
 
-void Blitter_40bppAnim::ScrollBuffer(void *video, int &left, int &top, int &width, int &height, int scroll_x, int scroll_y)
+void Blitter_40bppAnim::ScrollBuffer(void *video, int left, int top, int width, int height, int scroll_x, int scroll_y)
 {
 	assert(!_screen_disable_anim);
 	assert(video >= _screen.dst_ptr && video <= (uint32 *)_screen.dst_ptr + _screen.width + _screen.height * _screen.pitch);
@@ -500,9 +578,9 @@ void Blitter_40bppAnim::ScrollBuffer(void *video, int &left, int &top, int &widt
 	Blitter_32bppBase::ScrollBuffer(video, left, top, width, height, scroll_x, scroll_y);
 }
 
-int Blitter_40bppAnim::BufferSize(int width, int height)
+size_t Blitter_40bppAnim::BufferSize(uint width, uint height)
 {
-	return width * height * (sizeof(uint32) + sizeof(uint8));
+	return (sizeof(uint32) + sizeof(uint8)) * width * height;
 }
 
 Blitter::PaletteAnimation Blitter_40bppAnim::UsePaletteAnimation()

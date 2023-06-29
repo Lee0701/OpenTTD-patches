@@ -51,7 +51,7 @@ struct Backup {
 		{
 			/* We cannot assert here, as missing restoration is 'normal' when exceptions are thrown.
 			 * Exceptions are especially used to abort world generation. */
-			Debug(misc, 0, "{}:{}: Backed-up value was not restored!", this->file, this->line);
+			DEBUG(misc, 0, "%s:%d: Backed-up value was not restored!", this->file, this->line);
 			this->Restore();
 		}
 	}
@@ -142,6 +142,57 @@ private:
 
 	const char * const file;
 	const int line;
+};
+
+struct AutoRestoreBackupNoNewValueTag {};
+
+/**
+ * Class to backup a specific variable and restore it upon destruction of this object to prevent
+ * stack values going out of scope before resetting the global to its original value. Contrary to
+ * #Backup this restores the variable automatically and there is no manual option to restore.
+ */
+template <typename T>
+struct AutoRestoreBackup {
+	/*
+	 * There is explicitly no only original constructor version, as that would make it possible
+	 * for the new value to go out of scope before this object goes out of scope, thus defeating
+	 * the whole goal and reason for existing of this object.
+	 */
+
+	/**
+	 * Backup variable.
+	 * @param original Variable to backup.
+	 * @param tag Tag to indicate that the variable's value should not be changed.
+	 */
+	AutoRestoreBackup(T &original, AutoRestoreBackupNoNewValueTag tag) : original(original), original_value(original) {}
+
+	/**
+	 * Backup variable and switch to new value.
+	 * @param original Variable to backup.
+	 * @param new_value New value for variable.
+	 */
+	AutoRestoreBackup(T &original, T new_value) : original(original), original_value(original)
+	{
+		original = new_value;
+	}
+
+	/**
+	 * Restore the variable upon object destruction.
+	 */
+	~AutoRestoreBackup()
+	{
+		this->original = this->original_value;
+	}
+
+private:
+	T &original;
+	T original_value;
+
+	/* Prevent copy, assignment and allocation on stack. */
+	AutoRestoreBackup(const AutoRestoreBackup&) = delete;
+	AutoRestoreBackup& operator=(AutoRestoreBackup&) = delete;
+	static void *operator new(std::size_t) = delete;
+	static void *operator new[](std::size_t) = delete;
 };
 
 #endif /* BACKUP_TYPE_HPP */

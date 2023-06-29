@@ -71,7 +71,13 @@ void QueryNetworkGameSocketHandler::Send()
  */
 NetworkRecvStatus QueryNetworkGameSocketHandler::SendGameInfo()
 {
-	this->SendPacket(new Packet(PACKET_CLIENT_GAME_INFO));
+	Packet *p = new Packet(PACKET_CLIENT_GAME_INFO);
+	p->Send_uint32(FIND_SERVER_EXTENDED_TOKEN);
+	p->Send_uint8(PACKET_SERVER_GAME_INFO_EXTENDED);       // reply type
+	p->Send_uint16(0);                                     // flags
+	p->Send_uint16(SERVER_GAME_INFO_EXTENDED_MAX_VERSION); // version
+	this->SendPacket(p);
+
 	return NETWORK_RECV_STATUS_OKAY;
 }
 
@@ -110,6 +116,24 @@ NetworkRecvStatus QueryNetworkGameSocketHandler::Receive_SERVER_GAME_INFO(Packet
 	/* Ensure we consider the server online. */
 	item->status = NGLS_ONLINE;
 	item->refreshing = false;
+
+	UpdateNetworkGameWindow();
+
+	return NETWORK_RECV_STATUS_CLOSE_QUERY;
+}
+
+NetworkRecvStatus QueryNetworkGameSocketHandler::Receive_SERVER_GAME_INFO_EXTENDED(Packet *p)
+{
+	NetworkGameList *item = NetworkGameListAddItem(this->connection_string);
+
+	/* Clear any existing GRFConfig chain. */
+	ClearGRFConfigList(&item->info.grfconfig);
+	/* Retrieve the NetworkGameInfo from the packet. */
+	DeserializeNetworkGameInfoExtended(p, &item->info);
+	/* Check for compatability with the client. */
+	CheckGameCompatibility(item->info, true);
+	/* Ensure we consider the server online. */
+	item->status = NGLS_ONLINE;
 
 	UpdateNetworkGameWindow();
 

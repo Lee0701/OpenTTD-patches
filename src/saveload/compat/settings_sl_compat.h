@@ -12,6 +12,8 @@
 
 #include "../saveload.h"
 
+namespace upstream_sl {
+
 /** Original field order for _gameopt. */
 const SaveLoadCompat _gameopt_sl_compat[] = {
 	SLC_VAR("diff_custom"),
@@ -262,5 +264,7 @@ const SaveLoadCompat _settings_sl_compat[] = {
 	SLC_VAR("locale.digit_group_separator_currency"),
 	SLC_VAR("locale.digit_decimal_separator"),
 };
+
+}
 
 #endif /* SAVELOAD_COMPAT_SETTINGS_H */

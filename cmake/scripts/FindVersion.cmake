@@ -68,7 +68,7 @@ if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
     string(REGEX REPLACE ".*/" "" BRANCH "${BRANCH}")
 
     # Get the tag
-    execute_process(COMMAND ${GIT_EXECUTABLE} name-rev --name-only --tags --no-undefined HEAD
+    execute_process(COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=9 --dirty=-m
                     OUTPUT_VARIABLE TAG
                     OUTPUT_STRIP_TRAILING_WHITESPACE
                     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -77,11 +77,11 @@ if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
     string(REGEX REPLACE "\^0$" "" TAG "${TAG}")
 
     if(REV_MODIFIED EQUAL 0)
-        set(HASHPREFIX "-g")
+        set(HASHSUFFIX "")
     elseif(REV_MODIFIED EQUAL 2)
-        set(HASHPREFIX "-m")
+        set(HASHSUFFIX "-m")
     else()
-        set(HASHPREFIX "-u")
+        set(HASHSUFFIX "-u")
     endif()
 
     # Set the version string
@@ -96,13 +96,59 @@ if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
             set(REV_ISSTABLETAG 0)
         endif()
     else()
-        set(REV_VERSION "${REV_ISODATE}-${BRANCH}${HASHPREFIX}${SHORTHASH}")
+        set(REV_VERSION "${REV_ISODATE}-${BRANCH}-g${SHORTHASH}${HASHSUFFIX}")
         set(REV_ISTAG 0)
         set(REV_ISSTABLETAG 0)
     endif()
 
+    if(EXISTS "${CMAKE_SOURCE_DIR}/.ottdrev-vc")
+        file(READ "${CMAKE_SOURCE_DIR}/.ottdrev-vc" OTTDREVVC)
+        string(REPLACE "\n" ";" OTTDREVVC "${OTTDREVVC}")
+        list(GET OTTDREVVC 0 OTTDREV)
+        string(REPLACE "\t" ";" OTTDREV "${OTTDREV}")
+        list(GET OTTDREV 0 REV_RELEASE)
+    else()
+        set(REV_RELEASE "jgrpp-0.0")
+    endif()
+
     # Restore LC_ALL
     set(ENV{LC_ALL} "${SAVED_LC_ALL}")
+elseif(EXISTS "${CMAKE_SOURCE_DIR}/.ottdrev-vc")
+    file(READ "${CMAKE_SOURCE_DIR}/.ottdrev-vc" OTTDREVVC)
+    string(REPLACE "\n" ";" OTTDREVVC "${OTTDREVVC}")
+    list(GET OTTDREVVC 0 OTTDREV)
+    list(GET OTTDREVVC 1 SRCHASH)
+    string(REPLACE "\t" ";" OTTDREV "${OTTDREV}")
+    list(GET OTTDREV 0 REV_VERSION)
+    list(GET OTTDREV 0 REV_RELEASE)
+    list(GET OTTDREV 1 REV_ISODATE)
+    list(GET OTTDREV 2 REV_MODIFIED)
+    list(GET OTTDREV 3 REV_HASH)
+    list(GET OTTDREV 4 REV_ISTAG)
+    list(GET OTTDREV 5 REV_ISSTABLETAG)
+    list(GET OTTDREV 6 REV_YEAR)
+    if(REV_MODIFIED EQUAL 2)
+        string(REGEX REPLACE "M$" "" REV_VERSION "${REV_VERSION}")
+    endif()
+    execute_process(COMMAND ./version_utils.sh -o
+                    RESULT_VARIABLE CAN_CHECK_MODIFIED
+                    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+    if(CAN_CHECK_MODIFIED EQUAL 0)
+        execute_process(COMMAND ./version_utils.sh -s
+                        OUTPUT_VARIABLE CURRENT_HASH
+                        OUTPUT_STRIP_TRAILING_WHITESPACE
+                        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        )
+        if(NOT CURRENT_HASH STREQUAL SRCHASH)
+            set(REV_MODIFIED 2)
+            string(SUBSTRING "${CURRENT_HASH}" 0 8 SHORT_CURRENT_HASH)
+            set(REV_VERSION "${REV_VERSION}-H${SHORT_CURRENT_HASH}")
+            set(REV_MODIFIED 2)
+        endif()
+    else()
+        set(REV_MODIFIED 1)
+    endif()
 elseif(EXISTS "${CMAKE_SOURCE_DIR}/.ottdrev")
     file(READ "${CMAKE_SOURCE_DIR}/.ottdrev" OTTDREV)
     string(REPLACE "\n" "" OTTDREV "${OTTDREV}")
@@ -114,9 +160,11 @@ elseif(EXISTS "${CMAKE_SOURCE_DIR}/.ottdrev")
     list(GET OTTDREV 4 REV_ISTAG)
     list(GET OTTDREV 5 REV_ISSTABLETAG)
     list(GET OTTDREV 6 REV_YEAR)
+    set(REV_RELEASE "jgrpp-0.0")
 else()
     message(WARNING "No version detected; this build will NOT be network compatible")
     set(REV_VERSION "norev0000")
+    set(REV_RELEASE "jgrpp-0.0")
     set(REV_ISODATE "19700101")
     set(REV_MODIFIED 1)
     set(REV_HASH "unknown")
@@ -125,17 +173,20 @@ else()
     set(REV_YEAR "1970")
 endif()
 
-message(STATUS "Version string: ${REV_VERSION}")
+string(REGEX MATCH "^jgrpp-[0-9]+(\.[0-9]+)?(\.[0-9]+)?" REV_RELEASE "${REV_RELEASE}")
+string(REPLACE "jgrpp-" "" REV_RELEASE "${REV_RELEASE}")
+
+message(STATUS "Version string: ${REV_VERSION}, Release: ${REV_RELEASE}")
 
 if(GENERATE_OTTDREV)
-    message(STATUS "Generating .ottdrev")
-    file(WRITE ${CMAKE_SOURCE_DIR}/.ottdrev "${REV_VERSION}\t${REV_ISODATE}\t${REV_MODIFIED}\t${REV_HASH}\t${REV_ISTAG}\t${REV_ISSTABLETAG}\t${REV_YEAR}\n")
-else()
+    message(STATUS "Generating ${GENERATE_OTTDREV}")
+    file(WRITE ${CMAKE_SOURCE_DIR}/${GENERATE_OTTDREV} "${REV_VERSION}\t${REV_ISODATE}\t${REV_MODIFIED}\t${REV_HASH}\t${REV_ISTAG}\t${REV_ISSTABLETAG}\t${REV_YEAR}\n")
+elseif(NOT "${FIND_VERSION_BINARY_DIR}" STREQUAL "")
     message(STATUS "Generating rev.cpp")
     configure_file("${CMAKE_SOURCE_DIR}/src/rev.cpp.in"
             "${FIND_VERSION_BINARY_DIR}/rev.cpp")
 
-    if(WINDOWS)
+    if(WIN32)
         message(STATUS "Generating ottdres.rc")
         configure_file("${CMAKE_SOURCE_DIR}/src/os/windows/ottdres.rc.in"
                 "${FIND_VERSION_BINARY_DIR}/ottdres.rc")

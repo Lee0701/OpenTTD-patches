@@ -78,11 +78,12 @@ void FiosGetDrives(FileList &file_list)
 			fios->type = FIOS_TYPE_DRIVE;
 			fios->mtime = 0;
 #ifndef __INNOTEK_LIBC__
-			snprintf(fios->name, lengthof(fios->name),  "%c:", 'A' + disk - 1);
+			fios->name += 'A' + disk - 1;
 #else
-			snprintf(fios->name, lengthof(fios->name),  "%c:", disk);
+			fios->name += (char)disk;
 #endif
-			strecpy(fios->title, fios->name, lastof(fios->title));
+			fios->name += ':';
+			fios->title = fios->name;
 		}
 	}
 
@@ -169,6 +170,11 @@ void ShowOSErrorBox(const char *buf, bool system)
 	WinTerminate(hab);
 }
 
+void DoOSAbort()
+{
+	abort();
+}
+
 int CDECL main(int argc, char *argv[])
 {
 	SetRandomSeed(time(nullptr));
@@ -206,9 +212,21 @@ bool GetClipboardContents(char *buffer, const char *last)
 void OSOpenBrowser(const char *url)
 {
 	// stub only
-	Debug(misc, 0, "Failed to open url: {}", url);
+	DEBUG(misc, 0, "Failed to open url: %s", url);
 }
 
 void SetCurrentThreadName(const char *)
 {
 }
+
+int GetCurrentThreadName(char *str, const char *last) { return 0; }
+
+void SetSelfAsMainThread() { }
+void SetSelfAsGameThread() { }
+void PerThreadSetup() { }
+void PerThreadSetupInit() { }
+
+bool IsMainThread() { return false; }
+bool IsNonMainThread() { return false; }
+bool IsGameThread() { return false; }
+bool IsNonGameThread() { return false; }

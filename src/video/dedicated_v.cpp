@@ -19,7 +19,7 @@
 #include "../blitter/factory.hpp"
 #include "../company_func.h"
 #include "../core/random_func.hpp"
-#include "../saveload/saveload.h"
+#include "../sl/saveload.h"
 #include "../thread.h"
 #include "../window_func.h"
 #include "dedicated_v.h"
@@ -108,7 +108,7 @@ static void CreateWindowsConsoleThread()
 	_hThread = CreateThread(nullptr, 0, (LPTHREAD_START_ROUTINE)CheckForConsoleInput, nullptr, 0, &dwThreadId);
 	if (_hThread == nullptr) usererror("Cannot create console thread!");
 
-	Debug(driver, 2, "Windows console thread started");
+	DEBUG(driver, 2, "Windows console thread started");
 }
 
 static void CloseWindowsConsoleThread()
@@ -116,7 +116,7 @@ static void CloseWindowsConsoleThread()
 	CloseHandle(_hThread);
 	CloseHandle(_hInputReady);
 	CloseHandle(_hWaitForInputHandling);
-	Debug(driver, 2, "Windows console thread shut down");
+	DEBUG(driver, 2, "Windows console thread shut down");
 }
 
 #endif
@@ -129,7 +129,8 @@ static void *_dedicated_video_mem;
 /* Whether a fork has been done. */
 bool _dedicated_forks;
 
-extern bool SafeLoad(const std::string &filename, SaveLoadOperation fop, DetailedFileType dft, GameMode newgm, Subdirectory subdir, struct LoadFilter *lf = nullptr);
+extern bool SafeLoad(const std::string &filename, SaveLoadOperation fop, DetailedFileType dft, GameMode newgm, Subdirectory subdir,
+		struct LoadFilter *lf = nullptr, std::string *error_detail = nullptr);
 
 static FVideoDriver_Dedicated iFVideoDriver_Dedicated;
 
@@ -139,7 +140,7 @@ const char *VideoDriver_Dedicated::Start(const StringList &parm)
 	this->UpdateAutoResolution();
 
 	int bpp = BlitterFactory::GetCurrentBlitter()->GetScreenDepth();
-	_dedicated_video_mem = (bpp == 0) ? nullptr : MallocT<byte>(_cur_resolution.width * _cur_resolution.height * (bpp / 8));
+	_dedicated_video_mem = (bpp == 0) ? nullptr : MallocT<byte>(static_cast<size_t>(_cur_resolution.width) * _cur_resolution.height * (bpp / 8));
 
 	_screen.width  = _screen.pitch = _cur_resolution.width;
 	_screen.height = _cur_resolution.height;
@@ -164,7 +165,7 @@ const char *VideoDriver_Dedicated::Start(const StringList &parm)
 	OS2_SwitchToConsoleMode();
 #endif
 
-	Debug(driver, 1, "Loading dedicated server");
+	DEBUG(driver, 1, "Loading dedicated server");
 	return nullptr;
 }
 
@@ -251,17 +252,6 @@ void VideoDriver_Dedicated::MainLoop()
 	/* If SwitchMode is SM_LOAD_GAME, it means that the user used the '-g' options */
 	if (_switch_mode != SM_LOAD_GAME) {
 		StartNewGameWithoutGUI(GENERATE_NEW_SEED);
-	} else {
-		/* First we need to test if the savegame can be loaded, else we will end up playing the
-		 *  intro game... */
-		if (SaveOrLoad(_file_to_saveload.name, _file_to_saveload.file_op, _file_to_saveload.detail_ftype, BASE_DIR) == SL_ERROR) {
-			/* Loading failed, pop out.. */
-			Debug(net, 0, "Loading requested map failed; closing server.");
-			return;
-		} else {
-			/* We can load this game, so go ahead */
-			_switch_mode = SM_LOAD_GAME;
-		}
 	}
 
 	this->is_game_threaded = false;

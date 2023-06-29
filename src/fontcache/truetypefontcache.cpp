@@ -74,16 +74,16 @@ TrueTypeFontCache::GlyphEntry *TrueTypeFontCache::GetGlyphPtr(GlyphID key)
 void TrueTypeFontCache::SetGlyphPtr(GlyphID key, const GlyphEntry *glyph, bool duplicate)
 {
 	if (this->glyph_to_sprite == nullptr) {
-		Debug(fontcache, 3, "Allocating root glyph cache for size {}", this->fs);
+		DEBUG(fontcache, 3, "Allocating root glyph cache for size %u", this->fs);
 		this->glyph_to_sprite = CallocT<GlyphEntry*>(256);
 	}
 
 	if (this->glyph_to_sprite[GB(key, 8, 8)] == nullptr) {
-		Debug(fontcache, 3, "Allocating glyph cache for range 0x{:02X}00, size {}", GB(key, 8, 8), this->fs);
+		DEBUG(fontcache, 3, "Allocating glyph cache for range 0x%02X00, size %u", GB(key, 8, 8), this->fs);
 		this->glyph_to_sprite[GB(key, 8, 8)] = CallocT<GlyphEntry>(256);
 	}
 
-	Debug(fontcache, 4, "Set glyph for unicode character 0x{:04X}, size {}", key, this->fs);
+	DEBUG(fontcache, 4, "Set glyph for unicode character 0x%04X, size %u", key, this->fs);
 	this->glyph_to_sprite[GB(key, 8, 8)][GB(key, 0, 8)].sprite = glyph->sprite;
 	this->glyph_to_sprite[GB(key, 8, 8)][GB(key, 0, 8)].width = glyph->width;
 	this->glyph_to_sprite[GB(key, 8, 8)][GB(key, 0, 8)].duplicate = duplicate;
@@ -141,7 +141,7 @@ const Sprite *TrueTypeFontCache::GetGlyph(GlyphID key)
 				8,  // width
 				0,  // x_offs
 				0,  // y_offs
-				ST_FONT,
+				SpriteType::Font,
 				SCC_PAL,
 				builtin_questionmark_data
 			};

@@ -164,7 +164,7 @@ static const char *convert_tofrom_fs(iconv_t convd, const char *name, char *outb
 
 	iconv(convd, nullptr, nullptr, nullptr, nullptr);
 	if (iconv(convd, &inbuf, &inlen, &outbuf, &outlen) == (size_t)(-1)) {
-		Debug(misc, 0, "[iconv] error converting '{}'. Errno {}", name, errno);
+		DEBUG(misc, 0, "[iconv] error converting '%s'. Errno %d", name, errno);
 	}
 
 	*outbuf = '\0';
@@ -186,7 +186,7 @@ std::string OTTD2FS(const std::string &name)
 		const char *env = GetLocalCode();
 		convd = iconv_open(env, INTERNALCODE);
 		if (convd == (iconv_t)(-1)) {
-			Debug(misc, 0, "[iconv] conversion from codeset '{}' to '{}' unsupported", INTERNALCODE, env);
+			DEBUG(misc, 0, "[iconv] conversion from codeset '%s' to '%s' unsupported", INTERNALCODE, env);
 			return name;
 		}
 	}
@@ -208,7 +208,7 @@ std::string FS2OTTD(const std::string &name)
 		const char *env = GetLocalCode();
 		convd = iconv_open(INTERNALCODE, env);
 		if (convd == (iconv_t)(-1)) {
-			Debug(misc, 0, "[iconv] conversion from codeset '{}' to '{}' unsupported", env, INTERNALCODE);
+			DEBUG(misc, 0, "[iconv] conversion from codeset '%s' to '%s' unsupported", env, INTERNALCODE);
 			return name;
 		}
 	}
@@ -233,6 +233,11 @@ void ShowOSErrorBox(const char *buf, bool system)
 		fprintf(stderr, "Error: %s\n", buf);
 	}
 }
+
+void NORETURN DoOSAbort()
+{
+	abort();
+}
 #endif
 
 #ifdef WITH_COCOA
@@ -253,6 +258,7 @@ int CDECL main(int argc, char *argv[])
 		argc = 1;
 	}
 #endif
+	PerThreadSetupInit();
 	CrashLog::InitialiseCrashLog();
 
 	SetRandomSeed(time(nullptr));
@@ -306,7 +312,7 @@ void OSOpenBrowser(const char *url)
 	args[1] = url;
 	args[2] = nullptr;
 	execvp(args[0], const_cast<char * const *>(args));
-	Debug(misc, 0, "Failed to open url: {}", url);
+	DEBUG(misc, 0, "Failed to open url: %s", url);
 	exit(0);
 }
 #endif /* __APPLE__ */
@@ -320,4 +326,77 @@ void SetCurrentThreadName(const char *threadName) {
 #if defined(__APPLE__)
 	MacOSSetThreadName(threadName);
 #endif /* defined(__APPLE__) */
+}
+
+int GetCurrentThreadName(char *str, const char *last)
+{
+#if !defined(NO_THREADS) && defined(__GLIBC__)
+#if __GLIBC_PREREQ(2, 12)
+	char buffer[16];
+	int result = pthread_getname_np(pthread_self(), buffer, sizeof(buffer));
+	if (result == 0) {
+		return seprintf(str, last, "%s", buffer);
+	}
+#endif
+#endif
+	return 0;
+}
+
+#if !defined(NO_THREADS)
+static pthread_t main_thread;
+static pthread_t game_thread;
+#endif
+
+void SetSelfAsMainThread()
+{
+#if !defined(NO_THREADS)
+	main_thread = pthread_self();
+#endif
+}
+
+void SetSelfAsGameThread()
+{
+#if !defined(NO_THREADS)
+	game_thread = pthread_self();
+#endif
+}
+
+void PerThreadSetup() { }
+
+void PerThreadSetupInit() { }
+
+bool IsMainThread()
+{
+#if !defined(NO_THREADS)
+	return main_thread == pthread_self();
+#else
+	return true;
+#endif
+}
+
+bool IsNonMainThread()
+{
+#if !defined(NO_THREADS)
+	return main_thread != pthread_self();
+#else
+	return false;
+#endif
+}
+
+bool IsGameThread()
+{
+#if !defined(NO_THREADS)
+	return game_thread == pthread_self();
+#else
+	return true;
+#endif
+}
+
+bool IsNonGameThread()
+{
+#if !defined(NO_THREADS)
+	return game_thread != pthread_self();
+#else
+	return false;
+#endif
 }

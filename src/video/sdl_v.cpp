@@ -23,6 +23,7 @@
 #include "../window_func.h"
 #include "sdl_v.h"
 #include <SDL.h>
+#include <algorithm>
 
 #include "../safeguards.h"
 
@@ -106,30 +107,35 @@ static void UpdatePalette(bool init = false)
 
 static void InitPalette()
 {
-	CopyPalette(_local_palette, true);
+	_local_palette = _cur_palette;
+	_local_palette.first_dirty = 0;
+	_local_palette.count_dirty = 256;
 	UpdatePalette(true);
 }
 
 void VideoDriver_SDL::CheckPaletteAnim()
 {
-	if (!CopyPalette(_local_palette)) return;
+	_local_palette = _cur_palette;
 
-	Blitter *blitter = BlitterFactory::GetCurrentBlitter();
+	if (_cur_palette.count_dirty != 0) {
+		Blitter *blitter = BlitterFactory::GetCurrentBlitter();
 
-	switch (blitter->UsePaletteAnimation()) {
-		case Blitter::PALETTE_ANIMATION_VIDEO_BACKEND:
-			UpdatePalette();
-			break;
+		switch (blitter->UsePaletteAnimation()) {
+			case Blitter::PALETTE_ANIMATION_VIDEO_BACKEND:
+				UpdatePalette();
+				break;
 
-		case Blitter::PALETTE_ANIMATION_BLITTER:
-			blitter->PaletteAnimate(_local_palette);
-			break;
+			case Blitter::PALETTE_ANIMATION_BLITTER:
+				blitter->PaletteAnimate(_local_palette);
+				break;
 
-		case Blitter::PALETTE_ANIMATION_NONE:
-			break;
+			case Blitter::PALETTE_ANIMATION_NONE:
+				break;
 
-		default:
-			NOT_REACHED();
+			default:
+				NOT_REACHED();
+		}
+		_cur_palette.count_dirty = 0;
 	}
 }
 
@@ -231,7 +237,7 @@ bool VideoDriver_SDL::CreateMainSurface(uint w, uint h)
 
 	GetAvailableVideoMode(&w, &h);
 
-	Debug(driver, 1, "SDL: using mode {}x{}x{}", w, h, bpp);
+	DEBUG(driver, 1, "SDL: using mode %ux%ux%d", w, h, bpp);
 
 	if (bpp == 0) usererror("Can't use a blitter that blits 0 bpp for normal visuals");
 
@@ -277,7 +283,7 @@ bool VideoDriver_SDL::CreateMainSurface(uint w, uint h)
 		want_hwpalette = _use_hwpalette;
 	}
 
-	if (want_hwpalette) Debug(driver, 1, "SDL: requesting hardware palette");
+	if (want_hwpalette) DEBUG(driver, 1, "SDL: requesting hardware palette");
 
 	/* Free any previously allocated shadow surface */
 	if (_sdl_surface != nullptr && _sdl_surface != _sdl_realscreen) SDL_FreeSurface(_sdl_surface);
@@ -292,7 +298,7 @@ bool VideoDriver_SDL::CreateMainSurface(uint w, uint h)
 			 * windowed), we restart the entire video
 			 * subsystem to force creating a new window.
 			 */
-			Debug(driver, 0, "SDL: Restarting SDL video subsystem, to force hwpalette change");
+			DEBUG(driver, 0, "SDL: Restarting SDL video subsystem, to force hwpalette change");
 			SDL_QuitSubSystem(SDL_INIT_VIDEO);
 			SDL_InitSubSystem(SDL_INIT_VIDEO);
 			ClaimMousePointer();
@@ -308,7 +314,7 @@ bool VideoDriver_SDL::CreateMainSurface(uint w, uint h)
 	/* DO NOT CHANGE TO HWSURFACE, IT DOES NOT WORK */
 	newscreen = SDL_SetVideoMode(w, h, bpp, SDL_SWSURFACE | (want_hwpalette ? SDL_HWPALETTE : 0) | (_fullscreen ? SDL_FULLSCREEN : SDL_RESIZABLE));
 	if (newscreen == nullptr) {
-		Debug(driver, 0, "SDL: Couldn't allocate a window to draw on");
+		DEBUG(driver, 0, "SDL: Couldn't allocate a window to draw on");
 		return false;
 	}
 	_sdl_realscreen = newscreen;
@@ -332,10 +338,10 @@ bool VideoDriver_SDL::CreateMainSurface(uint w, uint h)
 		 * This shadow surface will have SDL_HWPALLETE set, so
 		 * we won't create a second shadow surface in this case.
 		 */
-		Debug(driver, 1, "SDL: using shadow surface");
+		DEBUG(driver, 1, "SDL: using shadow surface");
 		newscreen = SDL_CreateRGBSurface(SDL_SWSURFACE, w, h, bpp, 0, 0, 0, 0);
 		if (newscreen == nullptr) {
-			Debug(driver, 0, "SDL: Couldn't allocate a shadow surface to draw on");
+			DEBUG(driver, 0, "SDL: Couldn't allocate a shadow surface to draw on");
 			return false;
 		}
 	}
@@ -431,7 +437,8 @@ static const SDLVkMapping _vk_mapping[] = {
 	AS(SDLK_QUOTE,   WKC_SINGLEQUOTE),
 	AS(SDLK_COMMA,   WKC_COMMA),
 	AS(SDLK_MINUS,   WKC_MINUS),
-	AS(SDLK_PERIOD,  WKC_PERIOD)
+	AS(SDLK_PERIOD,  WKC_PERIOD),
+	AS(SDLK_HASH,    WKC_HASH),
 };
 
 static uint ConvertSdlKeyIntoMy(SDL_keysym *sym, WChar *character)
@@ -589,7 +596,7 @@ const char *VideoDriver_SDL::Start(const StringList &param)
 	}
 
 	SDL_VideoDriverName(buf, sizeof buf);
-	Debug(driver, 1, "SDL: using driver '{}'", buf);
+	DEBUG(driver, 1, "SDL: using driver '%s'", buf);
 
 	MarkWholeScreenDirty();
 	SetupKeyboard();
@@ -620,17 +627,14 @@ void VideoDriver_SDL::InputLoop()
 	Uint8 *keys = SDL_GetKeyState(&numkeys);
 
 	bool old_ctrl_pressed = _ctrl_pressed;
+	bool old_shift_pressed = _shift_pressed;
 
-	_ctrl_pressed  = !!(mod & KMOD_CTRL);
-	_shift_pressed = !!(mod & KMOD_SHIFT);
+	_ctrl_pressed  = !!(mod & KMOD_CTRL) != _invert_ctrl;
+	_shift_pressed = !!(mod & KMOD_SHIFT) != _invert_shift;
 
-#if defined(_DEBUG)
-	this->fast_forward_key_pressed = _shift_pressed;
-#else
 	/* Speedup when pressing tab, except when using ALT+TAB
 	 * to switch to another application. */
 	this->fast_forward_key_pressed = keys[SDLK_TAB] && (mod & KMOD_ALT) == 0;
-#endif /* defined(_DEBUG) */
 
 	/* Determine which directional keys are down. */
 	_dirkeys =
@@ -640,6 +644,7 @@ void VideoDriver_SDL::InputLoop()
 		(keys[SDLK_DOWN]  ? 8 : 0);
 
 	if (old_ctrl_pressed != _ctrl_pressed) HandleCtrlChanged();
+	if (old_shift_pressed != _shift_pressed) HandleShiftChanged();
 }
 
 void VideoDriver_SDL::MainLoop()
@@ -672,7 +677,7 @@ bool VideoDriver_SDL::ToggleFullscreen(bool fullscreen)
 		_fullscreen ^= true;
 	}
 
-	InvalidateWindowClassesData(WC_GAME_OPTIONS, 3);
+	this->InvalidateGameOptionsWindow();
 	return ret;
 }
 

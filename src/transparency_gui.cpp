@@ -22,8 +22,32 @@
 
 TransparencyOptionBits _transparency_opt;  ///< The bits that should be transparent.
 TransparencyOptionBits _transparency_lock; ///< Prevent these bits from flipping with X.
+TransparencyOptionBits _transparency_opt_base;   ///< Separate base and extra fields for config save/load.
+TransparencyOptionBits _transparency_lock_base;  ///< "
+TransparencyOptionBits _transparency_opt_extra;  ///< "
+TransparencyOptionBits _transparency_lock_extra; ///< "
 TransparencyOptionBits _invisibility_opt;  ///< The bits that should be invisible.
 byte _display_opt; ///< What do we want to draw/do?
+byte _extra_display_opt;
+
+void PreTransparencyOptionSave()
+{
+	auto handler = [](TransparencyOptionBits value, TransparencyOptionBits &base, TransparencyOptionBits &extra) {
+		base = value & 0x1FF;
+		extra = (value >> 9) & 0x1;
+	};
+	handler(_transparency_opt, _transparency_opt_base, _transparency_opt_extra);
+	handler(_transparency_lock, _transparency_lock_base, _transparency_lock_extra);
+}
+
+void PostTransparencyOptionLoad()
+{
+	auto handler = [](TransparencyOptionBits base, TransparencyOptionBits extra) -> TransparencyOptionBits {
+		return (base & 0x3FF) | ((extra & 0x1) << 9);
+	};
+	_transparency_opt = handler(_transparency_opt_base, _transparency_opt_extra);
+	_transparency_lock = handler(_transparency_lock_base, _transparency_lock_extra);
+}
 
 class TransparenciesWindow : public Window
 {
@@ -50,7 +74,8 @@ public:
 			case WID_TT_BRIDGES:
 			case WID_TT_STRUCTURES:
 			case WID_TT_CATENARY:
-			case WID_TT_LOADING: {
+			case WID_TT_LOADING:
+			case WIT_TT_TUNNELS: {
 				uint i = widget - WID_TT_BEGIN;
 				if (HasBit(_transparency_lock, i)) DrawSprite(SPR_LOCK, PAL_NONE, r.left + WidgetDimensions::scaled.fullbevel.left, r.top + WidgetDimensions::scaled.fullbevel.top);
 				break;
@@ -58,7 +83,7 @@ public:
 			case WID_TT_BUTTONS: {
 				const Rect fr = r.Shrink(WidgetDimensions::scaled.framerect);
 				for (uint i = WID_TT_BEGIN; i < WID_TT_END; i++) {
-					if (i == WID_TT_LOADING) continue; // Do not draw button for invisible loading indicators.
+					if (i == WID_TT_LOADING || i == WIT_TT_TUNNELS) continue; // Do not draw button for invisible loading indicators.
 
 					const Rect wr = this->GetWidget<NWidgetBase>(i)->GetCurrentRect().Shrink(WidgetDimensions::scaled.fullbevel);
 					DrawFrameRect(wr.left, fr.top, wr.right, fr.bottom, COLOUR_PALE_GREEN,
@@ -141,6 +166,7 @@ static const NWidgetPart _nested_transparency_widgets[] = {
 		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_TT_STRUCTURES), SetMinimalSize(22, 22), SetFill(0, 1), SetDataTip(SPR_IMG_TRANSMITTER, STR_TRANSPARENT_STRUCTURES_TOOLTIP),
 		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_TT_CATENARY), SetMinimalSize(22, 22), SetFill(0, 1), SetDataTip(SPR_BUILD_X_ELRAIL, STR_TRANSPARENT_CATENARY_TOOLTIP),
 		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_TT_LOADING), SetMinimalSize(22, 22), SetFill(0, 1), SetDataTip(SPR_IMG_TRAINLIST, STR_TRANSPARENT_LOADING_TOOLTIP),
+		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WIT_TT_TUNNELS), SetMinimalSize(22, 22), SetFill(0, 1), SetDataTip(SPR_IMG_ROAD_TUNNEL, STR_TRANSPARENT_TUNNELS_TOOLTIP),
 		NWidget(WWT_PANEL, COLOUR_DARK_GREEN), SetFill(1, 1), EndContainer(),
 	EndContainer(),
 	/* Panel with 'invisibility' buttons. */

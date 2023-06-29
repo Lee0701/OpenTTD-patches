@@ -85,7 +85,8 @@ void Blitter_8bppOptimized::Draw(Blitter::BlitterParams *bp, BlitterMode mode, Z
 
 			switch (mode) {
 				case BM_COLOUR_REMAP:
-				case BM_CRASH_REMAP: {
+				case BM_CRASH_REMAP:
+				case BM_COLOUR_REMAP_WITH_BRIGHTNESS: {
 					const uint8 *remap = bp->remap;
 					do {
 						uint m = remap[*src];
@@ -127,13 +128,13 @@ Sprite *Blitter_8bppOptimized::Encode(const SpriteLoader::Sprite *sprite, Alloca
 	ZoomLevel zoom_min;
 	ZoomLevel zoom_max;
 
-	if (sprite->type == ST_FONT) {
+	if (sprite->type == SpriteType::Font) {
 		zoom_min = ZOOM_LVL_NORMAL;
 		zoom_max = ZOOM_LVL_NORMAL;
 	} else {
 		zoom_min = _settings_client.gui.zoom_min;
-		zoom_max = _settings_client.gui.zoom_max;
-		if (zoom_max == zoom_min) zoom_max = ZOOM_LVL_MAX;
+		zoom_max = (ZoomLevel) std::min(_settings_client.gui.zoom_max, ZOOM_LVL_DRAW_SPR);
+		if (zoom_max == zoom_min) zoom_max = ZOOM_LVL_DRAW_SPR;
 	}
 
 	for (ZoomLevel i = zoom_min; i <= zoom_max; i++) {

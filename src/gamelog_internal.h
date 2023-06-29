@@ -13,7 +13,7 @@
 #include "gamelog.h"
 
 /** Type of logged change */
-enum GamelogChangeType : uint8 {
+enum GamelogChangeType {
 	GLCT_MODE,        ///< Scenario editor x Game, different landscape
 	GLCT_REVISION,    ///< Changed game revision string
 	GLCT_OLDVER,      ///< Loaded from savegame without logged data
@@ -41,7 +41,7 @@ struct LoggedChange {
 			byte landscape;  ///< landscape (temperate, arctic, ...)
 		} mode;
 		struct {
-			char text[GAMELOG_REVISION_LENGTH]; ///< revision string, _openttd_revision
+			char *text;      ///< revision string, _openttd_revision
 			uint32 newgrf;   ///< _openttd_newgrf_version
 			uint16 slver;    ///< _sl_version
 			byte modified;   ///< _openttd_revision_modified

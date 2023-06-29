@@ -15,6 +15,13 @@
 #include "../core/smallvec_type.hpp"
 #include "table/strings.h"
 
+enum DropDownSyncFocus {
+	DDSF_NONE = 0,
+	DDSF_RECV_FOCUS = 1,
+	DDSF_LOST_FOCUS = 2,
+	DDSF_ALL = DDSF_RECV_FOCUS | DDSF_LOST_FOCUS,
+};
+
 /**
  * Base list item class from which others are derived. If placed in a list it
  * will appear as a horizontal line in the menu.
@@ -39,6 +46,7 @@ public:
 class DropDownListStringItem : public DropDownListItem {
 public:
 	StringID string; ///< String ID of item
+	TextColour colour_flags = TC_BEGIN;
 
 	DropDownListStringItem(StringID string, int result, bool masked) : DropDownListItem(result, masked), string(string) {}
 
@@ -46,6 +54,7 @@ public:
 	uint Width() const override;
 	void Draw(const Rect &r, bool sel, Colours bg_colour) const override;
 	virtual StringID String() const { return this->string; }
+	void SetColourFlags(TextColour colour_flags) { this->colour_flags = colour_flags; }
 
 	static bool NatSortFunc(std::unique_ptr<const DropDownListItem> const &first, std::unique_ptr<const DropDownListItem> const &second);
 };
@@ -98,8 +107,8 @@ public:
  */
 typedef std::vector<std::unique_ptr<const DropDownListItem>> DropDownList;
 
-void ShowDropDownListAt(Window *w, DropDownList &&list, int selected, int button, Rect wi_rect, Colours wi_colour, bool auto_width = false, bool instant_close = false);
+void ShowDropDownListAt(Window *w, DropDownList &&list, int selected, int button, Rect wi_rect, Colours wi_colour, bool instant_close = false, DropDownSyncFocus sync_parent_focus = DDSF_NONE);
 
-void ShowDropDownList(Window *w, DropDownList &&list, int selected, int button, uint width = 0, bool auto_width = false, bool instant_close = false);
+void ShowDropDownList(Window *w, DropDownList &&list, int selected, int button, uint width = 0, bool instant_close = false, DropDownSyncFocus sync_parent_focus = DDSF_NONE);
 
 #endif /* WIDGETS_DROPDOWN_TYPE_H */

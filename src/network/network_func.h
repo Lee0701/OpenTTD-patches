@@ -25,6 +25,9 @@
 #include "../string_type.h"
 
 extern NetworkCompanyState *_network_company_states;
+extern std::string _network_company_server_id;
+extern uint8 _network_company_password_storage_token[16];
+extern uint8 _network_company_password_storage_key[32];
 
 extern ClientID _network_own_client_id;
 extern ClientID _redirect_console_to_client;
@@ -34,6 +37,7 @@ extern StringList _network_host_list;
 extern StringList _network_ban_list;
 
 byte NetworkSpectatorCount();
+uint NetworkClientCount();
 bool NetworkIsValidClientName(const std::string_view client_name);
 bool NetworkValidateOurClientName();
 bool NetworkValidateClientName(std::string &client_name);
@@ -56,9 +60,12 @@ bool NetworkClientConnectGame(const std::string &connection_string, CompanyID de
 void NetworkClientJoinGame();
 void NetworkClientRequestMove(CompanyID company, const std::string &pass = "");
 void NetworkClientSendRcon(const std::string &password, const std::string &command);
-void NetworkClientSendChat(NetworkAction action, DestType type, int dest, const std::string &msg, int64 data = 0);
+void NetworkClientSendSettingsPassword(const std::string &password);
+void NetworkClientSendChat(NetworkAction action, DestType type, int dest, const std::string &msg, NetworkTextMessageData data = NetworkTextMessageData());
+void NetworkClientSendDesyncMsg(const char *msg);
 bool NetworkClientPreferTeamChat(const NetworkClientInfo *cio);
 bool NetworkCompanyIsPassworded(CompanyID company_id);
+uint NetworkMaxCompaniesAllowed();
 bool NetworkMaxCompaniesReached();
 void NetworkPrintClients();
 void NetworkHandlePauseChange(PauseMode prev_mode, PauseMode changed_mode);
@@ -77,7 +84,8 @@ bool NetworkServerChangeClientName(ClientID client_id, const std::string &new_na
 
 void NetworkServerDoMove(ClientID client_id, CompanyID company_id);
 void NetworkServerSendRcon(ClientID client_id, TextColour colour_code, const std::string &string);
-void NetworkServerSendChat(NetworkAction action, DestType type, int dest, const std::string &msg, ClientID from_id, int64 data = 0, bool from_admin = false);
+void NetworkServerSendRconDenied(ClientID client_id);
+void NetworkServerSendChat(NetworkAction action, DestType type, int dest, const std::string &msg, ClientID from_id, NetworkTextMessageData data = NetworkTextMessageData(), bool from_admin = false);
 void NetworkServerSendExternalChat(const std::string &source, TextColour colour, const std::string &user, const std::string &msg);
 
 void NetworkServerKickClient(ClientID client_id, const std::string &reason);
@@ -85,7 +93,8 @@ uint NetworkServerKickOrBanIP(ClientID client_id, bool ban, const std::string &r
 uint NetworkServerKickOrBanIP(const std::string &ip, bool ban, const std::string &reason);
 
 void NetworkInitChatMessage();
-void CDECL NetworkAddChatMessage(TextColour colour, uint duration, const std::string &message);
+void NetworkReInitChatBoxSize();
+void NetworkAddChatMessage(TextColour colour, uint duration, const std::string_view message);
 void NetworkUndrawChatMessage();
 void NetworkChatMessageLoop();
 

@@ -15,8 +15,13 @@
 #include "core/tcp_game.h"
 
 #include "../command_type.h"
-#include "../command_func.h"
-#include "../misc/endian_buffer.hpp"
+#include "../date_type.h"
+
+#include <vector>
+#include <array>
+#include <memory>
+
+static const uint32 FIND_SERVER_EXTENDED_TOKEN = 0x2A49582A;
 
 #ifdef RANDOM_DEBUG
 /**
@@ -78,7 +83,12 @@ extern uint32 _sync_seed_1;
 #ifdef NETWORK_SEND_DOUBLE_SEED
 extern uint32 _sync_seed_2;
 #endif
+extern uint64 _sync_state_checksum;
 extern uint32 _sync_frame;
+extern Date   _last_sync_date;
+extern DateFract _last_sync_date_fract;
+extern uint8  _last_sync_tick_skip_counter;
+extern uint32  _last_sync_frame_counter;
 extern bool _network_first_time;
 /* Vars needed for the join-GUI */
 extern NetworkJoinStatus _network_join_status;
@@ -95,6 +105,16 @@ extern uint8 _network_reconnect;
 
 extern CompanyMask _network_company_passworded;
 
+/* Sync debugging */
+struct NetworkSyncRecord {
+	uint32 frame;
+	uint32 seed_1;
+	uint64 state_checksum;
+};
+extern std::vector<NetworkSyncRecord> _network_client_sync_records;
+extern std::unique_ptr<std::array<NetworkSyncRecord, 1024>> _network_server_sync_records;
+extern uint32 _network_server_sync_records_next;
+
 void NetworkQueryServer(const std::string &connection_string);
 
 void GetBindAddresses(NetworkAddressList *addresses, uint16 port);
@@ -102,40 +122,55 @@ struct NetworkGameList *NetworkAddServer(const std::string &connection_string, b
 void NetworkRebuildHostList();
 void UpdateNetworkGameWindow();
 
+struct NetworkGameKeys {
+	byte x25519_priv_key[32];    ///< x25519 key: private part
+	byte x25519_pub_key[32];     ///< x25519 key: public part
+	bool inited = false;
+
+	void Initialise();
+};
+
+struct NetworkSharedSecrets {
+	byte shared_data[64];
+
+	~NetworkSharedSecrets();
+};
+
 /* From network_command.cpp */
 /**
  * Everything we need to know about a command to be able to execute it.
  */
-struct CommandPacket {
+struct CommandPacket : CommandContainer {
 	/** Make sure the pointer is nullptr. */
-	CommandPacket() : next(nullptr), company(INVALID_COMPANY), frame(0), my_cmd(false), tile(0) {}
+	CommandPacket() : next(nullptr), frame(0), client_id(INVALID_CLIENT_ID), company(INVALID_COMPANY), my_cmd(false) {}
 	CommandPacket *next; ///< the next command packet (if in queue)
-	CompanyID company;   ///< company that is executing the command
 	uint32 frame;        ///< the frame in which this packet is executed
+	ClientID client_id;  ///< originating client ID (or INVALID_CLIENT_ID if not specified)
+	CompanyID company;   ///< company that is executing the command
 	bool my_cmd;         ///< did the command originate from "me"
-
-	Commands cmd;              ///< command being executed.
-	StringID err_msg;          ///< string ID of error message to use.
-	CommandCallback *callback; ///< any callback function executed upon successful completion of the command.
-	TileIndex tile;            ///< location of the command (for e.g. error message or effect display).
-	CommandDataBuffer data;    ///< command parameters.
 };
 
 void NetworkDistributeCommands();
 void NetworkExecuteLocalCommandQueue();
 void NetworkFreeLocalCommandQueue();
 void NetworkSyncCommandQueue(NetworkClientSocket *cs);
-void NetworkReplaceCommandClientId(CommandPacket &cp, ClientID client_id);
 
 void ShowNetworkError(StringID error_string);
-void NetworkTextMessage(NetworkAction action, TextColour colour, bool self_send, const std::string &name, const std::string &str = "", int64 data = 0, const std::string &data_str = "");
+void NetworkTextMessage(NetworkAction action, TextColour colour, bool self_send, const std::string &name, const std::string &str = "", NetworkTextMessageData data = NetworkTextMessageData(), const char *data_str = "");
 uint NetworkCalculateLag(const NetworkClientSocket *cs);
 StringID GetNetworkErrorMsg(NetworkErrorCode err);
 bool NetworkMakeClientNameUnique(std::string &new_name);
 std::string GenerateCompanyPasswordHash(const std::string &password, const std::string &password_server_id, uint32 password_game_seed);
+std::vector<uint8> GenerateGeneralPasswordHash(const std::string &password, const std::string &password_server_id, uint64 password_game_seed);
+std::string BytesToHexString(const byte *data, uint length);
+std::string NetworkGenerateRandomKeyString(uint bytes);
 
 std::string_view ParseCompanyFromConnectionString(const std::string &connection_string, CompanyID *company_id);
 NetworkAddress ParseConnectionString(const std::string &connection_string, uint16 default_port);
 std::string NormalizeConnectionString(const std::string &connection_string, uint16 default_port);
+
+void ClientNetworkEmergencySave();
+
+void NetworkRandomBytesWithFallback(void *buf, size_t n);
 
 #endif /* NETWORK_INTERNAL_H */

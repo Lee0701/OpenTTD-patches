@@ -13,52 +13,33 @@
 #include <windows.h>
 bool MyShowCursor(bool show, bool toggle = false);
 
-class DllLoader {
-public:
-	explicit DllLoader(LPCTSTR filename)
-	{
-		this->hmodule = ::LoadLibrary(filename);
-		if (this->hmodule == nullptr) this->success = false;
-	}
-
-
-	~DllLoader()
-	{
-		::FreeLibrary(this->hmodule);
-	}
-
-	bool Success() { return this->success; }
-
-	class ProcAddress {
-	public:
-		explicit ProcAddress(void *p) : p(p) {}
-
-		template <typename T, typename = std::enable_if_t<std::is_function_v<T>>>
-		operator T *() const
-		{
-			return reinterpret_cast<T *>(this->p);
-		}
-
-	private:
-		void *p;
-	};
-
-	ProcAddress GetProcAddress(const char *proc_name)
-	{
-		void *p = reinterpret_cast<void *>(::GetProcAddress(this->hmodule, proc_name));
-		if (p == nullptr) this->success = false;
-		return ProcAddress(p);
-	}
-
-private:
-	HMODULE hmodule = nullptr;
-	bool success = true;
-};
+typedef void (*Function)(int);
+bool LoadLibraryList(Function proc[], const char *dll);
 
 char *convert_from_fs(const wchar_t *name, char *utf8_buf, size_t buflen);
-wchar_t *convert_to_fs(const char *name, wchar_t *utf16_buf, size_t buflen);
+wchar_t *convert_to_fs(const std::string_view name, wchar_t *utf16_buf, size_t buflen);
+
+#if defined(__MINGW32__) && !defined(__MINGW64__) && !(_WIN32_IE >= 0x0500)
+#define SHGFP_TYPE_CURRENT 0
+#endif /* __MINGW32__ */
 
 void Win32SetCurrentLocaleName(const char *iso_code);
-int OTTDStringCompare(const char *s1, const char *s2);
+int OTTDStringCompare(std::string_view s1, std::string_view s2);
+
+#ifdef __MINGW32__
+			/* GCC doesn't understand the expected usage of GetProcAddress(). */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-function-type"
+#endif /* __MINGW32__ */
+
+template <typename T>
+T GetProcAddressT(HMODULE hModule, LPCSTR lpProcName)
+{
+	return reinterpret_cast<T>(GetProcAddress(hModule, lpProcName));
+}
+
+#ifdef __MINGW32__
+#pragma GCC diagnostic pop
+#endif
 
 #endif /* WIN32_H */

@@ -30,6 +30,8 @@
 
 #include "core/udp.h"
 
+#include <vector>
+
 #include "../safeguards.h"
 
 static bool _network_udp_server;         ///< Is the UDP server started?
@@ -58,12 +60,22 @@ struct UDPSocket {
 static UDPSocket _udp_client("Client"); ///< udp client socket
 static UDPSocket _udp_server("Server"); ///< udp server socket
 
+static Packet PrepareUdpClientFindServerPacket()
+{
+	Packet p(PACKET_UDP_CLIENT_FIND_SERVER);
+	p.Send_uint32(FIND_SERVER_EXTENDED_TOKEN);
+	p.Send_uint16(0); // flags
+	p.Send_uint16(0); // version
+	return p;
+}
+
 ///*** Communication with clients (we are server) ***/
 
 /** Helper class for handling all server side communication. */
 class ServerNetworkUDPSocketHandler : public NetworkUDPSocketHandler {
 protected:
 	void Receive_CLIENT_FIND_SERVER(Packet *p, NetworkAddress *client_addr) override;
+	void Reply_CLIENT_FIND_SERVER_extended(Packet *p, NetworkAddress *client_addr);
 public:
 	/**
 	 * Create the socket.
@@ -75,10 +87,26 @@ public:
 
 void ServerNetworkUDPSocketHandler::Receive_CLIENT_FIND_SERVER(Packet *p, NetworkAddress *client_addr)
 {
+	if (p->CanReadFromPacket(8) && p->Recv_uint32() == FIND_SERVER_EXTENDED_TOKEN) {
+		this->Reply_CLIENT_FIND_SERVER_extended(p, client_addr);
+		return;
+	}
+
 	Packet packet(PACKET_UDP_SERVER_RESPONSE);
 	this->SendPacket(&packet, client_addr);
 
-	Debug(net, 7, "Queried from {}", client_addr->GetHostname());
+	DEBUG(net, 7, "Queried from %s", client_addr->GetHostname());
+}
+
+void ServerNetworkUDPSocketHandler::Reply_CLIENT_FIND_SERVER_extended(Packet *p, NetworkAddress *client_addr)
+{
+	[[maybe_unused]] uint16 flags = p->Recv_uint16();
+	uint16 version = p->Recv_uint16();
+
+	Packet packet(PACKET_UDP_EX_SERVER_RESPONSE);
+	this->SendPacket(&packet, client_addr);
+
+	DEBUG(net, 7, "Queried (extended: %u) from %s", version, client_addr->GetHostname());
 }
 
 ///*** Communication with servers (we are client) ***/
@@ -87,24 +115,32 @@ void ServerNetworkUDPSocketHandler::Receive_CLIENT_FIND_SERVER(Packet *p, Networ
 class ClientNetworkUDPSocketHandler : public NetworkUDPSocketHandler {
 protected:
 	void Receive_SERVER_RESPONSE(Packet *p, NetworkAddress *client_addr) override;
+	void Receive_EX_SERVER_RESPONSE(Packet *p, NetworkAddress *client_addr) override;
 public:
 	virtual ~ClientNetworkUDPSocketHandler() {}
 };
 
 void ClientNetworkUDPSocketHandler::Receive_SERVER_RESPONSE(Packet *p, NetworkAddress *client_addr)
 {
-	Debug(net, 3, "Server response from {}", client_addr->GetAddressAsString());
+	DEBUG(net, 3, "Server response from %s", NetworkAddressDumper().GetAddressAsString(client_addr));
 
 	NetworkAddServer(client_addr->GetAddressAsString(false), false, true);
+}
+
+void ClientNetworkUDPSocketHandler::Receive_EX_SERVER_RESPONSE(Packet *p, NetworkAddress *client_addr)
+{
+	DEBUG(net, 3, "Extended server response from %s", NetworkAddressDumper().GetAddressAsString(client_addr));
+
+	NetworkAddServer(client_addr->GetAddressAsString(false), false, true); // TODO, mark as extended
 }
 
 /** Broadcast to all ips */
 static void NetworkUDPBroadCast(NetworkUDPSocketHandler *socket)
 {
 	for (NetworkAddress &addr : _broadcast_list) {
-		Debug(net, 5, "Broadcasting to {}", addr.GetHostname());
+		DEBUG(net, 5, "Broadcasting to %s", addr.GetHostname());
 
-		Packet p(PACKET_UDP_CLIENT_FIND_SERVER);
+		Packet p = PrepareUdpClientFindServerPacket();
 		socket->SendPacket(&p, &addr, true, true);
 	}
 }
@@ -115,7 +151,7 @@ void NetworkUDPSearchGame()
 	/* We are still searching.. */
 	if (_network_udp_broadcast > 0) return;
 
-	Debug(net, 3, "Searching server");
+	DEBUG(net, 3, "Searching server");
 
 	NetworkUDPBroadCast(_udp_client.socket);
 	_network_udp_broadcast = 300; // Stay searching for 300 ticks
@@ -127,7 +163,7 @@ void NetworkUDPInitialize()
 	/* If not closed, then do it. */
 	if (_udp_server.socket != nullptr) NetworkUDPClose();
 
-	Debug(net, 3, "Initializing UDP listeners");
+	DEBUG(net, 3, "Initializing UDP listeners");
 	assert(_udp_client.socket == nullptr && _udp_server.socket == nullptr);
 
 	_udp_client.socket = new ClientNetworkUDPSocketHandler();
@@ -154,7 +190,7 @@ void NetworkUDPClose()
 
 	_network_udp_server = false;
 	_network_udp_broadcast = 0;
-	Debug(net, 5, "Closed UDP listeners");
+	DEBUG(net, 5, "Closed UDP listeners");
 }
 
 /** Receive the UDP packets. */

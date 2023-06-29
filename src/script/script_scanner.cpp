@@ -20,6 +20,7 @@
 #include "../network/network_content.h"
 #include "../3rdparty/md5/md5.h"
 #include "../tar_type.h"
+#include "../3rdparty/fmt/format.h"
 
 #include "../safeguards.h"
 
@@ -38,7 +39,7 @@ bool ScriptScanner::AddFile(const std::string &filename, size_t basepath_length,
 	try {
 		this->engine->LoadScript(filename.c_str());
 	} catch (Script_FatalError &e) {
-		Debug(script, 0, "Fatal error '{}' when trying to load the script '{}'.", e.GetErrorMessage(), filename);
+		DEBUG(script, 0, "Fatal error '%s' when trying to load the script '%s'.", e.GetErrorMessage().c_str(), filename.c_str());
 		return false;
 	}
 	return true;
@@ -84,11 +85,7 @@ void ScriptScanner::RescanDir()
 void ScriptScanner::Reset()
 {
 	for (const auto &item : this->info_list) {
-		free(item.first);
 		delete item.second;
-	}
-	for (const auto &item : this->info_single_list) {
-		free(item.first);
 	}
 
 	this->info_list.clear();
@@ -97,16 +94,12 @@ void ScriptScanner::Reset()
 
 void ScriptScanner::RegisterScript(ScriptInfo *info)
 {
-	char script_original_name[1024];
-	this->GetScriptName(info, script_original_name, lastof(script_original_name));
-	strtolower(script_original_name);
-
-	char script_name[1024];
-	seprintf(script_name, lastof(script_name), "%s.%d", script_original_name, info->GetVersion());
+	std::string script_original_name = this->GetScriptName(info);
+	std::string script_name = fmt::format("{}.{}", script_original_name, info->GetVersion());
 
 	/* Check if GetShortName follows the rules */
 	if (strlen(info->GetShortName()) != 4) {
-		Debug(script, 0, "The script '{}' returned a string from GetShortName() which is not four characaters. Unable to load the script.", info->GetName());
+		DEBUG(script, 0, "The script '%s' returned a string from GetShortName() which is not four characaters. Unable to load the script.", info->GetName());
 		delete info;
 		return;
 	}
@@ -115,7 +108,7 @@ void ScriptScanner::RegisterScript(ScriptInfo *info)
 		/* This script was already registered */
 #ifdef _WIN32
 		/* Windows doesn't care about the case */
-		if (strcasecmp(this->info_list[script_name]->GetMainScript(), info->GetMainScript()) == 0) {
+		if (StrEqualsIgnoreCase(this->info_list[script_name]->GetMainScript(), info->GetMainScript()) == 0) {
 #else
 		if (strcmp(this->info_list[script_name]->GetMainScript(), info->GetMainScript()) == 0) {
 #endif
@@ -123,24 +116,25 @@ void ScriptScanner::RegisterScript(ScriptInfo *info)
 			return;
 		}
 
-		Debug(script, 1, "Registering two scripts with the same name and version");
-		Debug(script, 1, "  1: {}", this->info_list[script_name]->GetMainScript());
-		Debug(script, 1, "  2: {}", info->GetMainScript());
-		Debug(script, 1, "The first is taking precedence.");
+		DEBUG(script, 1, "Registering two scripts with the same name and version");
+		DEBUG(script, 1, "  1: %s", this->info_list[script_name]->GetMainScript());
+		DEBUG(script, 1, "  2: %s", info->GetMainScript());
+		DEBUG(script, 1, "The first is taking precedence.");
 
 		delete info;
 		return;
 	}
 
-	this->info_list[stredup(script_name)] = info;
+	this->info_list[script_name] = info;
 
 	if (!info->IsDeveloperOnly() || _settings_client.gui.ai_developer_tools) {
 		/* Add the script to the 'unique' script list, where only the highest version
 		 *  of the script is registered. */
-		if (this->info_single_list.find(script_original_name) == this->info_single_list.end()) {
-			this->info_single_list[stredup(script_original_name)] = info;
-		} else if (this->info_single_list[script_original_name]->GetVersion() < info->GetVersion()) {
+		auto it = this->info_single_list.find(script_original_name);
+		if (it == this->info_single_list.end()) {
 			this->info_single_list[script_original_name] = info;
+		} else if (it->second->GetVersion() < info->GetVersion()) {
+			it->second = info;
 		}
 	}
 }
@@ -148,11 +142,11 @@ void ScriptScanner::RegisterScript(ScriptInfo *info)
 std::string ScriptScanner::GetConsoleList(bool newest_only) const
 {
 	std::string p;
-	p += fmt::format("List of {}:\n", this->GetScannerName());
+	p += stdstr_fmt("List of %s:\n", this->GetScannerName());
 	const ScriptInfoList &list = newest_only ? this->info_single_list : this->info_list;
 	for (const auto &item : list) {
 		ScriptInfo *i = item.second;
-		p += fmt::format("{:>10} (v{:d}): {}\n", i->GetName(), i->GetVersion(), i->GetDescription());
+		p += stdstr_fmt("%10s (v%d): %s\n", i->GetName(), i->GetVersion(), i->GetDescription());
 	}
 	p += "\n";
 
@@ -183,7 +177,7 @@ struct ScriptFileChecksumCreator : FileScanner {
 		byte tmp_md5sum[16];
 
 		/* Open the file ... */
-		FILE *f = FioFOpenFile(filename, "rb", this->dir, &size);
+		FILE *f = FioFOpenFile(filename.c_str(), "rb", this->dir, &size);
 		if (f == nullptr) return false;
 
 		/* ... calculate md5sum... */
@@ -231,7 +225,7 @@ static bool IsSameScript(const ContentInfo *ci, bool md5sum, ScriptInfo *info, S
 
 			/* Check the extension. */
 			const char *ext = strrchr(tar.first.c_str(), '.');
-			if (ext == nullptr || strcasecmp(ext, ".nut") != 0) continue;
+			if (ext == nullptr || !StrEqualsIgnoreCase(ext, ".nut")) continue;
 
 			checksum.AddFile(tar.first, 0, tar_filename);
 		}

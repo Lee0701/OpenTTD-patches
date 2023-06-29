@@ -39,7 +39,7 @@ struct OskWindow : public Window {
 	QueryString *qs;       ///< text-input
 	int text_btn;          ///< widget number of parent's text field
 	Textbuf *text;         ///< pointer to parent's textbuffer (to update caret position)
-	char *orig_str_buf;    ///< Original string.
+	std::string orig_str;  ///< Original string.
 	bool shift;            ///< Is the shift effectively pressed?
 
 	OskWindow(WindowDesc *desc, Window *parent, int button) : Window(desc)
@@ -58,7 +58,7 @@ struct OskWindow : public Window {
 		this->querystrings[WID_OSK_TEXT] = this->qs;
 
 		/* make a copy in case we need to reset later */
-		this->orig_str_buf = stredup(this->qs->text.buf);
+		this->orig_str = this->qs->text.buf;
 
 		this->InitNested(0);
 		this->SetFocusedWidget(WID_OSK_TEXT);
@@ -67,11 +67,6 @@ struct OskWindow : public Window {
 		this->DisableWidget(WID_OSK_SPECIAL);
 
 		this->UpdateOskState();
-	}
-
-	~OskWindow()
-	{
-		free(this->orig_str_buf);
 	}
 
 	/**
@@ -162,7 +157,7 @@ struct OskWindow : public Window {
 				break;
 
 			case WID_OSK_OK:
-				if (this->qs->orig == nullptr || strcmp(this->qs->text.buf, this->qs->orig) != 0) {
+				if (!this->qs->orig.has_value() || this->qs->text.buf != this->qs->orig) {
 					/* pass information by simulating a button press on parent window */
 					if (this->qs->ok_button >= 0) {
 						this->parent->OnClick(pt, this->qs->ok_button, 1);
@@ -170,7 +165,7 @@ struct OskWindow : public Window {
 						return;
 					}
 				}
-				this->Close();
+				delete this;
 				break;
 
 			case WID_OSK_CANCEL:
@@ -179,10 +174,10 @@ struct OskWindow : public Window {
 					/* Window gets deleted when the parent window removes itself. */
 					return;
 				} else { // or reset to original string
-					qs->text.Assign(this->orig_str_buf);
+					qs->text.Assign(this->orig_str.c_str());
 					qs->text.MovePos(WKC_END);
 					this->OnEditboxChanged(WID_OSK_TEXT);
-					this->Close();
+					delete this;
 				}
 				break;
 		}
@@ -202,10 +197,10 @@ struct OskWindow : public Window {
 		this->parent->SetWidgetDirty(this->text_btn);
 	}
 
-	void OnFocusLost() override
+	void OnFocusLost(Window *newly_focused_window) override
 	{
 		VideoDriver::GetInstance()->EditBoxLostFocus();
-		this->Close();
+		delete this;
 	}
 };
 
@@ -325,7 +320,7 @@ static NWidgetBase *MakeSpacebarKeys(int *biggest_index)
 
 
 static const NWidgetPart _nested_osk_widgets[] = {
-	NWidget(WWT_CAPTION, COLOUR_GREY, WID_OSK_CAPTION), SetDataTip(STR_WHITE_STRING, STR_NULL),
+	NWidget(WWT_CAPTION, COLOUR_GREY, WID_OSK_CAPTION), SetDataTip(STR_JUST_STRING, STR_NULL), SetTextStyle(TC_WHITE),
 	NWidget(WWT_PANEL, COLOUR_GREY),
 		NWidget(WWT_EDITBOX, COLOUR_GREY, WID_OSK_TEXT), SetMinimalSize(252, 12), SetPadding(2, 2, 2, 2),
 	EndContainer(),
@@ -407,7 +402,7 @@ void GetKeyboardLayout()
  */
 void ShowOnScreenKeyboard(Window *parent, int button)
 {
-	CloseWindowById(WC_OSK, 0);
+	DeleteWindowById(WC_OSK, 0);
 
 	GetKeyboardLayout();
 	new OskWindow(&_osk_desc, parent, button);
@@ -425,8 +420,7 @@ void UpdateOSKOriginalText(const Window *parent, int button)
 	OskWindow *osk = dynamic_cast<OskWindow *>(FindWindowById(WC_OSK, 0));
 	if (osk == nullptr || osk->parent != parent || osk->text_btn != button) return;
 
-	free(osk->orig_str_buf);
-	osk->orig_str_buf = stredup(osk->qs->text.buf);
+	osk->orig_str = osk->qs->text.buf;
 
 	osk->SetDirty();
 }

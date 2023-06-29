@@ -24,219 +24,9 @@
 
 #include "../safeguards.h"
 
-/**
- * Converts an old company manager's face format to the new company manager's face format
- *
- * Meaning of the bits in the old face (some bits are used in several times):
- * - 4 and 5: chin
- * - 6 to 9: eyebrows
- * - 10 to 13: nose
- * - 13 to 15: lips (also moustache for males)
- * - 16 to 19: hair
- * - 20 to 22: eye colour
- * - 20 to 27: tie, ear rings etc.
- * - 28 to 30: glasses
- * - 19, 26 and 27: race (bit 27 set and bit 19 equal to bit 26 = black, otherwise white)
- * - 31: gender (0 = male, 1 = female)
- *
- * @param face the face in the old format
- * @return the face in the new format
- */
-CompanyManagerFace ConvertFromOldCompanyManagerFace(uint32 face)
-{
-	CompanyManagerFace cmf = 0;
-	GenderEthnicity ge = GE_WM;
+void SetDefaultCompanySettings(CompanyID cid);
 
-	if (HasBit(face, 31)) SetBit(ge, GENDER_FEMALE);
-	if (HasBit(face, 27) && (HasBit(face, 26) == HasBit(face, 19))) SetBit(ge, ETHNICITY_BLACK);
-
-	SetCompanyManagerFaceBits(cmf, CMFV_GEN_ETHN,    ge, ge);
-	SetCompanyManagerFaceBits(cmf, CMFV_HAS_GLASSES, ge, GB(face, 28, 3) <= 1);
-	SetCompanyManagerFaceBits(cmf, CMFV_EYE_COLOUR,  ge, HasBit(ge, ETHNICITY_BLACK) ? 0 : ClampU(GB(face, 20, 3), 5, 7) - 5);
-	SetCompanyManagerFaceBits(cmf, CMFV_CHIN,        ge, ScaleCompanyManagerFaceValue(CMFV_CHIN,     ge, GB(face,  4, 2)));
-	SetCompanyManagerFaceBits(cmf, CMFV_EYEBROWS,    ge, ScaleCompanyManagerFaceValue(CMFV_EYEBROWS, ge, GB(face,  6, 4)));
-	SetCompanyManagerFaceBits(cmf, CMFV_HAIR,        ge, ScaleCompanyManagerFaceValue(CMFV_HAIR,     ge, GB(face, 16, 4)));
-	SetCompanyManagerFaceBits(cmf, CMFV_JACKET,      ge, ScaleCompanyManagerFaceValue(CMFV_JACKET,   ge, GB(face, 20, 2)));
-	SetCompanyManagerFaceBits(cmf, CMFV_COLLAR,      ge, ScaleCompanyManagerFaceValue(CMFV_COLLAR,   ge, GB(face, 22, 2)));
-	SetCompanyManagerFaceBits(cmf, CMFV_GLASSES,     ge, GB(face, 28, 1));
-
-	uint lips = GB(face, 10, 4);
-	if (!HasBit(ge, GENDER_FEMALE) && lips < 4) {
-		SetCompanyManagerFaceBits(cmf, CMFV_HAS_MOUSTACHE, ge, true);
-		SetCompanyManagerFaceBits(cmf, CMFV_MOUSTACHE,     ge, std::max(lips, 1U) - 1);
-	} else {
-		if (!HasBit(ge, GENDER_FEMALE)) {
-			lips = lips * 15 / 16;
-			lips -= 3;
-			if (HasBit(ge, ETHNICITY_BLACK) && lips > 8) lips = 0;
-		} else {
-			lips = ScaleCompanyManagerFaceValue(CMFV_LIPS, ge, lips);
-		}
-		SetCompanyManagerFaceBits(cmf, CMFV_LIPS, ge, lips);
-
-		uint nose = GB(face, 13, 3);
-		if (ge == GE_WF) {
-			nose = (nose * 3 >> 3) * 3 >> 2; // There is 'hole' in the nose sprites for females
-		} else {
-			nose = ScaleCompanyManagerFaceValue(CMFV_NOSE, ge, nose);
-		}
-		SetCompanyManagerFaceBits(cmf, CMFV_NOSE, ge, nose);
-	}
-
-	uint tie_earring = GB(face, 24, 4);
-	if (!HasBit(ge, GENDER_FEMALE) || tie_earring < 3) { // Not all females have an earring
-		if (HasBit(ge, GENDER_FEMALE)) SetCompanyManagerFaceBits(cmf, CMFV_HAS_TIE_EARRING, ge, true);
-		SetCompanyManagerFaceBits(cmf, CMFV_TIE_EARRING, ge, HasBit(ge, GENDER_FEMALE) ? tie_earring : ScaleCompanyManagerFaceValue(CMFV_TIE_EARRING, ge, tie_earring / 2));
-	}
-
-	return cmf;
-}
-
-/** Rebuilding of company statistics after loading a savegame. */
-void AfterLoadCompanyStats()
-{
-	/* Reset infrastructure statistics to zero. */
-	for (Company *c : Company::Iterate()) MemSetT(&c->infrastructure, 0);
-
-	/* Collect airport count. */
-	for (const Station *st : Station::Iterate()) {
-		if ((st->facilities & FACIL_AIRPORT) && Company::IsValidID(st->owner)) {
-			Company::Get(st->owner)->infrastructure.airport++;
-		}
-	}
-
-	Company *c;
-	for (TileIndex tile = 0; tile < MapSize(); tile++) {
-		switch (GetTileType(tile)) {
-			case MP_RAILWAY:
-				c = Company::GetIfValid(GetTileOwner(tile));
-				if (c != nullptr) {
-					uint pieces = 1;
-					if (IsPlainRail(tile)) {
-						TrackBits bits = GetTrackBits(tile);
-						pieces = CountBits(bits);
-						if (TracksOverlap(bits)) pieces *= pieces;
-					}
-					c->infrastructure.rail[GetRailType(tile)] += pieces;
-
-					if (HasSignals(tile)) c->infrastructure.signal += CountBits(GetPresentSignals(tile));
-				}
-				break;
-
-			case MP_ROAD: {
-				if (IsLevelCrossing(tile)) {
-					c = Company::GetIfValid(GetTileOwner(tile));
-					if (c != nullptr) c->infrastructure.rail[GetRailType(tile)] += LEVELCROSSING_TRACKBIT_FACTOR;
-				}
-
-				/* Iterate all present road types as each can have a different owner. */
-				for (RoadTramType rtt : _roadtramtypes) {
-					RoadType rt = GetRoadType(tile, rtt);
-					if (rt == INVALID_ROADTYPE) continue;
-					c = Company::GetIfValid(IsRoadDepot(tile) ? GetTileOwner(tile) : GetRoadOwner(tile, rtt));
-					/* A level crossings and depots have two road bits. */
-					if (c != nullptr) c->infrastructure.road[rt] += IsNormalRoad(tile) ? CountBits(GetRoadBits(tile, rtt)) : 2;
-				}
-				break;
-			}
-
-			case MP_STATION:
-				c = Company::GetIfValid(GetTileOwner(tile));
-				if (c != nullptr && GetStationType(tile) != STATION_AIRPORT && !IsBuoy(tile)) c->infrastructure.station++;
-
-				switch (GetStationType(tile)) {
-					case STATION_RAIL:
-					case STATION_WAYPOINT:
-						if (c != nullptr && !IsStationTileBlocked(tile)) c->infrastructure.rail[GetRailType(tile)]++;
-						break;
-
-					case STATION_BUS:
-					case STATION_TRUCK: {
-						/* Iterate all present road types as each can have a different owner. */
-						for (RoadTramType rtt : _roadtramtypes) {
-							RoadType rt = GetRoadType(tile, rtt);
-							if (rt == INVALID_ROADTYPE) continue;
-							c = Company::GetIfValid(GetRoadOwner(tile, rtt));
-							if (c != nullptr) c->infrastructure.road[rt] += 2; // A road stop has two road bits.
-						}
-						break;
-					}
-
-					case STATION_DOCK:
-					case STATION_BUOY:
-						if (GetWaterClass(tile) == WATER_CLASS_CANAL) {
-							if (c != nullptr) c->infrastructure.water++;
-						}
-						break;
-
-					default:
-						break;
-				}
-				break;
-
-			case MP_WATER:
-				if (IsShipDepot(tile) || IsLock(tile)) {
-					c = Company::GetIfValid(GetTileOwner(tile));
-					if (c != nullptr) {
-						if (IsShipDepot(tile)) c->infrastructure.water += LOCK_DEPOT_TILE_FACTOR;
-						if (IsLock(tile) && GetLockPart(tile) == LOCK_PART_MIDDLE) {
-							/* The middle tile specifies the owner of the lock. */
-							c->infrastructure.water += 3 * LOCK_DEPOT_TILE_FACTOR; // the middle tile specifies the owner of the
-							break; // do not count the middle tile as canal
-						}
-					}
-				}
-				FALLTHROUGH;
-
-			case MP_OBJECT:
-				if (GetWaterClass(tile) == WATER_CLASS_CANAL) {
-					c = Company::GetIfValid(GetTileOwner(tile));
-					if (c != nullptr) c->infrastructure.water++;
-				}
-				break;
-
-			case MP_TUNNELBRIDGE: {
-				/* Only count the tunnel/bridge if we're on the northern end tile. */
-				TileIndex other_end = GetOtherTunnelBridgeEnd(tile);
-				if (tile < other_end) {
-					/* Count each tunnel/bridge TUNNELBRIDGE_TRACKBIT_FACTOR times to simulate
-					 * the higher structural maintenance needs, and don't forget the end tiles. */
-					uint len = (GetTunnelBridgeLength(tile, other_end) + 2) * TUNNELBRIDGE_TRACKBIT_FACTOR;
-
-					switch (GetTunnelBridgeTransportType(tile)) {
-						case TRANSPORT_RAIL:
-							c = Company::GetIfValid(GetTileOwner(tile));
-							if (c != nullptr) c->infrastructure.rail[GetRailType(tile)] += len;
-							break;
-
-						case TRANSPORT_ROAD: {
-							/* Iterate all present road types as each can have a different owner. */
-							for (RoadTramType rtt : _roadtramtypes) {
-								RoadType rt = GetRoadType(tile, rtt);
-								if (rt == INVALID_ROADTYPE) continue;
-								c = Company::GetIfValid(GetRoadOwner(tile, rtt));
-								if (c != nullptr) c->infrastructure.road[rt] += len * 2; // A full diagonal road has two road bits.
-							}
-							break;
-						}
-
-						case TRANSPORT_WATER:
-							c = Company::GetIfValid(GetTileOwner(tile));
-							if (c != nullptr) c->infrastructure.water += len;
-							break;
-
-						default:
-							break;
-					}
-				}
-				break;
-			}
-
-			default:
-				break;
-		}
-	}
-}
+namespace upstream_sl {
 
 /* We do need to read this single value, as the bigger it gets, the more data is stored */
 struct CompanyOldAI {
@@ -517,7 +307,8 @@ struct PLYRChunkHandler : ChunkHandler {
 		int index;
 		while ((index = SlIterateArray()) != -1) {
 			Company *c = new (index) Company();
-			SlObject(c, slt);
+			SetDefaultCompanySettings(c->index);
+			SlObject((CompanyProperties *)c, slt);
 			_company_colours[index] = (Colours)c->colour;
 		}
 	}
@@ -557,7 +348,7 @@ struct PLYRChunkHandler : ChunkHandler {
 	void FixPointers() const override
 	{
 		for (Company *c : Company::Iterate()) {
-			SlObject(c, _company_desc);
+			SlObject((CompanyProperties *)c, _company_desc);
 		}
 	}
 };
@@ -568,3 +359,5 @@ static const ChunkHandlerRef company_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _company_chunk_handlers(company_chunk_handlers);
+
+}

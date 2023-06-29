@@ -8,6 +8,7 @@
 /** @file statusbar_gui.cpp The GUI for the bottom status bar. */
 
 #include "stdafx.h"
+#include "core/backup_type.hpp"
 #include "date_func.h"
 #include "gfx_func.h"
 #include "news_func.h"
@@ -19,7 +20,7 @@
 #include "news_gui.h"
 #include "company_gui.h"
 #include "window_gui.h"
-#include "saveload/saveload.h"
+#include "sl/saveload.h"
 #include "window_func.h"
 #include "statusbar_gui.h"
 #include "toolbar_gui.h"
@@ -68,10 +69,8 @@ static bool DrawScrollingStatusText(const NewsItem *ni, int scroll_pos, int left
 	int width = GetStringBoundingBox(buffer).width;
 	int pos = (_current_text_dir == TD_RTL) ? (scroll_pos - width) : (right - scroll_pos - left);
 
-	DrawPixelInfo *old_dpi = _cur_dpi;
-	_cur_dpi = &tmp_dpi;
+	AutoRestoreBackup dpi_backup(_cur_dpi, &tmp_dpi);
 	DrawString(pos, INT16_MAX, 0, buffer, TC_LIGHT_BLUE, SA_LEFT | SA_FORCE);
-	_cur_dpi = old_dpi;
 
 	return (_current_text_dir == TD_RTL) ? (pos < right - left) : (pos + width > 0);
 }
@@ -81,6 +80,7 @@ struct StatusBarWindow : Window {
 	int ticker_scroll;
 	GUITimer ticker_timer;
 	GUITimer reminder_timeout;
+	int64 last_minute = 0;
 
 	static const int TICKER_STOP    = 1640; ///< scrolling is finished when counter reaches this value
 	static const int REMINDER_START = 1350; ///< time in ms for reminder notification (red dot on the right) to stay
@@ -114,15 +114,15 @@ struct StatusBarWindow : Window {
 		Dimension d;
 		switch (widget) {
 			case WID_S_LEFT:
-				SetDParamMaxValue(0, MAX_YEAR * DAYS_IN_YEAR);
-				d = GetStringBoundingBox(STR_WHITE_DATE_LONG);
+				SetDParam(0, DateToScaledDateTicks(MAX_YEAR * DAYS_IN_YEAR));
+				d = GetStringBoundingBox(STR_JUST_DATE_WALLCLOCK_LONG);
 				break;
 
 			case WID_S_RIGHT: {
 				int64 max_money = UINT32_MAX;
 				for (const Company *c : Company::Iterate()) max_money = std::max<int64>(c->money, max_money);
 				SetDParam(0, 100LL * max_money);
-				d = GetStringBoundingBox(STR_COMPANY_MONEY);
+				d = GetStringBoundingBox(STR_JUST_CURRENCY_LONG);
 				break;
 			}
 
@@ -142,8 +142,8 @@ struct StatusBarWindow : Window {
 		switch (widget) {
 			case WID_S_LEFT:
 				/* Draw the date */
-				SetDParam(0, _date);
-				DrawString(tr, STR_WHITE_DATE_LONG, TC_FROMSTRING, SA_HOR_CENTER);
+				SetDParam(0, _scaled_date_ticks);
+				DrawString(tr, STR_JUST_DATE_WALLCLOCK_LONG, TC_WHITE, SA_HOR_CENTER);
 				break;
 
 			case WID_S_RIGHT: {
@@ -154,7 +154,7 @@ struct StatusBarWindow : Window {
 					const Company *c = Company::GetIfValid(_local_company);
 					if (c != nullptr) {
 						SetDParam(0, c->money);
-						DrawString(tr, STR_COMPANY_MONEY, TC_FROMSTRING, SA_HOR_CENTER);
+						DrawString(tr, STR_JUST_CURRENCY_LONG, TC_WHITE, SA_HOR_CENTER);
 					}
 				}
 				break;
@@ -213,6 +213,9 @@ struct StatusBarWindow : Window {
 				this->ticker_scroll    =   TICKER_STOP; // reset ticker ...
 				this->reminder_timeout.SetInterval(REMINDER_STOP); // ... and reminder
 				break;
+			case SBI_REINIT:
+				this->ReInit();
+				break;
 		}
 	}
 
@@ -228,6 +231,11 @@ struct StatusBarWindow : Window {
 	void OnRealtimeTick(uint delta_ms) override
 	{
 		if (_pause_mode != PM_UNPAUSED) return;
+
+		if (_settings_time.time_in_minutes && this->last_minute != CURRENT_MINUTE) {
+			this->last_minute = CURRENT_MINUTE;
+			this->SetWidgetDirty(WID_S_LEFT);
+		}
 
 		if (this->ticker_scroll < TICKER_STOP) { // Scrolling text
 			uint count = this->ticker_timer.CountElapsed(delta_ms);
@@ -246,7 +254,7 @@ struct StatusBarWindow : Window {
 
 static const NWidgetPart _nested_main_status_widgets[] = {
 	NWidget(NWID_HORIZONTAL),
-		NWidget(WWT_PANEL, COLOUR_GREY, WID_S_LEFT), SetMinimalSize(140, 12), EndContainer(),
+		NWidget(WWT_PANEL, COLOUR_GREY, WID_S_LEFT), SetMinimalSize(160, 12), EndContainer(),
 		NWidget(WWT_PUSHBTN, COLOUR_GREY, WID_S_MIDDLE), SetMinimalSize(40, 12), SetDataTip(0x0, STR_STATUSBAR_TOOLTIP_SHOW_LAST_NEWS), SetResize(1, 0),
 		NWidget(WWT_PUSHBTN, COLOUR_GREY, WID_S_RIGHT), SetMinimalSize(140, 12),
 	EndContainer(),

@@ -59,7 +59,7 @@ template <> struct EnumPropsT<Direction> : MakeEnumPropsT<Direction, byte, DIR_B
  *       modulo DIR_END or use the #ChangeDirDiff(DirDiff, DirDiff) function.
  * @see ChangeDirDiff(DirDiff, DirDiff)
  */
-enum DirDiff {
+enum DirDiff : byte {
 	DIRDIFF_SAME    = 0,    ///< Both directions faces to the same direction
 	DIRDIFF_45RIGHT = 1,    ///< Angle of 45 degrees right
 	DIRDIFF_90RIGHT = 2,    ///< Angle of 90 degrees right
@@ -102,12 +102,10 @@ template <> struct EnumPropsT<DiagDirection> : MakeEnumPropsT<DiagDirection, byt
  * @see DirDiff
  */
 enum DiagDirDiff {
-	DIAGDIRDIFF_BEGIN   = 0,        ///< Used for iterations
 	DIAGDIRDIFF_SAME    = 0,        ///< Same directions
 	DIAGDIRDIFF_90RIGHT = 1,        ///< 90 degrees right
 	DIAGDIRDIFF_REVERSE = 2,        ///< Reverse directions
 	DIAGDIRDIFF_90LEFT  = 3,        ///< 90 degrees left
-	DIAGDIRDIFF_END,                ///< Used for iterations
 };
 
 /** Allow incrementing of DiagDirDiff variables */

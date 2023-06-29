@@ -26,7 +26,7 @@ static const HouseID NUM_HOUSES_PER_GRF = 255;    ///< Number of supported house
 
 static const uint HOUSE_NO_CLASS      = 0;
 static const HouseID NEW_HOUSE_OFFSET = 110;    ///< Offset for new houses.
-static const HouseID NUM_HOUSES       = 512;    ///< Total number of houses.
+static const HouseID NUM_HOUSES       = 1024;    ///< Total number of houses.
 static const HouseID INVALID_HOUSE_ID = 0xFFFF;
 
 static const uint HOUSE_NUM_ACCEPTS = 16; ///< Max number of cargoes accepted by a tile
@@ -95,6 +95,13 @@ enum HouseExtraFlags {
 
 DECLARE_ENUM_AS_BIT_SET(HouseExtraFlags)
 
+enum HouseCtrlFlags {
+	HCF_NONE                 =       0,
+	HCF_NO_TRIGGERS          = 1U << 0,  ///< this house does not use random triggers
+};
+
+DECLARE_ENUM_AS_BIT_SET(HouseCtrlFlags)
+
 struct HouseSpec {
 	/* Standard properties */
 	Year min_year;                            ///< introduction year of the house
@@ -116,6 +123,7 @@ struct HouseSpec {
 	byte random_colour[4];                    ///< 4 "random" colours
 	byte probability;                         ///< Relative probability of appearing (16 is the standard value)
 	HouseExtraFlags extra_flags;              ///< some more flags
+	HouseCtrlFlags ctrl_flags;                ///< control flags
 	HouseClassID class_id;                    ///< defines the class this house has (not grf file based)
 	AnimationInfo animation;                  ///< information about the animation.
 	byte processing_time;                     ///< Periodic refresh multiplier
@@ -126,7 +134,7 @@ struct HouseSpec {
 
 	static inline HouseSpec *Get(size_t house_id)
 	{
-		assert(house_id < NUM_HOUSES);
+		dbg_assert(house_id < NUM_HOUSES);
 		extern HouseSpec _house_specs[];
 		return &_house_specs[house_id];
 	}
@@ -142,5 +150,10 @@ static inline HouseID GetTranslatedHouseID(HouseID hid)
 	const HouseSpec *hs = HouseSpec::Get(hid);
 	return hs->grf_prop.override == INVALID_HOUSE_ID ? hid : hs->grf_prop.override;
 }
+
+StringID GetHouseName(HouseID house, TileIndex tile = INVALID_TILE);
+void DrawHouseImage(HouseID house_id, int left, int top, int right, int bottom);
+void AddProducedHouseCargo(HouseID house_id, TileIndex tile, CargoArray &produced);
+void AddAcceptedHouseCargo(HouseID house_id, TileIndex tile, CargoArray &acceptance, CargoTypes *always_accepted = nullptr);
 
 #endif /* HOUSE_H */

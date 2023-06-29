@@ -146,6 +146,7 @@ add_files(
     script_accounting.hpp
     script_admin.hpp
     script_airport.hpp
+    script_asyncmode.hpp
     script_base.hpp
     script_basestation.hpp
     script_bridge.hpp
@@ -175,11 +176,13 @@ add_files(
     script_industrylist.hpp
     script_industrytype.hpp
     script_industrytypelist.hpp
+    script_inflation.hpp
     script_info_docs.hpp
     script_infrastructure.hpp
     script_league.hpp
     script_list.hpp
     script_log.hpp
+    script_log_types.hpp
     script_map.hpp
     script_marine.hpp
     script_newgrf.hpp
@@ -218,6 +221,7 @@ add_files(
     script_accounting.cpp
     script_admin.cpp
     script_airport.cpp
+    script_asyncmode.cpp
     script_base.cpp
     script_basestation.cpp
     script_bridge.cpp
@@ -247,6 +251,7 @@ add_files(
     script_industrylist.cpp
     script_industrytype.cpp
     script_industrytypelist.cpp
+    script_inflation.cpp
     script_infrastructure.cpp
     script_league.cpp
     script_list.cpp

@@ -32,11 +32,12 @@
 #include "../core/geometry_func.hpp"
 #include "../genworld.h"
 #include "../map_type.h"
+#include "../newgrf.h"
+#include "../error.h"
 #include "../guitimer_func.h"
 #include "../zoom_func.h"
 #include "../sprite.h"
 #include "../settings_internal.h"
-#include "../company_cmd.h"
 
 #include "../widgets/network_widget.h"
 
@@ -201,6 +202,19 @@ public:
 		return nullptr;
 	}
 
+	void FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets) override
+	{
+		if (this->base_flags & WBF_DIRTY) {
+			dirty_widgets.push_back(this);
+		} else {
+			int i = 0;
+			for (NWidgetBase *child_wid = this->head; child_wid != nullptr; child_wid = child_wid->next) {
+				if (!this->visible[i++]) continue;
+				child_wid->FillDirtyWidgets(dirty_widgets);
+			}
+		}
+	}
+
 	/**
 	 * Checks whether the given widget is actually visible.
 	 * @param widget the widget to check for visibility
@@ -281,7 +295,7 @@ protected:
 
 		this->servers.shrink_to_fit();
 		this->servers.RebuildDone();
-		this->vscroll->SetCount((int)this->servers.size());
+		this->vscroll->SetCount(this->servers.size());
 
 		/* Sort the list of network games as requested. */
 		this->servers.Sort();
@@ -291,7 +305,7 @@ protected:
 	/** Sort servers by name. */
 	static bool NGameNameSorter(NetworkGameList * const &a, NetworkGameList * const &b)
 	{
-		int r = strnatcmp(a->info.server_name.c_str(), b->info.server_name.c_str(), true); // Sort by name (natural sorting).
+		int r = StrNaturalCompare(a->info.server_name, b->info.server_name, true); // Sort by name (natural sorting).
 		if (r == 0) r = a->connection_string.compare(b->connection_string);
 
 		return r < 0;
@@ -375,13 +389,13 @@ protected:
 		}
 	}
 
-	static bool CDECL NGameSearchFilter(NetworkGameList * const *item, StringFilter &sf)
+	static bool NGameSearchFilter(NetworkGameList * const *item, StringFilter &sf)
 	{
 		assert(item != nullptr);
 		assert((*item) != nullptr);
 
 		sf.ResetState();
-		sf.AddLine((*item)->info.server_name.c_str());
+		sf.AddLine((*item)->info.server_name);
 		return sf.GetState();
 	}
 
@@ -398,9 +412,8 @@ protected:
 
 		/* show highlighted item with a different colour */
 		if (highlight) {
-			Rect r = {name.left, y, info.right, y + (int)this->resize.step_height - 1};
-			Rect ir = r.Shrink(WidgetDimensions::scaled.bevel);
-			GfxFillRect(ir.left, ir.top, ir.right, ir.bottom, PC_GREY);
+			Rect r = {std::min(name.left, info.left), y, std::max(name.right, info.right), y + (int)this->resize.step_height - 1};
+			GfxFillRect(r.Shrink(WidgetDimensions::scaled.bevel), PC_GREY);
 		}
 
 		/* offsets to vertically centre text and icons */
@@ -729,7 +742,7 @@ public:
 	{
 		switch (widget) {
 			case WID_NG_CANCEL: // Cancel button
-				CloseWindowById(WC_NETWORK_WINDOW, WN_NETWORK_WINDOW_GAME);
+				DeleteWindowById(WC_NETWORK_WINDOW, WN_NETWORK_WINDOW_GAME);
 				break;
 
 			case WID_NG_NAME:    // Sort by name
@@ -1013,14 +1026,14 @@ static const NWidgetPart _nested_network_game_widgets[] = {
 static WindowDesc _network_game_window_desc(
 	WDP_CENTER, "list_servers", 1000, 730,
 	WC_NETWORK_WINDOW, WC_NONE,
-	0,
+	WDF_NETWORK,
 	_nested_network_game_widgets, lengthof(_nested_network_game_widgets)
 );
 
 void ShowNetworkGameWindow()
 {
 	static bool first = true;
-	CloseWindowById(WC_NETWORK_WINDOW, WN_NETWORK_WINDOW_START);
+	DeleteWindowById(WC_NETWORK_WINDOW, WN_NETWORK_WINDOW_START);
 
 	/* Only show once */
 	if (first) {
@@ -1234,7 +1247,7 @@ static const NWidgetPart _nested_network_start_server_window_widgets[] = {
 			NWidget(NWID_HORIZONTAL, NC_EQUALSIZE), SetPIP(10, 6, 10),
 				NWidget(NWID_VERTICAL), SetPIP(0, 1, 0),
 					NWidget(WWT_TEXT, COLOUR_LIGHT_BLUE, WID_NSS_CONNTYPE_LABEL), SetFill(1, 0), SetDataTip(STR_NETWORK_START_SERVER_VISIBILITY_LABEL, STR_NULL),
-					NWidget(WWT_DROPDOWN, COLOUR_LIGHT_BLUE, WID_NSS_CONNTYPE_BTN), SetFill(1, 0), SetDataTip(STR_BLACK_STRING, STR_NETWORK_START_SERVER_VISIBILITY_TOOLTIP),
+					NWidget(WWT_DROPDOWN, COLOUR_LIGHT_BLUE, WID_NSS_CONNTYPE_BTN), SetFill(1, 0), SetDataTip(STR_JUST_STRING, STR_NETWORK_START_SERVER_VISIBILITY_TOOLTIP),
 				EndContainer(),
 				NWidget(NWID_VERTICAL), SetPIP(0, 1, 0),
 					NWidget(NWID_SPACER), SetFill(1, 1),
@@ -1286,7 +1299,7 @@ static const NWidgetPart _nested_network_start_server_window_widgets[] = {
 static WindowDesc _network_start_server_window_desc(
 	WDP_CENTER, nullptr, 0, 0,
 	WC_NETWORK_WINDOW, WC_NONE,
-	0,
+	WDF_NETWORK,
 	_nested_network_start_server_window_widgets, lengthof(_nested_network_start_server_window_widgets)
 );
 
@@ -1294,7 +1307,7 @@ static void ShowNetworkStartServerWindow()
 {
 	if (!NetworkValidateOurClientName()) return;
 
-	CloseWindowById(WC_NETWORK_WINDOW, WN_NETWORK_WINDOW_GAME);
+	DeleteWindowById(WC_NETWORK_WINDOW, WN_NETWORK_WINDOW_GAME);
 
 	new NetworkStartServerWindow(&_network_start_server_window_desc);
 }
@@ -1316,7 +1329,7 @@ static const NWidgetPart _nested_client_list_widgets[] = {
 			NWidget(NWID_HORIZONTAL), SetPIP(0, 3, 0),
 				NWidget(WWT_TEXT, COLOUR_GREY), SetMinimalTextLines(1, 0), SetDataTip(STR_NETWORK_CLIENT_LIST_SERVER_NAME, STR_NULL),
 				NWidget(NWID_SPACER), SetMinimalSize(10, 0),
-				NWidget(WWT_TEXT, COLOUR_GREY, WID_CL_SERVER_NAME), SetFill(1, 0), SetMinimalTextLines(1, 0), SetResize(1, 0), SetDataTip(STR_BLACK_RAW_STRING, STR_NETWORK_CLIENT_LIST_SERVER_NAME_TOOLTIP), SetAlignment(SA_VERT_CENTER | SA_RIGHT),
+				NWidget(WWT_TEXT, COLOUR_GREY, WID_CL_SERVER_NAME), SetFill(1, 0), SetMinimalTextLines(1, 0), SetResize(1, 0), SetDataTip(STR_JUST_RAW_STRING, STR_NETWORK_CLIENT_LIST_SERVER_NAME_TOOLTIP), SetAlignment(SA_VERT_CENTER | SA_RIGHT),
 				NWidget(WWT_PUSHIMGBTN, COLOUR_GREY, WID_CL_SERVER_NAME_EDIT), SetMinimalSize(12, 14), SetDataTip(SPR_RENAME, STR_NETWORK_CLIENT_LIST_SERVER_NAME_EDIT_TOOLTIP),
 			EndContainer(),
 			NWidget(NWID_SELECTION, INVALID_COLOUR, WID_CL_SERVER_SELECTOR),
@@ -1324,17 +1337,17 @@ static const NWidgetPart _nested_client_list_widgets[] = {
 					NWidget(NWID_HORIZONTAL), SetPIP(0, 3, 0),
 						NWidget(WWT_TEXT, COLOUR_GREY), SetMinimalTextLines(1, 0), SetDataTip(STR_NETWORK_CLIENT_LIST_SERVER_VISIBILITY, STR_NULL),
 						NWidget(NWID_SPACER), SetMinimalSize(10, 0), SetFill(1, 0), SetResize(1, 0),
-						NWidget(WWT_DROPDOWN, COLOUR_GREY, WID_CL_SERVER_VISIBILITY), SetDataTip(STR_BLACK_STRING, STR_NETWORK_CLIENT_LIST_SERVER_VISIBILITY_TOOLTIP),
+						NWidget(WWT_DROPDOWN, COLOUR_GREY, WID_CL_SERVER_VISIBILITY), SetDataTip(STR_JUST_STRING, STR_NETWORK_CLIENT_LIST_SERVER_VISIBILITY_TOOLTIP),
 					EndContainer(),
 					NWidget(NWID_HORIZONTAL), SetPIP(0, 3, 0),
 						NWidget(WWT_TEXT, COLOUR_GREY), SetMinimalTextLines(1, 0), SetDataTip(STR_NETWORK_CLIENT_LIST_SERVER_INVITE_CODE, STR_NULL),
 						NWidget(NWID_SPACER), SetMinimalSize(10, 0),
-						NWidget(WWT_TEXT, COLOUR_GREY, WID_CL_SERVER_INVITE_CODE), SetFill(1, 0), SetMinimalTextLines(1, 0), SetResize(1, 0), SetDataTip(STR_BLACK_RAW_STRING, STR_NETWORK_CLIENT_LIST_SERVER_INVITE_CODE_TOOLTIP), SetAlignment(SA_VERT_CENTER | SA_RIGHT),
+						NWidget(WWT_TEXT, COLOUR_GREY, WID_CL_SERVER_INVITE_CODE), SetFill(1, 0), SetMinimalTextLines(1, 0), SetResize(1, 0), SetDataTip(STR_JUST_RAW_STRING, STR_NETWORK_CLIENT_LIST_SERVER_INVITE_CODE_TOOLTIP), SetAlignment(SA_VERT_CENTER | SA_RIGHT),
 					EndContainer(),
 					NWidget(NWID_HORIZONTAL), SetPIP(0, 3, 0),
 						NWidget(WWT_TEXT, COLOUR_GREY), SetMinimalTextLines(1, 0), SetDataTip(STR_NETWORK_CLIENT_LIST_SERVER_CONNECTION_TYPE, STR_NULL),
 						NWidget(NWID_SPACER), SetMinimalSize(10, 0),
-						NWidget(WWT_TEXT, COLOUR_GREY, WID_CL_SERVER_CONNECTION_TYPE), SetFill(1, 0), SetMinimalTextLines(1, 0), SetResize(1, 0), SetDataTip(STR_BLACK_STRING, STR_NETWORK_CLIENT_LIST_SERVER_CONNECTION_TYPE_TOOLTIP), SetAlignment(SA_VERT_CENTER | SA_RIGHT),
+						NWidget(WWT_TEXT, COLOUR_GREY, WID_CL_SERVER_CONNECTION_TYPE), SetFill(1, 0), SetMinimalTextLines(1, 0), SetResize(1, 0), SetDataTip(STR_JUST_STRING, STR_NETWORK_CLIENT_LIST_SERVER_CONNECTION_TYPE_TOOLTIP), SetAlignment(SA_VERT_CENTER | SA_RIGHT),
 					EndContainer(),
 				EndContainer(),
 			EndContainer(),
@@ -1343,7 +1356,7 @@ static const NWidgetPart _nested_client_list_widgets[] = {
 			NWidget(NWID_HORIZONTAL), SetPIP(0, 3, 0),
 				NWidget(WWT_TEXT, COLOUR_GREY), SetMinimalTextLines(1, 0), SetDataTip(STR_NETWORK_CLIENT_LIST_PLAYER_NAME, STR_NULL),
 				NWidget(NWID_SPACER), SetMinimalSize(10, 0),
-				NWidget(WWT_TEXT, COLOUR_GREY, WID_CL_CLIENT_NAME), SetFill(1, 0), SetMinimalTextLines(1, 0), SetResize(1, 0), SetDataTip(STR_BLACK_RAW_STRING, STR_NETWORK_CLIENT_LIST_PLAYER_NAME_TOOLTIP), SetAlignment(SA_VERT_CENTER | SA_RIGHT),
+				NWidget(WWT_TEXT, COLOUR_GREY, WID_CL_CLIENT_NAME), SetFill(1, 0), SetMinimalTextLines(1, 0), SetResize(1, 0), SetDataTip(STR_JUST_RAW_STRING, STR_NETWORK_CLIENT_LIST_PLAYER_NAME_TOOLTIP), SetAlignment(SA_VERT_CENTER | SA_RIGHT),
 				NWidget(WWT_PUSHIMGBTN, COLOUR_GREY, WID_CL_CLIENT_NAME_EDIT), SetMinimalSize(12, 14), SetDataTip(SPR_RENAME, STR_NETWORK_CLIENT_LIST_PLAYER_NAME_EDIT_TOOLTIP),
 			EndContainer(),
 		EndContainer(),
@@ -1352,7 +1365,7 @@ static const NWidgetPart _nested_client_list_widgets[] = {
 		NWidget(NWID_VERTICAL),
 			NWidget(WWT_MATRIX, COLOUR_GREY, WID_CL_MATRIX), SetMinimalSize(180, 0), SetResize(1, 1), SetFill(1, 1), SetMatrixDataTip(1, 0, STR_NULL), SetScrollbar(WID_CL_SCROLLBAR),
 			NWidget(WWT_PANEL, COLOUR_GREY),
-				NWidget(WWT_TEXT, COLOUR_GREY, WID_CL_CLIENT_COMPANY_COUNT), SetFill(1, 0), SetMinimalTextLines(1, 0), SetResize(1, 0), SetPadding(2, 1, 2, 1), SetAlignment(SA_CENTER), SetDataTip(STR_NETWORK_CLIENT_LIST_CLIENT_COMPANY_COUNT, STR_NULL),
+				NWidget(WWT_TEXT, COLOUR_GREY, WID_CL_CLIENT_COMPANY_COUNT), SetFill(1, 0), SetMinimalTextLines(1, 0), SetResize(1, 0), SetPadding(2, 1, 2, 1), SetAlignment(SA_CENTER), SetDataTip(STR_NETWORK_CLIENT_LIST_CLIENT_COMPANY_COUNT, STR_NETWORK_CLIENT_LIST_CLIENT_COMPANY_COUNT_TOOLTIP),
 			EndContainer(),
 		EndContainer(),
 		NWidget(NWID_VERTICAL),
@@ -1365,7 +1378,7 @@ static const NWidgetPart _nested_client_list_widgets[] = {
 static WindowDesc _client_list_desc(
 	WDP_AUTO, "list_clients", 220, 300,
 	WC_CLIENT_LIST, WC_NONE,
-	0,
+	WDF_NETWORK,
 	_nested_client_list_widgets, lengthof(_nested_client_list_widgets)
 );
 
@@ -1409,7 +1422,7 @@ static void AdminCompanyResetCallback(Window *w, bool confirmed)
 {
 	if (confirmed) {
 		if (NetworkCompanyHasClients(_admin_company_id)) return;
-		Command<CMD_COMPANY_CTRL>::Post(CCA_DELETE, _admin_company_id, CRR_MANUAL, INVALID_CLIENT_ID);
+		DoCommandP(0, CCA_DELETE | _admin_company_id << 16 | CRR_MANUAL << 24, 0, CMD_COMPANY_CTRL);
 	}
 }
 
@@ -1547,9 +1560,9 @@ private:
 	static void OnClickCompanyNew(NetworkClientListWindow *w, Point pt, CompanyID company_id)
 	{
 		if (_network_server) {
-			Command<CMD_COMPANY_CTRL>::Post(CCA_NEW, INVALID_COMPANY, CRR_NONE, _network_own_client_id);
+			DoCommandP(0, CCA_NEW, _network_own_client_id, CMD_COMPANY_CTRL);
 		} else {
-			Command<CMD_COMPANY_CTRL>::SendNet(STR_NULL, _local_company, CCA_NEW, INVALID_COMPANY, CRR_NONE, INVALID_CLIENT_ID);
+			NetworkSendCommand(0, CCA_NEW, 0, 0, CMD_COMPANY_CTRL, nullptr, nullptr, _local_company, nullptr);
 		}
 	}
 
@@ -1572,7 +1585,7 @@ private:
 		wi_rect.bottom = pt.y;
 
 		w->dd_client_id = client_id;
-		ShowDropDownListAt(w, std::move(list), -1, WID_CL_MATRIX, wi_rect, COLOUR_GREY, true, true);
+		ShowDropDownListAt(w, std::move(list), -1, WID_CL_MATRIX, wi_rect, COLOUR_GREY, true);
 	}
 
 	/**
@@ -1594,7 +1607,7 @@ private:
 		wi_rect.bottom = pt.y;
 
 		w->dd_company_id = company_id;
-		ShowDropDownListAt(w, std::move(list), -1, WID_CL_MATRIX, wi_rect, COLOUR_GREY, true, true);
+		ShowDropDownListAt(w, std::move(list), -1, WID_CL_MATRIX, wi_rect, COLOUR_GREY, true);
 	}
 	/**
 	 * Chat button on a Client is clicked.
@@ -1797,6 +1810,7 @@ public:
 			case WID_CL_CLIENT_COMPANY_COUNT:
 				SetDParam(0, NetworkClientInfo::GetNumItems());
 				SetDParam(1, Company::GetNumItems());
+				SetDParam(2, NetworkMaxCompaniesAllowed());
 				break;
 		}
 	}
@@ -2279,13 +2293,13 @@ static const NWidgetPart _nested_network_join_status_window_widgets[] = {
 static WindowDesc _network_join_status_window_desc(
 	WDP_CENTER, nullptr, 0, 0,
 	WC_NETWORK_STATUS_WINDOW, WC_NONE,
-	WDF_MODAL,
+	WDF_MODAL | WDF_NETWORK,
 	_nested_network_join_status_window_widgets, lengthof(_nested_network_join_status_window_widgets)
 );
 
 void ShowJoinStatusWindow()
 {
-	CloseWindowById(WC_NETWORK_STATUS_WINDOW, WN_NETWORK_STATUS_WINDOW_JOIN);
+	DeleteWindowById(WC_NETWORK_STATUS_WINDOW, WN_NETWORK_STATUS_WINDOW_JOIN);
 	new NetworkJoinStatusWindow(&_network_join_status_window_desc);
 }
 
@@ -2362,7 +2376,7 @@ struct NetworkCompanyPasswordWindow : public Window {
 				FALLTHROUGH;
 
 			case WID_NCP_CANCEL:
-				this->Close();
+				delete this;
 				break;
 
 			case WID_NCP_SAVE_AS_DEFAULT_PASSWORD:
@@ -2401,13 +2415,13 @@ static const NWidgetPart _nested_network_company_password_window_widgets[] = {
 static WindowDesc _network_company_password_window_desc(
 	WDP_AUTO, nullptr, 0, 0,
 	WC_COMPANY_PASSWORD_WINDOW, WC_NONE,
-	0,
+	WDF_NETWORK,
 	_nested_network_company_password_window_widgets, lengthof(_nested_network_company_password_window_widgets)
 );
 
 void ShowNetworkCompanyPasswordWindow(Window *parent)
 {
-	CloseWindowById(WC_COMPANY_PASSWORD_WINDOW, 0);
+	DeleteWindowById(WC_COMPANY_PASSWORD_WINDOW, 0);
 
 	new NetworkCompanyPasswordWindow(&_network_company_password_window_desc, parent);
 }
@@ -2468,18 +2482,18 @@ struct NetworkAskRelayWindow : public Window {
 		switch (widget) {
 			case WID_NAR_NO:
 				_network_coordinator_client.ConnectFailure(this->token, 0);
-				this->Close();
+				delete this;
 				break;
 
 			case WID_NAR_YES_ONCE:
 				_network_coordinator_client.StartTurnConnection(this->token);
-				this->Close();
+				delete this;
 				break;
 
 			case WID_NAR_YES_ALWAYS:
 				_settings_client.network.use_relay_service = URS_ALLOW;
 				_network_coordinator_client.StartTurnConnection(this->token);
-				this->Close();
+				delete this;
 				break;
 		}
 	}
@@ -2503,7 +2517,7 @@ static const NWidgetPart _nested_network_ask_relay_widgets[] = {
 static WindowDesc _network_ask_relay_desc(
 	WDP_CENTER, nullptr, 0, 0,
 	WC_NETWORK_ASK_RELAY, WC_NONE,
-	WDF_MODAL,
+	WDF_MODAL | WDF_NETWORK,
 	_nested_network_ask_relay_widgets, lengthof(_nested_network_ask_relay_widgets)
 );
 
@@ -2515,8 +2529,8 @@ static WindowDesc _network_ask_relay_desc(
  */
 void ShowNetworkAskRelay(const std::string &server_connection_string, const std::string &relay_connection_string, const std::string &token)
 {
-	CloseWindowByClass(WC_NETWORK_ASK_RELAY);
+	DeleteWindowByClass(WC_NETWORK_ASK_RELAY);
 
-	Window *parent = FindWindowById(WC_MAIN_WINDOW, 0);
+	Window *parent = GetMainWindow();
 	new NetworkAskRelayWindow(&_network_ask_relay_desc, parent, server_connection_string, relay_connection_string, token);
 }

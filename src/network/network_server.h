@@ -22,11 +22,16 @@ extern NetworkClientSocketPool _networkclientsocket_pool;
 
 /** Class for handling the server side of the game connection. */
 class ServerNetworkGameSocketHandler : public NetworkClientSocketPool::PoolItem<&_networkclientsocket_pool>, public NetworkGameSocketHandler, public TCPListenHandler<ServerNetworkGameSocketHandler, PACKET_SERVER_FULL, PACKET_SERVER_BANNED> {
+	NetworkGameKeys intl_keys;
+	uint64 min_key_message_id = 0;
+	byte *rcon_reply_key = nullptr;
+
 protected:
 	NetworkRecvStatus Receive_CLIENT_JOIN(Packet *p) override;
 	NetworkRecvStatus Receive_CLIENT_GAME_INFO(Packet *p) override;
 	NetworkRecvStatus Receive_CLIENT_GAME_PASSWORD(Packet *p) override;
 	NetworkRecvStatus Receive_CLIENT_COMPANY_PASSWORD(Packet *p) override;
+	NetworkRecvStatus Receive_CLIENT_SETTINGS_PASSWORD(Packet *p) override;
 	NetworkRecvStatus Receive_CLIENT_GETMAP(Packet *p) override;
 	NetworkRecvStatus Receive_CLIENT_MAP_OK(Packet *p) override;
 	NetworkRecvStatus Receive_CLIENT_ACK(Packet *p) override;
@@ -36,15 +41,21 @@ protected:
 	NetworkRecvStatus Receive_CLIENT_SET_NAME(Packet *p) override;
 	NetworkRecvStatus Receive_CLIENT_QUIT(Packet *p) override;
 	NetworkRecvStatus Receive_CLIENT_ERROR(Packet *p) override;
+	NetworkRecvStatus Receive_CLIENT_DESYNC_LOG(Packet *p) override;
+	NetworkRecvStatus Receive_CLIENT_DESYNC_MSG(Packet *p) override;
+	NetworkRecvStatus Receive_CLIENT_DESYNC_SYNC_DATA(Packet *p) override;
 	NetworkRecvStatus Receive_CLIENT_RCON(Packet *p) override;
 	NetworkRecvStatus Receive_CLIENT_NEWGRFS_CHECKED(Packet *p) override;
 	NetworkRecvStatus Receive_CLIENT_MOVE(Packet *p) override;
 
 	NetworkRecvStatus SendGameInfo();
+	NetworkRecvStatus SendGameInfoExtended(PacketGameType reply_type, uint16 flags, uint16 version);
 	NetworkRecvStatus SendNewGRFCheck();
 	NetworkRecvStatus SendWelcome();
 	NetworkRecvStatus SendNeedGamePassword();
 	NetworkRecvStatus SendNeedCompanyPassword();
+
+	bool ParseKeyPasswordPacket(Packet *p, NetworkSharedSecrets &ss, const std::string &password, std::string *payload, size_t length);
 
 public:
 	/** Status of a client */
@@ -59,8 +70,11 @@ public:
 		STATUS_DONE_MAP,      ///< The client has downloaded the map.
 		STATUS_PRE_ACTIVE,    ///< The client is catching up the delayed frames.
 		STATUS_ACTIVE,        ///< The client is active within in the game.
+		STATUS_CLOSE_PENDING, ///< The client connection is pending closure.
 		STATUS_END,           ///< Must ALWAYS be on the end of this list!! (period).
 	};
+
+	static const char *GetClientStatusName(ClientStatus status);
 
 	byte lag_test;               ///< Byte used for lag-testing the client
 	byte last_token;             ///< The last random token we did send to verify the client is listening
@@ -68,16 +82,26 @@ public:
 	ClientStatus status;         ///< Status of this client
 	CommandQueue outgoing_queue; ///< The command-queue awaiting delivery
 	size_t receive_limit;        ///< Amount of bytes that we can receive at this moment
+	bool settings_authed = false;///< Authorised to control all game settings
+	bool supports_zstd = false;  ///< Client supports zstd compression
 
 	struct PacketWriter *savegame; ///< Writer used to write the savegame.
 	NetworkAddress client_address; ///< IP-address of the client (so they can be banned)
 
+	std::string desync_log;
+
+	uint desync_frame_seed = 0;
+	uint desync_frame_state_checksum = 0;
+
+	uint rcon_auth_failures = 0;
+	uint settings_auth_failures = 0;
+
 	ServerNetworkGameSocketHandler(SOCKET s);
 	~ServerNetworkGameSocketHandler();
 
-	virtual Packet *ReceivePacket() override;
+	virtual std::unique_ptr<Packet> ReceivePacket() override;
 	NetworkRecvStatus CloseConnection(NetworkRecvStatus status) override;
-	std::string GetClientName() const;
+	void GetClientName(char *client_name, const char *last) const;
 
 	void CheckNextClientToSendMap(NetworkClientSocket *ignore_cs = nullptr);
 
@@ -88,11 +112,13 @@ public:
 	NetworkRecvStatus SendShutdown();
 	NetworkRecvStatus SendNewGame();
 	NetworkRecvStatus SendRConResult(uint16 colour, const std::string &command);
+	NetworkRecvStatus SendRConDenied();
 	NetworkRecvStatus SendMove(ClientID client_id, CompanyID company_id);
 
 	NetworkRecvStatus SendClientInfo(NetworkClientInfo *ci);
 	NetworkRecvStatus SendError(NetworkErrorCode error, const std::string &reason = {});
-	NetworkRecvStatus SendChat(NetworkAction action, ClientID client_id, bool self_send, const std::string &msg, int64 data);
+	NetworkRecvStatus SendDesyncLog(const std::string &log);
+	NetworkRecvStatus SendChat(NetworkAction action, ClientID client_id, bool self_send, const std::string &msg, NetworkTextMessageData data);
 	NetworkRecvStatus SendExternalChat(const std::string &source, TextColour colour, const std::string &user, const std::string &msg);
 	NetworkRecvStatus SendJoin(ClientID client_id);
 	NetworkRecvStatus SendFrame();
@@ -100,6 +126,17 @@ public:
 	NetworkRecvStatus SendCommand(const CommandPacket *cp);
 	NetworkRecvStatus SendCompanyUpdate();
 	NetworkRecvStatus SendConfigUpdate();
+	NetworkRecvStatus SendSettingsAccessUpdate(bool ok);
+
+	NetworkRecvStatus HandleAuthFailure(uint &failure_count);
+
+	std::string GetDebugInfo() const override;
+
+	const NetworkGameKeys &GetKeys()
+	{
+		if (!this->intl_keys.inited) this->intl_keys.Initialise();
+		return this->intl_keys;
+	}
 
 	static void Send();
 	static void AcceptConnection(SOCKET s, const NetworkAddress &address);
@@ -114,7 +151,7 @@ public:
 		return "server";
 	}
 
-	const std::string &GetClientIP();
+	const char *GetClientIP();
 
 	static ServerNetworkGameSocketHandler *GetByClientID(ClientID client_id);
 };

@@ -19,6 +19,7 @@
 #include "strings_type.h"
 #include "date_type.h"
 #include "signal_type.h"
+#include "rail_map.h"
 #include "settings_type.h"
 
 /** Railtype flags. */
@@ -39,6 +40,15 @@ enum RailTypeFlags {
 	RTFB_DISALLOW_90DEG    = 1 << RTF_DISALLOW_90DEG,    ///< Value for never allowed 90 degree turns, regardless of setting.
 };
 DECLARE_ENUM_AS_BIT_SET(RailTypeFlags)
+
+/** Railtype control flags. */
+enum RailTypeCtrlFlags {
+	RTCF_PROGSIG                = 0,                          ///< Custom signal sprites enabled for programmable pre-signals.
+	RTCF_RESTRICTEDSIG          = 1,                          ///< Custom signal sprite flag enabled for restricted signals.
+	RTCF_NOREALISTICBRAKING     = 2,                          ///< Realistic braking disabled for this track type
+	RTCF_RECOLOUR_ENABLED       = 3,                          ///< Recolour sprites enabled
+	RTCF_NOENTRYSIG             = 4,                          ///< Custom signal sprites enabled for no-entry signals.
+};
 
 struct SpriteGroup;
 
@@ -155,7 +165,7 @@ public:
 		SpriteID build_depot;        ///< button for building depots
 		SpriteID build_tunnel;       ///< button for building a tunnel
 		SpriteID convert_rail;       ///< button for converting rail
-		SpriteID signals[SIGTYPE_END][2][2]; ///< signal GUI sprites (type, variant, state)
+		PalSpriteID signals[SIGTYPE_END][2][2]; ///< signal GUI sprites (type, variant, state)
 	} gui_sprites;
 
 	struct {
@@ -187,6 +197,9 @@ public:
 	/** bitmask to the OTHER railtypes on which an engine of THIS railtype can physically travel */
 	RailTypes compatible_railtypes;
 
+	/** bitmask of all directly or indirectly reachable railtypes in either direction via compatible_railtypes */
+	RailTypes all_compatible_railtypes;
+
 	/**
 	 * Bridge offset
 	 */
@@ -206,6 +219,16 @@ public:
 	 * Bit mask of rail type flags
 	 */
 	RailTypeFlags flags;
+
+	/**
+	 * Bit mask of rail type control flags
+	 */
+	byte ctrl_flags;
+
+	/**
+	 * Signal extra aspects
+	 */
+	uint8 signal_extra_aspects;
 
 	/**
 	 * Cost multiplier for building this rail type
@@ -304,7 +327,7 @@ public:
 static inline const RailtypeInfo *GetRailTypeInfo(RailType railtype)
 {
 	extern RailtypeInfo _railtypes[RAILTYPE_END];
-	assert(railtype < RAILTYPE_END);
+	dbg_assert_msg(railtype < RAILTYPE_END, "%u", railtype);
 	return &_railtypes[railtype];
 }
 
@@ -364,6 +387,21 @@ static inline bool Rail90DegTurnDisallowed(RailType rt1, RailType rt2, bool def 
 	return rt1_90deg || rt2_90deg;
 }
 
+static inline bool Rail90DegTurnDisallowedTilesFromDiagDir(TileIndex t1, TileIndex t2, DiagDirection t1_towards_t2, bool def = _settings_game.pf.forbid_90_deg)
+{
+	return Rail90DegTurnDisallowed(GetTileRailTypeByEntryDir(t1, ReverseDiagDir(t1_towards_t2)), GetTileRailTypeByEntryDir(t2, t1_towards_t2), def);
+}
+
+static inline bool Rail90DegTurnDisallowedAdjacentTiles(TileIndex t1, TileIndex t2, bool def = _settings_game.pf.forbid_90_deg)
+{
+	return Rail90DegTurnDisallowedTilesFromDiagDir(t1, t2, DiagdirBetweenTiles(t1, t2));
+}
+
+static inline bool Rail90DegTurnDisallowedTilesFromTrackdir(TileIndex t1, TileIndex t2, Trackdir t1_td, bool def = _settings_game.pf.forbid_90_deg)
+{
+	return Rail90DegTurnDisallowedTilesFromDiagDir(t1, t2, TrackdirToExitdir(t1_td));
+}
+
 /**
  * Returns the cost of building the specified railtype.
  * @param railtype The railtype being built.
@@ -371,7 +409,7 @@ static inline bool Rail90DegTurnDisallowed(RailType rt1, RailType rt2, bool def 
  */
 static inline Money RailBuildCost(RailType railtype)
 {
-	assert(railtype < RAILTYPE_END);
+	dbg_assert(railtype < RAILTYPE_END);
 	return (_price[PR_BUILD_RAIL] * GetRailTypeInfo(railtype)->cost_multiplier) >> 3;
 }
 
@@ -387,7 +425,7 @@ static inline Money RailClearCost(RailType railtype)
 	 * In this case we limit the removal earnings to 3/4s of the build
 	 * cost.
 	 */
-	assert(railtype < RAILTYPE_END);
+	dbg_assert(railtype < RAILTYPE_END);
 	return std::max(_price[PR_CLEAR_RAIL], -RailBuildCost(railtype) * 3 / 4);
 }
 
@@ -426,7 +464,7 @@ static inline Money RailConvertCost(RailType from, RailType to)
  */
 static inline Money RailMaintenanceCost(RailType railtype, uint32 num, uint32 total_num)
 {
-	assert(railtype < RAILTYPE_END);
+	dbg_assert(railtype < RAILTYPE_END);
 	return (_price[PR_INFRASTRUCTURE_RAIL] * GetRailTypeInfo(railtype)->maintenance_multiplier * num * (1 + IntSqrt(total_num))) >> 11; // 4 bits fraction for the multiplier and 7 bits scaling.
 }
 
@@ -439,6 +477,10 @@ static inline Money SignalMaintenanceCost(uint32 num)
 {
 	return (_price[PR_INFRASTRUCTURE_RAIL] * 15 * num * (1 + IntSqrt(num))) >> 8; // 1 bit fraction for the multiplier and 7 bits scaling.
 }
+
+void MarkSingleSignalDirty(TileIndex tile, Trackdir td);
+void MarkSingleSignalDirtyAtZ(TileIndex tile, Trackdir td, bool opposite_side, uint z);
+void GetSignalXYZByTrackdir(TileIndex tile, Trackdir td, bool opposite_side, uint &x, uint &y, uint &z);
 
 void DrawTrainDepotSprite(int x, int y, int image, RailType railtype);
 int TicksToLeaveDepot(const Train *v);
@@ -458,10 +500,23 @@ RailTypes GetRailTypes(bool introduces);
 RailType GetRailTypeByLabel(RailTypeLabel label, bool allow_alternate_labels = true);
 
 void ResetRailTypes();
+void UpdateRailGuiSprites();
 void InitRailTypes();
 RailType AllocateRailType(RailTypeLabel label);
 
 extern std::vector<RailType> _sorted_railtypes;
 extern RailTypes _railtypes_hidden_mask;
+
+/** Enum holding the signal offset in the sprite sheet according to the side it is representing. */
+enum SignalOffsets {
+	SIGNAL_TO_SOUTHWEST,
+	SIGNAL_TO_NORTHEAST,
+	SIGNAL_TO_SOUTHEAST,
+	SIGNAL_TO_NORTHWEST,
+	SIGNAL_TO_EAST,
+	SIGNAL_TO_WEST,
+	SIGNAL_TO_SOUTH,
+	SIGNAL_TO_NORTH,
+};
 
 #endif /* RAIL_H */

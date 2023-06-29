@@ -48,7 +48,7 @@ bool GamelogTestEmergency();
 void GamelogRevision();
 void GamelogMode();
 void GamelogOldver();
-void GamelogSetting(const std::string &name, int32 oldval, int32 newval);
+void GamelogSetting(const char *name, int32 oldval, int32 newval);
 
 void GamelogGRFUpdate(const GRFConfig *oldg, const GRFConfig *newg);
 void GamelogGRFAddList(const GRFConfig *newg);
@@ -62,5 +62,6 @@ void GamelogTestMode();
 bool GamelogGRFBugReverse(uint32 grfid, uint16 internal_id);
 
 void GamelogInfo(struct LoggedAction *gamelog_action, uint gamelog_actions, uint32 *last_ottd_rev, byte *ever_modified, bool *removed_newgrfs);
+const char *GamelogGetLastRevision(const struct LoggedAction *gamelog_action, uint gamelog_actions);
 
 #endif /* GAMELOG_H */

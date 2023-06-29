@@ -32,7 +32,7 @@ void VideoDriver::GameLoop()
 	if (this->next_game_tick < now - ALLOWED_DRIFT * this->GetGameInterval()) this->next_game_tick = now;
 
 	{
-		std::lock_guard<std::mutex> lock(this->game_state_mutex);
+		std::lock_guard<std::recursive_mutex> lock(this->game_state_mutex);
 
 		::GameLoop();
 	}
@@ -76,8 +76,23 @@ void VideoDriver::GameLoopPause()
 	this->game_state_mutex.lock();
 }
 
+/* static */ bool VideoDriver::EmergencyAcquireGameLock(uint tries, uint delay_ms)
+{
+	VideoDriver *drv = VideoDriver::GetInstance();
+	if (drv == nullptr) return true;
+
+
+	for (uint i = 0; i < tries; i++) {
+		if (drv->game_state_mutex.try_lock()) return true;
+		CSleep(delay_ms);
+	}
+
+	return false;
+}
+
 /* static */ void VideoDriver::GameThreadThunk(VideoDriver *drv)
 {
+	SetSelfAsGameThread();
 	drv->GameThread();
 }
 
@@ -87,7 +102,7 @@ void VideoDriver::StartGameThread()
 		this->is_game_threaded = StartNewThread(&this->game_thread, "ottd:game", &VideoDriver::GameThreadThunk, this);
 	}
 
-	Debug(driver, 1, "using {}thread for game-loop", this->is_game_threaded ? "" : "no ");
+	DEBUG(driver, 1, "using %sthread for game-loop", this->is_game_threaded ? "" : "no ");
 }
 
 void VideoDriver::StopGameThread()
@@ -112,25 +127,18 @@ void VideoDriver::Tick()
 
 	auto now = std::chrono::steady_clock::now();
 	if (this->HasGUI() && now >= this->next_draw_tick) {
-		this->next_draw_tick += this->GetDrawInterval();
-		/* Avoid next_draw_tick getting behind more and more if it cannot keep up. */
-		if (this->next_draw_tick < now - ALLOWED_DRIFT * this->GetDrawInterval()) this->next_draw_tick = now;
-
 		/* Locking video buffer can block (especially with vsync enabled), do it before taking game state lock. */
 		this->LockVideoBuffer();
 
 		{
 			/* Tell the game-thread to stop so we can have a go. */
 			std::lock_guard<std::mutex> lock_wait(this->game_thread_wait_mutex);
-			std::lock_guard<std::mutex> lock_state(this->game_state_mutex);
+			std::lock_guard<std::recursive_mutex> lock_state(this->game_state_mutex);
 
-			/* Keep the interactive randomizer a bit more random by requesting
-			 * new values when-ever we can. */
-			InteractiveRandom();
+			this->next_draw_tick += this->GetDrawInterval();
+			/* Avoid next_draw_tick getting behind more and more if it cannot keep up. */
+			if (this->next_draw_tick < now - ALLOWED_DRIFT * this->GetDrawInterval()) this->next_draw_tick = now;
 
-			this->DrainCommandQueue();
-
-			while (this->PollEvent()) {}
 			this->InputLoop();
 
 			/* Check if the fast-forward button is still pressed. */
@@ -142,6 +150,13 @@ void VideoDriver::Tick()
 				this->fast_forward_via_key = false;
 			}
 
+			/* Keep the interactive randomizer a bit more random by requesting
+			 * new values when-ever we can. */
+			InteractiveRandom();
+
+			this->DrainCommandQueue();
+
+			while (this->PollEvent()) {}
 			::InputLoop();
 
 			/* Prevent drawing when switching mode, as windows can be removed when they should still appear. */
@@ -152,7 +167,12 @@ void VideoDriver::Tick()
 			this->PopulateSystemSprites();
 		}
 
-		this->CheckPaletteAnim();
+		{
+			extern std::mutex _cur_palette_mutex;
+			std::lock_guard<std::mutex> lock_state(_cur_palette_mutex);
+			this->CheckPaletteAnim();
+		}
+
 		this->Paint();
 
 		this->UnlockVideoBuffer();
@@ -171,4 +191,9 @@ void VideoDriver::SleepTillNextTick()
 	if (next_tick > now) {
 		std::this_thread::sleep_for(next_tick - now);
 	}
+}
+
+void VideoDriver::InvalidateGameOptionsWindow()
+{
+	InvalidateWindowClassesData(WC_GAME_OPTIONS, 3);
 }

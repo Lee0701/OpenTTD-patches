@@ -18,14 +18,15 @@
 
 ScriptStationList::ScriptStationList(ScriptStation::StationType station_type)
 {
+	EnforceDeityOrCompanyModeValid_Void();
 	for (Station *st : Station::Iterate()) {
-		if ((st->owner == ScriptObject::GetCompany() || ScriptObject::GetCompany() == OWNER_DEITY) && (st->facilities & station_type) != 0) this->AddItem(st->index);
+		if ((st->owner == ScriptObject::GetCompany() || ScriptCompanyMode::IsDeity()) && (st->facilities & station_type) != 0) this->AddItem(st->index);
 	}
 }
 
 ScriptStationList_Vehicle::ScriptStationList_Vehicle(VehicleID vehicle_id)
 {
-	if (!ScriptVehicle::IsValidVehicle(vehicle_id)) return;
+	if (!ScriptVehicle::IsPrimaryVehicle(vehicle_id)) return;
 
 	Vehicle *v = ::Vehicle::Get(vehicle_id);
 
@@ -192,11 +193,10 @@ void ScriptStationList_CargoPlanned::Add(StationID station_id, CargoID cargo, St
 	FlowStatMap::const_iterator iter = collector.GE()->flows.begin();
 	FlowStatMap::const_iterator end = collector.GE()->flows.end();
 	for (; iter != end; ++iter) {
-		const FlowStat::SharesMap *shares = iter->second.GetShares();
 		uint prev = 0;
-		for (FlowStat::SharesMap::const_iterator flow_iter = shares->begin();
-				flow_iter != shares->end(); ++flow_iter) {
-			collector.Update<Tselector>(iter->first, flow_iter->second, flow_iter->first - prev);
+		for (FlowStat::const_iterator flow_iter = iter->begin();
+				flow_iter != iter->end(); ++flow_iter) {
+			collector.Update<Tselector>(iter->GetOrigin(), flow_iter->second, flow_iter->first - prev);
 			prev = flow_iter->first;
 		}
 	}
@@ -262,11 +262,10 @@ ScriptStationList_CargoPlannedFromByVia::ScriptStationList_CargoPlannedFromByVia
 
 	FlowStatMap::const_iterator iter = collector.GE()->flows.find(from);
 	if (iter == collector.GE()->flows.end()) return;
-	const FlowStat::SharesMap *shares = iter->second.GetShares();
 	uint prev = 0;
-	for (FlowStat::SharesMap::const_iterator flow_iter = shares->begin();
-			flow_iter != shares->end(); ++flow_iter) {
-		collector.Update<CS_FROM_BY_VIA>(iter->first, flow_iter->second, flow_iter->first - prev);
+	for (FlowStat::const_iterator flow_iter = iter->begin();
+			flow_iter != iter->end(); ++flow_iter) {
+		collector.Update<CS_FROM_BY_VIA>(iter->GetOrigin(), flow_iter->second, flow_iter->first - prev);
 		prev = flow_iter->first;
 	}
 }

@@ -23,6 +23,7 @@ protected:
 	NetworkRecvStatus Receive_SERVER_BANNED(Packet *p) override;
 	NetworkRecvStatus Receive_SERVER_ERROR(Packet *p) override;
 	NetworkRecvStatus Receive_SERVER_GAME_INFO(Packet *p) override;
+	NetworkRecvStatus Receive_SERVER_GAME_INFO_EXTENDED(Packet *p) override;
 
 	NetworkRecvStatus SendGameInfo();
 

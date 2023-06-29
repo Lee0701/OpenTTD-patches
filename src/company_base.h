@@ -16,8 +16,8 @@
 #include "tile_type.h"
 #include "settings_type.h"
 #include "group.h"
-#include <string>
 #include <array>
+#include <string>
 
 /** Statistics about the economy. */
 struct CompanyEconomyEntry {
@@ -46,7 +46,16 @@ struct CompanyInfrastructure {
 
 	uint32 GetRoadTotal() const;
 	uint32 GetTramTotal() const;
+
+	char *Dump(char *buffer, const char *last) const;
 };
+
+enum CompanyBankruptcyFlags : byte {
+	CBRF_NONE      =   0x0,
+	CBRF_SALE      =   0x1, ///< the company has been marked for sale
+	CBRF_SALE_ONLY =   0x2, ///< the company has been marked for sale without being in a bankruptcy state first
+};
+DECLARE_ENUM_AS_BIT_SET(CompanyBankruptcyFlags)
 
 typedef Pool<Company, CompanyID, 1, MAX_COMPANIES> CompanyPool;
 extern CompanyPool _company_pool;
@@ -80,6 +89,8 @@ struct CompanyProperties {
 	Year inaugurated_year;           ///< Year of starting the company.
 
 	byte months_of_bankruptcy;       ///< Number of months that the company is unable to pay its debts
+	CompanyID bankrupt_last_asked;   ///< Which company was most recently asked about buying it?
+	CompanyBankruptcyFlags bankrupt_flags; ///< bankruptcy flags
 	CompanyMask bankrupt_asked;      ///< which companies were asked about buying it?
 	int16 bankrupt_timeout;          ///< If bigger than \c 0, amount of time to wait for an answer on an offer to buy this company.
 	Money bankrupt_value;
@@ -87,7 +98,8 @@ struct CompanyProperties {
 	uint32 terraform_limit;          ///< Amount of tileheights we can (still) terraform (times 65536).
 	uint32 clear_limit;              ///< Amount of tiles we can (still) clear (times 65536).
 	uint32 tree_limit;               ///< Amount of trees we can (still) plant (times 65536).
-	uint32 build_object_limit;       ///< Amount of tiles we can (still) build objects on (times 65536). Also applies to buying land.
+	uint32 purchase_land_limit;      ///< Amount of tiles we can (still) purchase (times 65536).
+	uint32 build_object_limit;       ///< Amount of tiles we can (still) build objects on (times 65536).
 
 	/**
 	 * If \c true, the company is (also) controlled by the computer (a NoAI program).
@@ -110,11 +122,11 @@ struct CompanyProperties {
 		: name_2(0), name_1(0), president_name_1(0), president_name_2(0),
 		  face(0), money(0), money_fraction(0), current_loan(0), colour(0), block_preview(0),
 		  location_of_HQ(0), last_build_coordinate(0), share_owners(), inaugurated_year(0),
-		  months_of_bankruptcy(0), bankrupt_asked(0), bankrupt_timeout(0), bankrupt_value(0),
-		  terraform_limit(0), clear_limit(0), tree_limit(0), build_object_limit(0), is_ai(false), engine_renew_list(nullptr) {}
+		  months_of_bankruptcy(0), bankrupt_last_asked(INVALID_COMPANY), bankrupt_flags(CBRF_NONE), bankrupt_asked(0), bankrupt_timeout(0), bankrupt_value(0),
+		  terraform_limit(0), clear_limit(0), tree_limit(0), purchase_land_limit(0), build_object_limit(0), is_ai(false), engine_renew_list(nullptr) {}
 };
 
-struct Company : CompanyProperties, CompanyPool::PoolItem<&_company_pool> {
+struct Company : CompanyPool::PoolItem<&_company_pool>, CompanyProperties {
 	Company(uint16 name_1 = 0, bool is_ai = false);
 	~Company();
 
@@ -170,7 +182,6 @@ struct Company : CompanyProperties, CompanyPool::PoolItem<&_company_pool> {
 Money CalculateCompanyValue(const Company *c, bool including_loan = true);
 Money CalculateCompanyValueExcludingShares(const Company *c, bool including_loan = true);
 
-extern uint _next_competitor_start;
 extern uint _cur_company_tick_index;
 
 #endif /* COMPANY_BASE_H */

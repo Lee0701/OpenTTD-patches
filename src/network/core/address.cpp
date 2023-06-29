@@ -20,7 +20,7 @@
  * IPv4 dotted representation is given.
  * @return the hostname
  */
-const std::string &NetworkAddress::GetHostname()
+const char *NetworkAddress::GetHostname()
 {
 	if (this->hostname.empty() && this->address.ss_family != AF_UNSPEC) {
 		assert(this->address_length != 0);
@@ -28,7 +28,7 @@ const std::string &NetworkAddress::GetHostname()
 		getnameinfo((struct sockaddr *)&this->address, this->address_length, buffer, sizeof(buffer), nullptr, 0, NI_NUMERICHOST);
 		this->hostname = buffer;
 	}
-	return this->hostname;
+	return this->hostname.c_str();
 }
 
 /**
@@ -72,18 +72,39 @@ void NetworkAddress::SetPort(uint16 port)
 }
 
 /**
- * Helper to get the formatting string of an address for a given family.
- * @param family The family to get the address format for.
- * @param with_family Whether to add the familty to the address (e.g. IPv4).
- * @return The format string for the address.
+ * Get the address as a string, e.g. 127.0.0.1:12345.
+ * @param buffer the buffer to write to
+ * @param last the last element in the buffer
+ * @param with_family whether to add the family (e.g. IPvX).
  */
-static const char *GetAddressFormatString(uint16 family, bool with_family)
+void NetworkAddress::GetAddressAsString(char *buffer, const char *last, bool with_family)
 {
-	switch (family) {
-		case AF_INET: return with_family ? "{}:{} (IPv4)" : "{}:{}";
-		case AF_INET6: return with_family ? "[{}]:{} (IPv6)" : "[{}]:{}";
-		default: return with_family ? "{}:{} (IPv?)" : "{}:{}";
+	if (this->GetAddress()->ss_family == AF_INET6) buffer = strecpy(buffer, "[", last);
+	buffer = strecpy(buffer, this->GetHostname(), last);
+	if (this->GetAddress()->ss_family == AF_INET6) buffer = strecpy(buffer, "]", last);
+	buffer += seprintf(buffer, last, ":%d", this->GetPort());
+
+	if (with_family) {
+		char family;
+		switch (this->address.ss_family) {
+			case AF_INET:  family = '4'; break;
+			case AF_INET6: family = '6'; break;
+			default:       family = '?'; break;
+		}
+		seprintf(buffer, last, " (IPv%c)", family);
 	}
+}
+
+ /**
+  * Get the address as a string, e.g. 127.0.0.1:12345.
+  * @param with_family whether to add the family (e.g. IPvX).
+  * @return the address
+  */
+std::string NetworkAddress::GetAddressAsString(bool with_family)
+{
+	char buf[NETWORK_HOSTNAME_LENGTH + 6 + 7];
+	this->GetAddressAsString(buf, lastof(buf), with_family);
+	return buf;
 }
 
 /**
@@ -91,9 +112,10 @@ static const char *GetAddressFormatString(uint16 family, bool with_family)
  * @param with_family whether to add the family (e.g. IPvX).
  * @return the address
  */
-std::string NetworkAddress::GetAddressAsString(bool with_family)
+const char *NetworkAddressDumper::GetAddressAsString(NetworkAddress *addr, bool with_family)
 {
-	return fmt::format(GetAddressFormatString(this->GetAddress()->ss_family, with_family), this->GetHostname(), this->GetPort());
+	addr->GetAddressAsString(this->buf, lastof(this->buf), with_family);
+	return this->buf;
 }
 
 /**
@@ -144,7 +166,7 @@ bool NetworkAddress::IsFamily(int family)
  * @note netmask without /n assumes all bits need to match.
  * @return true if this IP is within the netmask.
  */
-bool NetworkAddress::IsInNetmask(const std::string &netmask)
+bool NetworkAddress::IsInNetmask(const char *netmask)
 {
 	/* Resolve it if we didn't do it already */
 	if (!this->IsResolved()) this->GetAddress();
@@ -154,15 +176,16 @@ bool NetworkAddress::IsInNetmask(const std::string &netmask)
 	NetworkAddress mask_address;
 
 	/* Check for CIDR separator */
-	auto cidr_separator_location = netmask.find('/');
-	if (cidr_separator_location != std::string::npos) {
-		int tmp_cidr = atoi(netmask.substr(cidr_separator_location + 1).c_str());
+	const char *chr_cidr = strchr(netmask, '/');
+	if (chr_cidr != nullptr) {
+		int tmp_cidr = atoi(chr_cidr + 1);
 
 		/* Invalid CIDR, treat as single host */
 		if (tmp_cidr > 0 && tmp_cidr < cidr) cidr = tmp_cidr;
 
 		/* Remove the / so that NetworkAddress works on the IP portion */
-		mask_address = NetworkAddress(netmask.substr(0, cidr_separator_location), 0, this->address.ss_family);
+		std::string ip_str(netmask, chr_cidr - netmask);
+		mask_address = NetworkAddress(ip_str.c_str(), 0, this->address.ss_family);
 	} else {
 		mask_address = NetworkAddress(netmask, 0, this->address.ss_family);
 	}
@@ -235,9 +258,9 @@ SOCKET NetworkAddress::Resolve(int family, int socktype, int flags, SocketList *
 	auto end = std::chrono::steady_clock::now();
 	std::chrono::seconds duration = std::chrono::duration_cast<std::chrono::seconds>(end - start);
 	if (!_resolve_timeout_error_message_shown && duration >= std::chrono::seconds(5)) {
-		Debug(net, 0, "getaddrinfo for hostname \"{}\", port {}, address family {} and socket type {} took {} seconds",
-				this->hostname, port_name, AddressFamilyAsString(family), SocketTypeAsString(socktype), duration.count());
-		Debug(net, 0, "  this is likely an issue in the DNS name resolver's configuration causing it to time out");
+		DEBUG(net, 0, "getaddrinfo for hostname \"%s\", port %s, address family %s and socket type %s took %i seconds",
+				this->hostname.c_str(), port_name, AddressFamilyAsString(family), SocketTypeAsString(socktype), (int)duration.count());
+		DEBUG(net, 0, "  this is likely an issue in the DNS name resolver's configuration causing it to time out");
 		_resolve_timeout_error_message_shown = true;
 	}
 
@@ -246,8 +269,8 @@ SOCKET NetworkAddress::Resolve(int family, int socktype, int flags, SocketList *
 
 	if (e != 0) {
 		if (func != ResolveLoopProc) {
-			Debug(net, 0, "getaddrinfo for hostname \"{}\", port {}, address family {} and socket type {} failed: {}",
-				this->hostname, port_name, AddressFamilyAsString(family), SocketTypeAsString(socktype), FS2OTTD(gai_strerror(e)));
+			DEBUG(net, 0, "getaddrinfo for hostname \"%s\", port %s, address family %s and socket type %s failed: %s",
+				this->hostname.c_str(), port_name, AddressFamilyAsString(family), SocketTypeAsString(socktype), FS2OTTD(gai_strerror(e)).c_str());
 		}
 		return INVALID_SOCKET;
 	}
@@ -305,34 +328,34 @@ static SOCKET ListenLoopProc(addrinfo *runp)
 	if (sock == INVALID_SOCKET) {
 		const char *type = NetworkAddress::SocketTypeAsString(runp->ai_socktype);
 		const char *family = NetworkAddress::AddressFamilyAsString(runp->ai_family);
-		Debug(net, 0, "Could not create {} {} socket: {}", type, family, NetworkError::GetLast().AsString());
+		DEBUG(net, 0, "Could not create %s %s socket: %s", type, family, NetworkError::GetLast().AsString());
 		return INVALID_SOCKET;
 	}
 
 	if (runp->ai_socktype == SOCK_STREAM && !SetNoDelay(sock)) {
-		Debug(net, 1, "Setting no-delay mode failed: {}", NetworkError::GetLast().AsString());
+		DEBUG(net, 1, "Setting no-delay mode failed: %s", NetworkError::GetLast().AsString());
 	}
 
 	if (!SetReusePort(sock)) {
-		Debug(net, 0, "Setting reuse-address mode failed: {}", NetworkError::GetLast().AsString());
+		DEBUG(net, 0, "Setting reuse-address mode failed: %s", NetworkError::GetLast().AsString());
 	}
 
 #ifndef __OS2__
 	int on = 1;
 	if (runp->ai_family == AF_INET6 &&
 			setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&on, sizeof(on)) == -1) {
-		Debug(net, 3, "Could not disable IPv4 over IPv6: {}", NetworkError::GetLast().AsString());
+		DEBUG(net, 3, "Could not disable IPv4 over IPv6: %s", NetworkError::GetLast().AsString());
 	}
 #endif
 
 	if (bind(sock, runp->ai_addr, (int)runp->ai_addrlen) != 0) {
-		Debug(net, 0, "Could not bind socket on {}: {}", address, NetworkError::GetLast().AsString());
+		DEBUG(net, 0, "Could not bind socket on %s: %s", address.c_str(), NetworkError::GetLast().AsString());
 		closesocket(sock);
 		return INVALID_SOCKET;
 	}
 
 	if (runp->ai_socktype != SOCK_DGRAM && listen(sock, 1) != 0) {
-		Debug(net, 0, "Could not listen on socket: {}", NetworkError::GetLast().AsString());
+		DEBUG(net, 0, "Could not listen on socket: %s", NetworkError::GetLast().AsString());
 		closesocket(sock);
 		return INVALID_SOCKET;
 	}
@@ -340,10 +363,10 @@ static SOCKET ListenLoopProc(addrinfo *runp)
 	/* Connection succeeded */
 
 	if (!SetNonBlocking(sock)) {
-		Debug(net, 0, "Setting non-blocking mode failed: {}", NetworkError::GetLast().AsString());
+		DEBUG(net, 0, "Setting non-blocking mode failed: %s", NetworkError::GetLast().AsString());
 	}
 
-	Debug(net, 3, "Listening on {}", address);
+	DEBUG(net, 3, "Listening on %s", address.c_str());
 	return sock;
 }
 
@@ -409,7 +432,7 @@ void NetworkAddress::Listen(int socktype, SocketList *sockets)
 	sockaddr_storage addr = {};
 	socklen_t addr_len = sizeof(addr);
 	if (getpeername(sock, (sockaddr *)&addr, &addr_len) != 0) {
-		Debug(net, 0, "Failed to get address of the peer: {}", NetworkError::GetLast().AsString());
+		DEBUG(net, 0, "Failed to get address of the peer: %s", NetworkError::GetLast().AsString());
 		return NetworkAddress();
 	}
 	return NetworkAddress(addr, addr_len);
@@ -425,7 +448,7 @@ void NetworkAddress::Listen(int socktype, SocketList *sockets)
 	sockaddr_storage addr = {};
 	socklen_t addr_len = sizeof(addr);
 	if (getsockname(sock, (sockaddr *)&addr, &addr_len) != 0) {
-		Debug(net, 0, "Failed to get address of the socket: {}", NetworkError::GetLast().AsString());
+		DEBUG(net, 0, "Failed to get address of the socket: %s", NetworkError::GetLast().AsString());
 		return NetworkAddress();
 	}
 	return NetworkAddress(addr, addr_len);

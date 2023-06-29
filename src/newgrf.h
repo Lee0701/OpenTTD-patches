@@ -14,9 +14,12 @@
 #include "rail_type.h"
 #include "road_type.h"
 #include "fileio_type.h"
+#include "debug.h"
 #include "core/bitmath_func.hpp"
 #include "core/alloc_type.hpp"
 #include "core/smallvec_type.hpp"
+#include "3rdparty/cpp-btree/btree_map.h"
+#include <bitset>
 
 /**
  * List of different canal 'features'.
@@ -63,7 +66,7 @@ enum GrfMiscBit {
 	GMB_SECOND_ROCKY_TILE_SET  = 6,
 };
 
-enum GrfSpecFeature {
+enum GrfSpecFeature : uint8 {
 	GSF_TRAINS,
 	GSF_ROADVEHICLES,
 	GSF_SHIPS,
@@ -84,11 +87,18 @@ enum GrfSpecFeature {
 	GSF_AIRPORTTILES,
 	GSF_ROADTYPES,
 	GSF_TRAMTYPES,
+	GSF_ROADSTOPS,
+
+	GSF_NEWLANDSCAPE,
+	GSF_FAKE_TOWNS,           ///< Fake (but mappable) town GrfSpecFeature for NewGRF debugging (parent scope), and generic callbacks
 	GSF_END,
 
-	GSF_FAKE_TOWNS = GSF_END, ///< Fake town GrfSpecFeature for NewGRF debugging (parent scope)
+	GSF_REAL_FEATURE_END = GSF_NEWLANDSCAPE,
+
+	GSF_FAKE_STATION_STRUCT = GSF_END,  ///< Fake station struct GrfSpecFeature for NewGRF debugging
 	GSF_FAKE_END,             ///< End of the fake features
 
+	GSF_ERROR_ON_USE = 0xFE,  ///< An invalid value which generates an immediate error on mapping
 	GSF_INVALID = 0xFF,       ///< An invalid spec feature
 };
 
@@ -98,30 +108,248 @@ struct GRFLabel {
 	byte label;
 	uint32 nfo_line;
 	size_t pos;
-	struct GRFLabel *next;
+
+	GRFLabel(byte label, uint32 nfo_line, size_t pos) : label(label), nfo_line(nfo_line), pos(pos) {}
 };
+
+enum GRFPropertyMapFallbackMode {
+	GPMFM_IGNORE,
+	GPMFM_ERROR_ON_USE,
+	GPMFM_ERROR_ON_DEFINITION,
+	GPMFM_END,
+};
+
+struct GRFFeatureMapDefinition {
+	const char *name; // nullptr indicates the end of the list
+	GrfSpecFeature feature;
+
+	/** Create empty object used to identify the end of a list. */
+	GRFFeatureMapDefinition() :
+		name(nullptr),
+		feature((GrfSpecFeature)0)
+	{}
+
+	GRFFeatureMapDefinition(GrfSpecFeature feature, const char *name) :
+		name(name),
+		feature(feature)
+	{}
+};
+
+struct GRFFeatureMapRemapEntry {
+	const char *name = nullptr;
+	GrfSpecFeature feature = (GrfSpecFeature)0;
+	uint8 raw_id = 0;
+};
+
+struct GRFFeatureMapRemapSet {
+	std::bitset<256> remapped_ids;
+	btree::btree_map<uint8, GRFFeatureMapRemapEntry> mapping;
+
+	GRFFeatureMapRemapEntry &Entry(uint8 raw_id)
+	{
+		this->remapped_ids.set(raw_id);
+		return this->mapping[raw_id];
+	}
+};
+
+struct GRFPropertyMapDefinition {
+	const char *name; // nullptr indicates the end of the list
+	int id;
+	GrfSpecFeature feature;
+
+	/** Create empty object used to identify the end of a list. */
+	GRFPropertyMapDefinition() :
+		name(nullptr),
+		id(0),
+		feature((GrfSpecFeature)0)
+	{}
+
+	GRFPropertyMapDefinition(GrfSpecFeature feature, int id, const char *name) :
+		name(name),
+		id(id),
+		feature(feature)
+	{}
+};
+
+struct GRFFilePropertyRemapEntry {
+	const char *name = nullptr;
+	int id = 0;
+	GrfSpecFeature feature = (GrfSpecFeature)0;
+	bool extended = false;
+	uint16 property_id = 0;
+};
+
+struct GRFFilePropertyRemapSet {
+	std::bitset<256> remapped_ids;
+	btree::btree_map<uint8, GRFFilePropertyRemapEntry> mapping;
+
+	GRFFilePropertyRemapEntry &Entry(uint8 property)
+	{
+		this->remapped_ids.set(property);
+		return this->mapping[property];
+	}
+};
+
+struct GRFVariableMapDefinition {
+	const char *name; // nullptr indicates the end of the list
+	int id;
+	GrfSpecFeature feature;
+
+	/** Create empty object used to identify the end of a list. */
+	GRFVariableMapDefinition() :
+		name(nullptr),
+		id(0),
+		feature((GrfSpecFeature)0)
+	{}
+
+	GRFVariableMapDefinition(GrfSpecFeature feature, int id, const char *name) :
+		name(name),
+		id(id),
+		feature(feature)
+	{}
+};
+
+struct GRFNameOnlyVariableMapDefinition {
+	const char *name; // nullptr indicates the end of the list
+	int id;
+
+	/** Create empty object used to identify the end of a list. */
+	GRFNameOnlyVariableMapDefinition() :
+		name(nullptr),
+		id(0)
+	{}
+
+	GRFNameOnlyVariableMapDefinition(int id, const char *name) :
+		name(name),
+		id(id)
+	{}
+};
+
+struct GRFVariableMapEntry {
+	uint16 id = 0;
+	uint8 feature = 0;
+	uint8 input_shift = 0;
+	uint8 output_shift = 0;
+	uint32 input_mask = 0;
+	uint32 output_mask = 0;
+	uint32 output_param = 0;
+};
+
+/** The type of action 5 type. */
+enum Action5BlockType {
+	A5BLOCK_FIXED,                ///< Only allow replacing a whole block of sprites. (TTDP compatible)
+	A5BLOCK_ALLOW_OFFSET,         ///< Allow replacing any subset by specifiing an offset.
+	A5BLOCK_INVALID,              ///< unknown/not-implemented type
+};
+/** Information about a single action 5 type. */
+struct Action5Type {
+	Action5BlockType block_type;  ///< How is this Action5 type processed?
+	SpriteID sprite_base;         ///< Load the sprites starting from this sprite.
+	uint16 min_sprites;           ///< If the Action5 contains less sprites, the whole block will be ignored.
+	uint16 max_sprites;           ///< If the Action5 contains more sprites, only the first max_sprites sprites will be used.
+	const char *name;             ///< Name for error messages.
+};
+
+struct Action5TypeRemapDefinition {
+	const char *name; // nullptr indicates the end of the list
+	const Action5Type info;
+
+	/** Create empty object used to identify the end of a list. */
+	Action5TypeRemapDefinition() :
+		name(nullptr),
+		info({ A5BLOCK_INVALID, 0, 0, 0, nullptr })
+	{}
+
+	Action5TypeRemapDefinition(const char *type_name, Action5BlockType block_type, SpriteID sprite_base, uint16 min_sprites, uint16 max_sprites, const char *info_name) :
+		name(type_name),
+		info({ block_type, sprite_base, min_sprites, max_sprites, info_name })
+	{}
+};
+
+struct Action5TypeRemapEntry {
+	const Action5Type *info = nullptr;
+	const char *name = nullptr;
+	uint8 type_id = 0;
+	GRFPropertyMapFallbackMode fallback_mode = GPMFM_IGNORE;
+};
+
+struct Action5TypeRemapSet {
+	std::bitset<256> remapped_ids;
+	btree::btree_map<uint8, Action5TypeRemapEntry> mapping;
+
+	Action5TypeRemapEntry &Entry(uint8 property)
+	{
+		this->remapped_ids.set(property);
+		return this->mapping[property];
+	}
+};
+
+/** New signal control flags. */
+enum NewSignalCtrlFlags {
+	NSCF_GROUPSET               = 0,                          ///< Custom signal sprites group set.
+	NSCF_PROGSIG                = 1,                          ///< Custom signal sprites enabled for programmable pre-signals.
+	NSCF_RESTRICTEDSIG          = 2,                          ///< Custom signal sprite flag enabled for restricted signals.
+	NSCF_RECOLOUR_ENABLED       = 3,                          ///< Recolour sprites enabled
+	NSCF_NOENTRYSIG             = 4,                          ///< Custom signal sprites enabled for no-entry signals.
+};
+
+enum {
+	NEW_SIGNALS_MAX_EXTRA_ASPECT = 6,
+};
+
+/** New signal action 3 IDs. */
+enum NewSignalAction3ID {
+	NSA3ID_CUSTOM_SIGNALS       = 0,                          ///< Action 3 ID for custom signal sprites
+};
+
+/** New landscape control flags. */
+enum NewLandscapeCtrlFlags {
+	NLCF_ROCKS_SET                = 0,                        ///< Custom landscape rocks sprites group set.
+	NLCF_ROCKS_RECOLOUR_ENABLED   = 1,                        ///< Recolour sprites enabled for rocks
+	NLCF_ROCKS_DRAW_SNOWY_ENABLED = 2,                        ///< Enable drawing rock tiles on snow
+};
+
+/** New landscape action 3 IDs. */
+enum NewLandscapeAction3ID {
+	NLA3ID_CUSTOM_ROCKS         = 0,                          ///< Action 3 ID for custom landscape sprites
+};
+
+/** GRFFile control flags. */
+enum GRFFileCtrlFlags {
+	GFCF_HAVE_FEATURE_ID_REMAP  = 0,                          ///< This GRF has one or more feature ID mappings
+};
+
+struct NewSignalStyle;
 
 /** Dynamic data of a loaded NewGRF */
 struct GRFFile : ZeroedMemoryAllocator {
-	char *filename;
+	std::string filename;
 	uint32 grfid;
 	byte grf_version;
 
 	uint sound_offset;
 	uint16 num_sounds;
 
-	struct StationSpec **stations;
-	struct HouseSpec **housespec;
-	struct IndustrySpec **industryspec;
-	struct IndustryTileSpec **indtspec;
-	struct ObjectSpec **objectspec;
-	struct AirportSpec **airportspec;
-	struct AirportTileSpec **airtspec;
+	std::vector<std::unique_ptr<struct StationSpec>> stations;
+	std::vector<std::unique_ptr<struct HouseSpec>> housespec;
+	std::vector<std::unique_ptr<struct IndustrySpec>> industryspec;
+	std::vector<std::unique_ptr<struct IndustryTileSpec>> indtspec;
+	std::vector<std::unique_ptr<struct ObjectSpec>> objectspec;
+	std::vector<std::unique_ptr<struct AirportSpec>> airportspec;
+	std::vector<std::unique_ptr<struct AirportTileSpec>> airtspec;
+	std::vector<std::unique_ptr<struct RoadStopSpec>> roadstops;
+
+	GRFFeatureMapRemapSet feature_id_remaps;
+	GRFFilePropertyRemapSet action0_property_remaps[GSF_END];
+	btree::btree_map<uint32, GRFFilePropertyRemapEntry> action0_extended_property_remaps;
+	Action5TypeRemapSet action5_type_remaps;
+	std::vector<GRFVariableMapEntry> grf_variable_remaps;
+	std::vector<std::unique_ptr<const char, FreeDeleter>> remap_unknown_property_names;
 
 	uint32 param[0x80];
 	uint param_end;  ///< one more than the highest set parameter
 
-	GRFLabel *label; ///< Pointer to the first label. This is a linked list, not an array.
+	std::vector<GRFLabel> labels;                   ///< List of labels
 
 	std::vector<CargoLabel> cargo_list;             ///< Cargo translation table (local ID -> label)
 	uint8 cargo_map[NUM_CARGO];                     ///< Inverse cargo translation table (CargoID -> local ID)
@@ -144,6 +372,25 @@ struct GRFFile : ZeroedMemoryAllocator {
 
 	uint32 grf_features;                     ///< Bitset of GrfSpecFeature the grf uses
 	PriceMultipliers price_base_multipliers; ///< Price base multipliers as set by the grf.
+
+	uint32 var8D_overlay;                    ///< Overlay for global variable 8D (action 0x14)
+	uint32 var9D_overlay;                    ///< Overlay for global variable 9D (action 0x14)
+	std::vector<uint32> var91_values;        ///< Test result values for global variable 91 (action 0x14, only testable using action 7/9)
+
+	uint32 observed_feature_tests;           ///< Observed feature test bits (see: GRFFeatureTestObservationFlag)
+
+	const SpriteGroup *new_signals_group;    ///< New signals sprite group
+	byte new_signal_ctrl_flags;              ///< Ctrl flags for new signals
+	byte new_signal_extra_aspects;           ///< Number of extra aspects for new signals
+	uint16 new_signal_style_mask;            ///< New signal styles usable with this GRF
+	NewSignalStyle *current_new_signal_style; ///< Current new signal style being defined by this GRF
+
+	const SpriteGroup *new_rocks_group;      ///< New landscape rocks group
+	byte new_landscape_ctrl_flags;           ///< Ctrl flags for new landscape
+
+	byte ctrl_flags;                         ///< General GRF control flags
+
+	btree::btree_map<uint16, uint> string_map; ///< Map of local GRF string ID to string ID
 
 	GRFFile(const struct GRFConfig *config);
 	~GRFFile();
@@ -198,11 +445,27 @@ void ReloadNewGRFData(); // in saveload/afterload.cpp
 void ResetNewGRFData();
 void ResetPersistentNewGRFData();
 
-void CDECL grfmsg(int severity, const char *str, ...) WARN_FORMAT(2, 3);
+#define grfmsg(severity, ...) if ((severity) == 0 || _debug_grf_level >= (severity)) _intl_grfmsg(severity, __VA_ARGS__)
+void CDECL _intl_grfmsg(int severity, const char *str, ...) WARN_FORMAT(2, 3);
 
 bool GetGlobalVariable(byte param, uint32 *value, const GRFFile *grffile);
 
 StringID MapGRFStringID(uint32 grfid, StringID str);
 void ShowNewGRFError();
+uint CountSelectedGRFs(GRFConfig *grfconf);
+
+struct TemplateVehicle;
+
+struct GrfSpecFeatureRef {
+	GrfSpecFeature id;
+	uint8 raw_byte;
+};
+
+const char *GetFeatureString(GrfSpecFeatureRef feature);
+const char *GetFeatureString(GrfSpecFeature feature);
+
+void InitGRFGlobalVars();
+
+const char *GetExtendedVariableNameById(int id);
 
 #endif /* NEWGRF_H */

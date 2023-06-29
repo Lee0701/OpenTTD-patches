@@ -212,7 +212,7 @@ void IniLoadFile::RemoveGroup(const char *name)
  * @param subdir the sub directory to load the file from.
  * @pre nothing has been loaded yet.
  */
-void IniLoadFile::LoadFromDisk(const std::string &filename, Subdirectory subdir)
+void IniLoadFile::LoadFromDisk(const std::string &filename, Subdirectory subdir, std::string *save)
 {
 	assert(this->last_group == &this->group);
 
@@ -227,10 +227,16 @@ void IniLoadFile::LoadFromDisk(const std::string &filename, Subdirectory subdir)
 	FILE *in = this->OpenFile(filename, subdir, &end);
 	if (in == nullptr) return;
 
+	if (save != nullptr) {
+		save->clear();
+		if (end < (1 << 20)) save->reserve(end);
+	}
+
 	end += ftell(in);
 
 	/* for each line in the file */
 	while ((size_t)ftell(in) < end && fgets(buffer, sizeof(buffer), in)) {
+		if (save != nullptr) *save += buffer;
 		char c, *s;
 		/* trim whitespace from the left side */
 		for (s = buffer; *s == ' ' || *s == '\t'; s++) {}

@@ -21,7 +21,7 @@
  * (this is btw. also possible if needed). This is used to avoid a
  * flickering of the screen by the video driver constantly repainting it.
  *
- * This whole mechanism is controlled by an rectangle defined in #_invalid_rect. This
+ * This whole mechanism was controlled by an rectangle defined in #_invalid_rect. This
  * rectangle defines the area on the screen which must be repaint. If a new object
  * needs to be repainted this rectangle is extended to 'catch' the object on the
  * screen. At some point (which is normally uninteresting for patch writers) this
@@ -32,7 +32,6 @@
  * rectangle information. Then a new round begins by marking objects "dirty".
  *
  * @see VideoDriver::MakeDirty
- * @see _invalid_rect
  * @see _screen
  */
 
@@ -54,7 +53,11 @@ extern byte _support8bpp;
 extern CursorVars _cursor;
 extern bool _ctrl_pressed;   ///< Is Ctrl pressed?
 extern bool _shift_pressed;  ///< Is Shift pressed?
+extern bool _invert_ctrl;
+extern bool _invert_shift;
 extern uint16 _game_speed;
+extern uint8 _milliseconds_per_tick;
+extern float _ticks_per_second;
 
 extern bool _left_button_down;
 extern bool _left_button_clicked;
@@ -68,54 +71,60 @@ extern std::vector<Dimension> _resolutions;
 extern Dimension _cur_resolution;
 extern Palette _cur_palette; ///< Current palette
 
+extern DrawPixelInfo *_cur_dpi;
+
 void HandleToolbarHotkey(int hotkey);
 void HandleKeypress(uint keycode, WChar key);
 void HandleTextInput(const char *str, bool marked = false, const char *caret = nullptr, const char *insert_location = nullptr, const char *replacement_end = nullptr);
 void HandleCtrlChanged();
+void HandleShiftChanged();
 void HandleMouseEvents();
 void UpdateWindows();
 void ChangeGameSpeed(bool enable_fast_forward);
+void SetupTickRate();
 
 void DrawMouseCursor();
 void ScreenSizeChanged();
 void GameSizeChanged();
-bool AdjustGUIZoom(bool automatic);
 void UndrawMouseCursor();
+
+enum AdjustGUIZoomMode {
+	AGZM_MANUAL,
+	AGZM_AUTOMATIC,
+	AGZM_STARTUP,
+};
+bool AdjustGUIZoom(AdjustGUIZoomMode mode);
 
 /** Size of the buffer used for drawing strings. */
 static const int DRAW_STRING_BUFFER = 2048;
 
 void RedrawScreenRect(int left, int top, int right, int bottom);
-void GfxScroll(int left, int top, int width, int height, int xo, int yo);
 
 Dimension GetSpriteSize(SpriteID sprid, Point *offset = nullptr, ZoomLevel zoom = ZOOM_LVL_GUI);
 Dimension GetScaledSpriteSize(SpriteID sprid); /* widget.cpp */
-void DrawSpriteViewport(SpriteID img, PaletteID pal, int x, int y, const SubSprite *sub = nullptr);
+struct SpritePointerHolder;
+void DrawSpriteViewport(const SpritePointerHolder &sprite_store, const DrawPixelInfo *dpi, SpriteID img, PaletteID pal, int x, int y, const SubSprite *sub = nullptr);
+void PrepareDrawSpriteViewportSpriteStore(SpritePointerHolder &sprite_store, SpriteID img, PaletteID pal);
 void DrawSprite(SpriteID img, PaletteID pal, int x, int y, const SubSprite *sub = nullptr, ZoomLevel zoom = ZOOM_LVL_GUI);
 void DrawSpriteIgnorePadding(SpriteID img, PaletteID pal, const Rect &r, bool clicked, StringAlignment align); /* widget.cpp */
 std::unique_ptr<uint32[]> DrawSpriteToRgbaBuffer(SpriteID spriteId, ZoomLevel zoom = ZOOM_LVL_GUI);
 
-int DrawString(int left, int right, int top, const char *str, TextColour colour = TC_FROMSTRING, StringAlignment align = SA_LEFT, bool underline = false, FontSize fontsize = FS_NORMAL);
-int DrawString(int left, int right, int top, const std::string &str, TextColour colour = TC_FROMSTRING, StringAlignment align = SA_LEFT, bool underline = false, FontSize fontsize = FS_NORMAL);
+int DrawString(int left, int right, int top, std::string_view str, TextColour colour = TC_FROMSTRING, StringAlignment align = SA_LEFT, bool underline = false, FontSize fontsize = FS_NORMAL);
 int DrawString(int left, int right, int top, StringID str, TextColour colour = TC_FROMSTRING, StringAlignment align = SA_LEFT, bool underline = false, FontSize fontsize = FS_NORMAL);
-int DrawStringMultiLine(int left, int right, int top, int bottom, const char *str, TextColour colour = TC_FROMSTRING, StringAlignment align = (SA_TOP | SA_LEFT), bool underline = false, FontSize fontsize = FS_NORMAL);
-int DrawStringMultiLine(int left, int right, int top, int bottom, const std::string &str, TextColour colour = TC_FROMSTRING, StringAlignment align = (SA_TOP | SA_LEFT), bool underline = false, FontSize fontsize = FS_NORMAL);
+int DrawStringMultiLine(int left, int right, int top, int bottom, std::string_view str, TextColour colour = TC_FROMSTRING, StringAlignment align = (SA_TOP | SA_LEFT), bool underline = false, FontSize fontsize = FS_NORMAL);
 int DrawStringMultiLine(int left, int right, int top, int bottom, StringID str, TextColour colour = TC_FROMSTRING, StringAlignment align = (SA_TOP | SA_LEFT), bool underline = false, FontSize fontsize = FS_NORMAL);
 
 void DrawCharCentered(WChar c, const Rect &r, TextColour colour);
 
-void GfxFillRect(int left, int top, int right, int bottom, int colour, FillRectMode mode = FILLRECT_OPAQUE);
-void GfxFillPolygon(const std::vector<Point> &shape, int colour, FillRectMode mode = FILLRECT_OPAQUE);
-void GfxDrawLine(int left, int top, int right, int bottom, int colour, int width = 1, int dash = 0);
-void DrawBox(int x, int y, int dx1, int dy1, int dx2, int dy2, int dx3, int dy3);
+void GfxFillRect(const DrawPixelInfo *dpi, int left, int top, int right, int bottom, int colour, FillRectMode mode = FILLRECT_OPAQUE);
+inline void GfxFillRect(int left, int top, int right, int bottom, int colour, FillRectMode mode = FILLRECT_OPAQUE) { GfxFillRect(_cur_dpi, left, top, right, bottom, colour, mode); }
+void GfxFillPolygon(const std::vector<Point> &shape, int colour, FillRectMode mode = FILLRECT_OPAQUE, GfxFillRectModeFunctor *fill_functor = nullptr);
+void GfxDrawLine(const DrawPixelInfo *dpi, int left, int top, int right, int bottom, int colour, int width = 1, int dash = 0);
+inline void GfxDrawLine(int left, int top, int right, int bottom, int colour, int width = 1, int dash = 0) { GfxDrawLine(_cur_dpi, left, top, right, bottom, colour, width, dash); }
+void DrawBox(const DrawPixelInfo *dpi, int x, int y, int dx1, int dy1, int dx2, int dy2, int dx3, int dy3);
 
 /* Versions of DrawString/DrawStringMultiLine that accept a Rect instead of separate left, right, top and bottom parameters. */
-static inline int DrawString(const Rect &r, const char *str, TextColour colour = TC_FROMSTRING, StringAlignment align = SA_LEFT, bool underline = false, FontSize fontsize = FS_NORMAL)
-{
-	return DrawString(r.left, r.right, r.top, str, colour, align, underline, fontsize);
-}
-
-static inline int DrawString(const Rect &r, const std::string &str, TextColour colour = TC_FROMSTRING, StringAlignment align = SA_LEFT, bool underline = false, FontSize fontsize = FS_NORMAL)
+static inline int DrawString(const Rect &r, std::string_view str, TextColour colour = TC_FROMSTRING, StringAlignment align = SA_LEFT, bool underline = false, FontSize fontsize = FS_NORMAL)
 {
 	return DrawString(r.left, r.right, r.top, str, colour, align, underline, fontsize);
 }
@@ -125,12 +134,7 @@ static inline int DrawString(const Rect &r, StringID str, TextColour colour = TC
 	return DrawString(r.left, r.right, r.top, str, colour, align, underline, fontsize);
 }
 
-static inline int DrawStringMultiLine(const Rect &r, const char *str, TextColour colour = TC_FROMSTRING, StringAlignment align = (SA_TOP | SA_LEFT), bool underline = false, FontSize fontsize = FS_NORMAL)
-{
-	return DrawStringMultiLine(r.left, r.right, r.top, r.bottom, str, colour, align, underline, fontsize);
-}
-
-static inline int DrawStringMultiLine(const Rect &r, const std::string &str, TextColour colour = TC_FROMSTRING, StringAlignment align = (SA_TOP | SA_LEFT), bool underline = false, FontSize fontsize = FS_NORMAL)
+static inline int DrawStringMultiLine(const Rect &r, std::string_view str, TextColour colour = TC_FROMSTRING, StringAlignment align = (SA_TOP | SA_LEFT), bool underline = false, FontSize fontsize = FS_NORMAL)
 {
 	return DrawStringMultiLine(r.left, r.right, r.top, r.bottom, str, colour, align, underline, fontsize);
 }
@@ -145,23 +149,24 @@ static inline void GfxFillRect(const Rect &r, int colour, FillRectMode mode = FI
 	GfxFillRect(r.left, r.top, r.right, r.bottom, colour, mode);
 }
 
-Dimension GetStringBoundingBox(const char *str, FontSize start_fontsize = FS_NORMAL);
-Dimension GetStringBoundingBox(const std::string &str, FontSize start_fontsize = FS_NORMAL);
+Dimension GetStringBoundingBox(std::string_view str, FontSize start_fontsize = FS_NORMAL);
 Dimension GetStringBoundingBox(StringID strid, FontSize start_fontsize = FS_NORMAL);
-int GetStringHeight(const char *str, int maxw, FontSize fontsize = FS_NORMAL);
+uint GetStringListWidth(const StringID *list, FontSize fontsize = FS_NORMAL);
+int GetStringHeight(std::string_view str, int maxw, FontSize fontsize = FS_NORMAL);
 int GetStringHeight(StringID str, int maxw);
 int GetStringLineCount(StringID str, int maxw);
 Dimension GetStringMultiLineBoundingBox(StringID str, const Dimension &suggestion);
-Dimension GetStringMultiLineBoundingBox(const char *str, const Dimension &suggestion);
+Dimension GetStringMultiLineBoundingBox(std::string_view str, const Dimension &suggestion);
 void LoadStringWidthTable(bool monospace = false);
-Point GetCharPosInString(const char *str, const char *ch, FontSize start_fontsize = FS_NORMAL);
-const char *GetCharAtPosition(const char *str, int x, FontSize start_fontsize = FS_NORMAL);
+Point GetCharPosInString(std::string_view str, const char *ch, FontSize start_fontsize = FS_NORMAL);
+ptrdiff_t GetCharAtPosition(std::string_view str, int x, FontSize start_fontsize = FS_NORMAL);
 
 void DrawDirtyBlocks();
-void AddDirtyBlock(int left, int top, int right, int bottom);
+void SetDirtyBlocks(int left, int top, int right, int bottom);
+void SetPendingDirtyBlocks(int left, int top, int right, int bottom);
+void UnsetDirtyBlocks(int left, int top, int right, int bottom);
 void MarkWholeScreenDirty();
 
-bool CopyPalette(Palette &local_palette, bool force_copy = false);
 void GfxInitPalettes();
 void CheckBlitter();
 
@@ -180,6 +185,12 @@ static inline int CenterBounds(int min, int max, int size)
 }
 
 /* window.cpp */
+enum DrawOverlappedWindowFlags {
+	DOWF_NONE         =      0,
+	DOWF_MARK_DIRTY   = 1 << 0,
+	DOWF_SHOW_DEBUG   = 1 << 1,
+};
+DECLARE_ENUM_AS_BIT_SET(DrawOverlappedWindowFlags)
 void DrawOverlappedWindowForAll(int left, int top, int right, int bottom);
 
 void SetMouseCursorBusy(bool busy);
@@ -187,6 +198,7 @@ void SetMouseCursor(CursorID cursor, PaletteID pal);
 void SetAnimatedMouseCursor(const AnimCursor *table);
 void CursorTick();
 void UpdateCursorSize();
+void UpdateRouteStepSpriteSize();
 bool ChangeResInGame(int w, int h);
 void SortResolutions();
 bool ToggleFullScreen(bool fs);
@@ -195,8 +207,19 @@ bool ToggleFullScreen(bool fs);
 byte GetCharacterWidth(FontSize size, WChar key);
 byte GetDigitWidth(FontSize size = FS_NORMAL);
 void GetBroadestDigit(uint *front, uint *next, FontSize size = FS_NORMAL);
+uint64 GetBroadestDigitsValue(uint count, FontSize size = FS_NORMAL);
 
-int GetCharacterHeight(FontSize size);
+extern int font_height_cache[FS_END];
+
+/**
+ * Get height of a character for a given font size.
+ * @param size Font size to get height of
+ * @return     Height of characters in the given font (pixels)
+ */
+inline int GetCharacterHeight(FontSize size)
+{
+	return font_height_cache[size];
+}
 
 /** Height of characters in the small (#FS_SMALL) font. @note Some characters may be oversized. */
 #define FONT_HEIGHT_SMALL  (GetCharacterHeight(FS_SMALL))
@@ -210,19 +233,6 @@ int GetCharacterHeight(FontSize size);
 /** Height of characters in the large (#FS_MONO) font. @note Some characters may be oversized. */
 #define FONT_HEIGHT_MONO  (GetCharacterHeight(FS_MONO))
 
-extern DrawPixelInfo *_cur_dpi;
-
-/**
- * Checks if a Colours value is valid.
- *
- * @param colours The value to check
- * @return true if the given value is a valid Colours.
- */
-static inline bool IsValidColours(Colours colours)
-{
-	return colours < COLOUR_END;
-}
-
 TextColour GetContrastColour(uint8 background, uint8 threshold = 128);
 
 /**
@@ -230,6 +240,7 @@ TextColour GetContrastColour(uint8 background, uint8 threshold = 128);
  * 8 colours per gradient from darkest (0) to lightest (7)
  */
 extern byte _colour_gradient[COLOUR_END][8];
+extern byte _colour_value[COLOUR_END];
 
 /**
  * Return the colour for a particular greyscale level.
@@ -261,11 +272,4 @@ static const uint8 PC_VERY_DARK_BLUE     = 0x9A;           ///< Almost-black blu
 static const uint8 PC_DARK_BLUE          = 0x9D;           ///< Dark blue palette colour.
 static const uint8 PC_LIGHT_BLUE         = 0x98;           ///< Light blue palette colour.
 
-static const uint8 PC_ROUGH_LAND         = 0x52;           ///< Dark green palette colour for rough land.
-static const uint8 PC_GRASS_LAND         = 0x54;           ///< Dark green palette colour for grass land.
-static const uint8 PC_BARE_LAND          = 0x37;           ///< Brown palette colour for bare land.
-static const uint8 PC_RAINFOREST         = 0x5C;           ///< Pale green palette colour for rainforest.
-static const uint8 PC_FIELDS             = 0x25;           ///< Light brown palette colour for fields.
-static const uint8 PC_TREES              = 0x57;           ///< Green palette colour for trees.
-static const uint8 PC_WATER              = 0xC9;           ///< Dark blue palette colour for water.
 #endif /* GFX_FUNC_H */

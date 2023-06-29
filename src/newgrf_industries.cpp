@@ -88,8 +88,32 @@ uint32 GetIndustryIDAtOffset(TileIndex tile, const Industry *i, uint32 cur_grfid
 	return 0xFF << 8 | indtsp->grf_prop.subst_id; // so just give it the substitute
 }
 
+struct IndustryLocationDistanceCache {
+	uint16 distances[NUM_INDUSTRYTYPES];
+	bool initialised = false;
+
+	static IndustryLocationDistanceCache *instance;
+};
+IndustryLocationDistanceCache *IndustryLocationDistanceCache::instance = nullptr;
+
 static uint32 GetClosestIndustry(TileIndex tile, IndustryType type, const Industry *current)
 {
+	if (type >= NUM_INDUSTRYTYPES) return UINT32_MAX;
+	if (IndustryLocationDistanceCache::instance != nullptr) {
+		IndustryLocationDistanceCache *cache = IndustryLocationDistanceCache::instance;
+		if (!cache->initialised) {
+			MemSetT(cache->distances, 0xFF, NUM_INDUSTRYTYPES);
+			for (const Industry *i : Industry::Iterate()) {
+				if (i == current || i->type >= NUM_INDUSTRYTYPES) continue;
+
+				uint dist = DistanceManhattan(tile, i->location.tile);
+				if (dist < (uint)cache->distances[i->type]) cache->distances[i->type] = (uint16)dist;
+			}
+			cache->initialised = true;
+		}
+		return cache->distances[type];
+	}
+
 	uint32 best_dist = UINT32_MAX;
 	for (const Industry *i : Industry::Iterate()) {
 		if (i->type != type || i == current) continue;
@@ -110,12 +134,12 @@ static uint32 GetClosestIndustry(TileIndex tile, IndustryType type, const Indust
  * @param current Industry for which the inquiry is made
  * @return the formatted answer to the callback : rr(reserved) cc(count) dddd(manhattan distance of closest sister)
  */
-static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout_filter, bool town_filter, const Industry *current)
+static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout_filter, bool town_filter, const Industry *current, uint32 mask)
 {
 	uint32 GrfID = GetRegister(0x100);  ///< Get the GRFID of the definition to look for in register 100h
 	IndustryType ind_index;
 	uint32 closest_dist = UINT32_MAX;
-	byte count = 0;
+	uint count = 0;
 
 	/* Determine what will be the industry type to look for */
 	switch (GrfID) {
@@ -139,8 +163,8 @@ static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout
 	if (layout_filter == 0 && !town_filter) {
 		/* If the filter is 0, it could be because none was specified as well as being really a 0.
 		 * In either case, just do the regular var67 */
-		closest_dist = GetClosestIndustry(current->location.tile, ind_index, current);
-		count = std::min<uint>(Industry::GetIndustryTypeCount(ind_index), UINT8_MAX); // clamp to 8 bit
+		if (mask & 0xFFFF) closest_dist = GetClosestIndustry(current->location.tile, ind_index, current);
+		if (mask & 0xFF0000) count = ClampTo<byte>(Industry::GetIndustryTypeCount(ind_index));
 	} else {
 		/* Count only those who match the same industry type and layout filter
 		 * Unfortunately, we have to do it manually */
@@ -150,12 +174,13 @@ static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout
 				count++;
 			}
 		}
+		count = std::min<uint>(count, UINT8_MAX);
 	}
 
-	return count << 16 | GB(closest_dist, 0, 16);
+	return count << 16 | std::min<uint>(closest_dist, 0xFFFF);
 }
 
-/* virtual */ uint32 IndustriesScopeResolver::GetVariable(byte variable, uint32 parameter, bool *available) const
+/* virtual */ uint32 IndustriesScopeResolver::GetVariable(uint16 variable, uint32 parameter, GetVariableExtra *extra) const
 {
 	if (this->ro.callback == CBID_INDUSTRY_LOCATION) {
 		/* Variables available during construction check. */
@@ -168,7 +193,7 @@ static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout
 			case 0x82: return this->industry->town->index;
 			case 0x83:
 			case 0x84:
-			case 0x85: Debug(grf, 0, "NewGRFs shouldn't be doing pointer magic"); break; // not supported
+			case 0x85: DEBUG(grf, 0, "NewGRFs shouldn't be doing pointer magic"); break; // not supported
 
 			/* Number of the layout */
 			case 0x86: return this->industry->selected_layout;
@@ -180,16 +205,16 @@ static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout
 			case 0x88: return GetTownRadiusGroup(this->industry->town, this->tile);
 
 			/* Manhattan distance of the closest town */
-			case 0x89: return std::min(DistanceManhattan(this->industry->town->xy, this->tile), 255u);
+			case 0x89: return ClampTo<uint8_t>(DistanceManhattan(this->industry->town->xy, this->tile));
 
 			/* Lowest height of the tile */
-			case 0x8A: return Clamp(GetTileZ(this->tile) * (this->ro.grffile->grf_version >= 8 ? 1 : TILE_HEIGHT), 0, 0xFF);
+			case 0x8A: return ClampTo<uint8_t>(GetTileZ(this->tile) * (this->ro.grffile->grf_version >= 8 ? 1 : TILE_HEIGHT));
 
 			/* Distance to the nearest water/land tile */
 			case 0x8B: return GetClosestWaterDistance(this->tile, (GetIndustrySpec(this->industry->type)->behaviour & INDUSTRYBEH_BUILT_ONWATER) == 0);
 
 			/* Square of Euclidian distance from town */
-			case 0x8D: return std::min(DistanceSquare(this->industry->town->xy, this->tile), 65535u);
+			case 0x8D: return ClampTo<uint16_t>(DistanceSquare(this->industry->town->xy, this->tile));
 
 			/* 32 random bits */
 			case 0x8F: return this->random_bits;
@@ -199,9 +224,9 @@ static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout
 	const IndustrySpec *indspec = GetIndustrySpec(this->type);
 
 	if (this->industry == nullptr) {
-		Debug(grf, 1, "Unhandled variable 0x{:X} (no available industry) in callback 0x{:x}", variable, this->ro.callback);
+		DEBUG(grf, 1, "Unhandled variable 0x%X (no available industry) in callback 0x%x", variable, this->ro.callback);
 
-		*available = false;
+		extra->available = false;
 		return UINT_MAX;
 	}
 
@@ -213,9 +238,9 @@ static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout
 			if (HasBit(callback, CBM_IND_PRODUCTION_CARGO_ARRIVAL) || HasBit(callback, CBM_IND_PRODUCTION_256_TICKS)) {
 				if ((indspec->behaviour & INDUSTRYBEH_PROD_MULTI_HNDLING) != 0) {
 					if (this->industry->prod_level == 0) return 0;
-					return std::min<uint16>(this->industry->incoming_cargo_waiting[variable - 0x40] / this->industry->prod_level, 0xFFFFu);
+					return ClampTo<uint16>(this->industry->incoming_cargo_waiting[variable - 0x40] / this->industry->prod_level);
 				} else {
-					return std::min<uint16>(this->industry->incoming_cargo_waiting[variable - 0x40], 0xFFFFu);
+					return ClampTo<uint16>(this->industry->incoming_cargo_waiting[variable - 0x40]);
 				}
 			} else {
 				return 0;
@@ -264,7 +289,7 @@ static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout
 		/* Land info of nearby tiles */
 		case 0x62:
 			if (this->tile == INVALID_TILE) break;
-			return GetNearbyIndustryTileInformation(parameter, this->tile, INVALID_INDUSTRY, false, this->ro.grffile->grf_version >= 8);
+			return GetNearbyIndustryTileInformation(parameter, this->tile, INVALID_INDUSTRY, false, this->ro.grffile->grf_version >= 8, extra->mask);
 
 		/* Animation stage of nearby tiles */
 		case 0x63: {
@@ -284,7 +309,7 @@ static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout
 		case 0x65: {
 			if (this->tile == INVALID_TILE) break;
 			TileIndex tile = GetNearbyTile(parameter, this->tile, true);
-			return GetTownRadiusGroup(this->industry->town, tile) << 16 | std::min(DistanceManhattan(tile, this->industry->town->xy), 0xFFFFu);
+			return GetTownRadiusGroup(this->industry->town, tile) << 16 | ClampTo<uint16_t>(DistanceManhattan(tile, this->industry->town->xy));
 		}
 		/* Get square of Euclidian distance of closest town */
 		case 0x66: {
@@ -304,7 +329,7 @@ static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout
 				layout_filter = GB(reg, 0, 8);
 				town_filter = HasBit(reg, 8);
 			}
-			return GetCountAndDistanceOfClosestInstance(parameter, layout_filter, town_filter, this->industry);
+			return GetCountAndDistanceOfClosestInstance(parameter, layout_filter, town_filter, this->industry, extra->mask);
 		}
 
 		case 0x69:
@@ -352,7 +377,7 @@ static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout
 		case 0x82: return this->industry->town->index;
 		case 0x83:
 		case 0x84:
-		case 0x85: Debug(grf, 0, "NewGRFs shouldn't be doing pointer magic"); break; // not supported
+		case 0x85: DEBUG(grf, 0, "NewGRFs shouldn't be doing pointer magic"); break; // not supported
 		case 0x86: return this->industry->location.w;
 		case 0x87: return this->industry->location.h;// xy dimensions
 
@@ -395,22 +420,22 @@ static uint32 GetCountAndDistanceOfClosestInstance(byte param_setID, byte layout
 		case 0xA6: return indspec->grf_prop.local_id;
 		case 0xA7: return this->industry->founder;
 		case 0xA8: return this->industry->random_colour;
-		case 0xA9: return Clamp(this->industry->last_prod_year - ORIGINAL_BASE_YEAR, 0, 255);
+		case 0xA9: return ClampTo<uint8_t>(this->industry->last_prod_year - ORIGINAL_BASE_YEAR);
 		case 0xAA: return this->industry->counter;
 		case 0xAB: return GB(this->industry->counter, 8, 8);
 		case 0xAC: return this->industry->was_cargo_delivered;
 
-		case 0xB0: return Clamp(this->industry->construction_date - DAYS_TILL_ORIGINAL_BASE_YEAR, 0, 65535); // Date when built since 1920 (in days)
+		case 0xB0: return ClampTo<uint16_t>(this->industry->construction_date - DAYS_TILL_ORIGINAL_BASE_YEAR); // Date when built since 1920 (in days)
 		case 0xB3: return this->industry->construction_type; // Construction type
 		case 0xB4: {
 			Date *latest = std::max_element(this->industry->last_cargo_accepted_at, endof(this->industry->last_cargo_accepted_at));
-			return Clamp((*latest) - DAYS_TILL_ORIGINAL_BASE_YEAR, 0, 65535); // Date last cargo accepted since 1920 (in days)
+			return ClampTo<uint16>((*latest) - DAYS_TILL_ORIGINAL_BASE_YEAR); // Date last cargo accepted since 1920 (in days)
 		}
 	}
 
-	Debug(grf, 1, "Unhandled industry variable 0x{:X}", variable);
+	DEBUG(grf, 1, "Unhandled industry variable 0x%X", variable);
 
-	*available = false;
+	extra->available = false;
 	return UINT_MAX;
 }
 
@@ -550,8 +575,13 @@ CommandCost CheckIfCallBackAllowsCreation(TileIndex tile, IndustryType type, siz
 	ind.founder = founder;
 	ind.psa = nullptr;
 
+	IndustryLocationDistanceCache distance_cache;
+	IndustryLocationDistanceCache::instance = &distance_cache;
+
 	IndustriesResolverObject object(tile, &ind, type, seed, CBID_INDUSTRY_LOCATION, 0, creation_type);
 	uint16 result = object.ResolveCallback();
+
+	IndustryLocationDistanceCache::instance = nullptr;
 
 	/* Unlike the "normal" cases, not having a valid result means we allow
 	 * the building of the industry, as that's how it's done in TTDP. */
@@ -642,22 +672,22 @@ void IndustryProductionCallback(Industry *ind, int reason)
 		if (group->version < 2) {
 			/* Callback parameters map directly to industry cargo slot indices */
 			for (uint i = 0; i < group->num_input; i++) {
-				ind->incoming_cargo_waiting[i] = Clamp(ind->incoming_cargo_waiting[i] - DerefIndProd(group->subtract_input[i], deref) * multiplier, 0, 0xFFFF);
+				ind->incoming_cargo_waiting[i] = ClampTo<uint16_t>(ind->incoming_cargo_waiting[i] - DerefIndProd(group->subtract_input[i], deref) * multiplier);
 			}
 			for (uint i = 0; i < group->num_output; i++) {
-				ind->produced_cargo_waiting[i] = Clamp(ind->produced_cargo_waiting[i] + std::max(DerefIndProd(group->add_output[i], deref), 0) * multiplier, 0, 0xFFFF);
+				ind->produced_cargo_waiting[i] = ClampTo<uint16_t>(ind->produced_cargo_waiting[i] + std::max(DerefIndProd(group->add_output[i], deref), 0) * multiplier);
 			}
 		} else {
 			/* Callback receives list of cargos to apply for, which need to have their cargo slots in industry looked up */
 			for (uint i = 0; i < group->num_input; i++) {
 				int cargo_index = ind->GetCargoAcceptedIndex(group->cargo_input[i]);
 				if (cargo_index < 0) continue;
-				ind->incoming_cargo_waiting[cargo_index] = Clamp(ind->incoming_cargo_waiting[cargo_index] - DerefIndProd(group->subtract_input[i], deref) * multiplier, 0, 0xFFFF);
+				ind->incoming_cargo_waiting[cargo_index] = ClampTo<uint16_t>(ind->incoming_cargo_waiting[cargo_index] - DerefIndProd(group->subtract_input[i], deref) * multiplier);
 			}
 			for (uint i = 0; i < group->num_output; i++) {
 				int cargo_index = ind->GetCargoProducedIndex(group->cargo_output[i]);
 				if (cargo_index < 0) continue;
-				ind->produced_cargo_waiting[cargo_index] = Clamp(ind->produced_cargo_waiting[cargo_index] + std::max(DerefIndProd(group->add_output[i], deref), 0) * multiplier, 0, 0xFFFF);
+				ind->produced_cargo_waiting[cargo_index] = ClampTo<uint16_t>(ind->produced_cargo_waiting[cargo_index] + std::max(DerefIndProd(group->add_output[i], deref), 0) * multiplier);
 			}
 		}
 
@@ -689,4 +719,14 @@ bool IndustryTemporarilyRefusesCargo(Industry *ind, CargoID cargo_type)
 		if (res != CALLBACK_FAILED) return !ConvertBooleanCallback(indspec->grf_prop.grffile, CBID_INDUSTRY_REFUSE_CARGO, res);
 	}
 	return false;
+}
+
+void DumpIndustrySpriteGroup(const IndustrySpec *spec, DumpSpriteGroupPrinter print)
+{
+	DumpSpriteGroup(spec->grf_prop.spritegroup[0], std::move(print));
+}
+
+void DumpIndustryTileSpriteGroup(const IndustryTileSpec *spec, DumpSpriteGroupPrinter print)
+{
+	DumpSpriteGroup(spec->grf_prop.spritegroup[0], std::move(print));
 }

@@ -21,7 +21,7 @@
 #include "water.h"
 #include "video/video_driver.hpp"
 #include "tilehighlight_func.h"
-#include "saveload/saveload.h"
+#include "sl/saveload.h"
 #include "void_map.h"
 #include "town.h"
 #include "newgrf.h"
@@ -34,6 +34,8 @@
 #include "string_func.h"
 #include "thread.h"
 #include "tgp.h"
+#include "signal_func.h"
+#include "newgrf_industrytiles.h"
 
 #include "safeguards.h"
 
@@ -42,6 +44,7 @@ void GenerateClearTile();
 void GenerateIndustries();
 void GenerateObjects();
 void GenerateTrees();
+void GeneratePublicRoads();
 
 void StartupEconomy();
 void StartupCompanies();
@@ -76,7 +79,7 @@ static void CleanupGeneration()
 	_gw.proc     = nullptr;
 	_gw.abortp   = nullptr;
 
-	CloseWindowByClass(WC_MODAL_PROGRESS);
+	DeleteWindowByClass(WC_MODAL_PROGRESS);
 	ShowFirstError();
 	MarkWholeScreenDirty();
 }
@@ -91,11 +94,17 @@ static void _GenerateWorld()
 
 	try {
 		_generating_world = true;
-		if (_network_dedicated) Debug(net, 3, "Generating map, please wait...");
+		if (_network_dedicated) DEBUG(net, 3, "Generating map, please wait...");
 		/* Set the Random() seed to generation_seed so we produce the same map with the same seed */
 		_random.SetSeed(_settings_game.game_creation.generation_seed);
+
+		/* Generates a unique id for the savegame, to avoid accidentally overwriting a save */
+		/* We keep id 0 for old savegames that don't have an id */
+		_settings_game.game_creation.generation_unique_id = _interactive_random.Next(UINT32_MAX - 1) + 1; /* Generates between [1,UINT32_MAX] */
+
 		SetGeneratingWorldProgress(GWP_MAP_INIT, 2);
 		SetObjectToPlace(SPR_CURSOR_ZZZ, PAL_NONE, HT_NONE, WC_MAIN_WINDOW, 0);
+		ScriptObject::InitializeRandomizers();
 
 		BasePersistentStorageArray::SwitchMode(PSM_ENTER_GAMELOOP);
 
@@ -120,6 +129,8 @@ static void _GenerateWorld()
 			IncreaseGeneratingWorldProgress(GWP_OBJECT);
 
 			_settings_game.game_creation.snow_line_height = DEF_SNOWLINE_HEIGHT;
+			UpdateCachedSnowLine();
+			UpdateCachedSnowLineBounds();
 		} else {
 			GenerateLandscape(_gw.mode);
 			GenerateClearTile();
@@ -133,6 +144,7 @@ static void _GenerateWorld()
 				GenerateIndustries();
 				GenerateObjects();
 				GenerateTrees();
+				GeneratePublicRoads();
 			}
 		}
 
@@ -187,13 +199,13 @@ static void _GenerateWorld()
 
 		ShowNewGRFError();
 
-		if (_network_dedicated) Debug(net, 3, "Map generated, starting game");
-		Debug(desync, 1, "new_map: {:08x}", _settings_game.game_creation.generation_seed);
+		if (_network_dedicated) DEBUG(net, 3, "Map generated, starting game");
+		DEBUG(desync, 1, "new_map: %08x", _settings_game.game_creation.generation_seed);
 
 		if (_debug_desync_level > 0) {
 			char name[MAX_PATH];
 			seprintf(name, lastof(name), "dmp_cmds_%08x_%08x.sav", _settings_game.game_creation.generation_seed, _date);
-			SaveOrLoad(name, SLO_SAVE, DFT_GAME_FILE, AUTOSAVE_DIR, false);
+			SaveOrLoad(name, SLO_SAVE, DFT_GAME_FILE, AUTOSAVE_DIR, false, SMF_ZSTD_OK);
 		}
 	} catch (AbortGenerateWorldSignal&) {
 		CleanupGeneration();
@@ -203,7 +215,7 @@ static void _GenerateWorld()
 
 		if (_network_dedicated) {
 			/* Exit the game to prevent a return to main menu.  */
-			Debug(net, 0, "Generating map failed; closing server");
+			DEBUG(net, 0, "Generating map failed; closing server");
 			_exit_game = true;
 		} else {
 			SwitchToMode(_switch_mode);
@@ -305,7 +317,12 @@ void GenerateWorld(GenWorldMode mode, uint size_x, uint size_y, bool reset_setti
 
 	/* Load the right landscape stuff, and the NewGRFs! */
 	GfxLoadSprites();
+	InitialiseExtraAspectsVariable();
 	LoadStringWidthTable();
+	AnalyseEngineCallbacks();
+	AnalyseIndustryTileSpriteGroups();
+	extern void AnalyseHouseSpriteGroups();
+	AnalyseHouseSpriteGroups();
 
 	/* Re-init the windowing system */
 	ResetWindowSystem();
@@ -315,7 +332,7 @@ void GenerateWorld(GenWorldMode mode, uint size_x, uint size_y, bool reset_setti
 	SetObjectToPlace(SPR_CURSOR_ZZZ, PAL_NONE, HT_NONE, WC_MAIN_WINDOW, 0);
 
 	UnshowCriticalError();
-	CloseAllNonVitalWindows();
+	DeleteAllNonVitalWindows();
 	HideVitalWindows();
 
 	ShowGenerateWorldProgress();
@@ -326,4 +343,6 @@ void GenerateWorld(GenWorldMode mode, uint size_x, uint size_y, bool reset_setti
 	}
 
 	_GenerateWorld();
+
+	ReInitAllWindows(false);
 }

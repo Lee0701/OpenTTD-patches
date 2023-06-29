@@ -10,20 +10,45 @@
 #ifndef LEAGUE_CMD_H
 #define LEAGUE_CMD_H
 
-#include "league_type.h"
-#include "command_type.h"
-#include "company_type.h"
+#include "command_aux.h"
 
-std::tuple<CommandCost, LeagueTableID> CmdCreateLeagueTable(DoCommandFlag flags, const std::string &title, const std::string &header, const std::string &footer);
-std::tuple<CommandCost, LeagueTableElementID> CmdCreateLeagueTableElement(DoCommandFlag flags, LeagueTableID table, int64 rating, CompanyID company, const std::string &text, const std::string &score, LinkType link_type, LinkTargetID link_target);
-CommandCost CmdUpdateLeagueTableElementData(DoCommandFlag flags, LeagueTableElementID element, CompanyID company, const std::string &text, LinkType link_type, LinkTargetID link_target);
-CommandCost CmdUpdateLeagueTableElementScore(DoCommandFlag flags, LeagueTableElementID element, int64 rating, const std::string &score);
-CommandCost CmdRemoveLeagueTableElement(DoCommandFlag flags, LeagueTableElementID element);
+struct LeagueTableCmdData : public CommandAuxiliarySerialisable<LeagueTableCmdData> {
+	std::string title;
+	std::string header;
+	std::string footer;
 
-DEF_CMD_TRAIT(CMD_CREATE_LEAGUE_TABLE, CmdCreateLeagueTable, CMD_DEITY, CMDT_OTHER_MANAGEMENT)
-DEF_CMD_TRAIT(CMD_CREATE_LEAGUE_TABLE_ELEMENT, CmdCreateLeagueTableElement, CMD_DEITY | CMD_STR_CTRL, CMDT_OTHER_MANAGEMENT)
-DEF_CMD_TRAIT(CMD_UPDATE_LEAGUE_TABLE_ELEMENT_DATA, CmdUpdateLeagueTableElementData, CMD_DEITY | CMD_STR_CTRL, CMDT_OTHER_MANAGEMENT)
-DEF_CMD_TRAIT(CMD_UPDATE_LEAGUE_TABLE_ELEMENT_SCORE, CmdUpdateLeagueTableElementScore, CMD_DEITY | CMD_STR_CTRL, CMDT_OTHER_MANAGEMENT)
-DEF_CMD_TRAIT(CMD_REMOVE_LEAGUE_TABLE_ELEMENT, CmdRemoveLeagueTableElement, CMD_DEITY, CMDT_OTHER_MANAGEMENT)
+	virtual void Serialise(CommandSerialisationBuffer &buffer) const override
+	{
+		buffer.Send_string(this->title);
+		buffer.Send_string(this->header);
+		buffer.Send_string(this->footer);
+	}
+
+	CommandCost Deserialise(CommandDeserialisationBuffer &buffer)
+	{
+		buffer.Recv_string(this->title,  SVS_ALLOW_CONTROL_CODE | SVS_REPLACE_WITH_QUESTION_MARK);
+		buffer.Recv_string(this->header, SVS_ALLOW_CONTROL_CODE | SVS_REPLACE_WITH_QUESTION_MARK);
+		buffer.Recv_string(this->footer, SVS_ALLOW_CONTROL_CODE | SVS_REPLACE_WITH_QUESTION_MARK);
+		return CommandCost();
+	}
+};
+
+struct LeagueTableElementCmdData : public CommandAuxiliarySerialisable<LeagueTableElementCmdData> {
+	std::string text_str;
+	std::string score;
+
+	virtual void Serialise(CommandSerialisationBuffer &buffer) const override
+	{
+		buffer.Send_string(this->text_str);
+		buffer.Send_string(this->score);
+	}
+
+	CommandCost Deserialise(CommandDeserialisationBuffer &buffer)
+	{
+		buffer.Recv_string(this->text_str, SVS_ALLOW_CONTROL_CODE | SVS_REPLACE_WITH_QUESTION_MARK);
+		buffer.Recv_string(this->score,    SVS_ALLOW_CONTROL_CODE | SVS_REPLACE_WITH_QUESTION_MARK);
+		return CommandCost();
+	}
+};
 
 #endif /* LEAGUE_CMD_H */

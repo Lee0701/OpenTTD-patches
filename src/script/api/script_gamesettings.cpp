@@ -12,7 +12,6 @@
 #include "../../settings_internal.h"
 #include "../../settings_type.h"
 #include "../../command_type.h"
-#include "../../settings_cmd.h"
 
 #include "../../safeguards.h"
 
@@ -22,23 +21,28 @@
 	return sd != nullptr && sd->IsIntSetting();
 }
 
-/* static */ int32 ScriptGameSettings::GetValue(const char *setting)
+/* static */ SQInteger ScriptGameSettings::GetValue(const char *setting)
 {
 	if (!IsValid(setting)) return -1;
 
 	const SettingDesc *sd = GetSettingFromName(setting);
+	assert(sd != nullptr);
 	return sd->AsIntSetting()->Read(&_settings_game);
 }
 
-/* static */ bool ScriptGameSettings::SetValue(const char *setting, int value)
+/* static */ bool ScriptGameSettings::SetValue(const char *setting, SQInteger value)
 {
+	EnforceDeityOrCompanyModeValid(false);
 	if (!IsValid(setting)) return false;
 
 	const SettingDesc *sd = GetSettingFromName(setting);
+	assert(sd != nullptr);
 
 	if ((sd->flags & SF_NO_NETWORK_SYNC) != 0) return false;
 
-	return ScriptObject::Command<CMD_CHANGE_SETTING>::Do(sd->GetName(), value);
+	value = Clamp<SQInteger>(value, INT32_MIN, INT32_MAX);
+
+	return ScriptObject::DoCommand(0, 0, value, CMD_CHANGE_SETTING, sd->name);
 }
 
 /* static */ bool ScriptGameSettings::IsDisabledVehicleType(ScriptVehicle::VehicleType vehicle_type)

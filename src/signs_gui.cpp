@@ -26,7 +26,6 @@
 #include "hotkeys.h"
 #include "transparency.h"
 #include "gui.h"
-#include "signs_cmd.h"
 
 #include "widgets/sign_widget.h"
 
@@ -45,7 +44,7 @@ struct SignList {
 
 	StringFilter string_filter;                                       ///< The match string to be used when the GUIList is (re)-sorted.
 	static bool match_case;                                           ///< Should case sensitive matching be used?
-	static char default_name[64];                                     ///< Default sign name, used if Sign::name is nullptr.
+	static std::string default_name;                                  ///< Default sign name, used if Sign::name is nullptr.
 
 	/**
 	 * Creates a SignList with filtering disabled by default.
@@ -58,7 +57,7 @@ struct SignList {
 	{
 		if (!this->signs.NeedRebuild()) return;
 
-		Debug(misc, 3, "Building sign list");
+		DEBUG(misc, 3, "Building sign list");
 
 		this->signs.clear();
 
@@ -77,10 +76,10 @@ struct SignList {
 		 * a lot of them. Therefore a worthwhile performance gain can be made by
 		 * directly comparing Sign::name instead of going through the string
 		 * system for each comparison. */
-		const char *a_name = a->name.empty() ? SignList::default_name : a->name.c_str();
-		const char *b_name = b->name.empty() ? SignList::default_name : b->name.c_str();
+		const std::string &a_name = a->name.empty() ? SignList::default_name : a->name;
+		const std::string &b_name = b->name.empty() ? SignList::default_name : b->name;
 
-		int r = strnatcmp(a_name, b_name); // Sort by name (natural sorting).
+		int r = StrNaturalCompare(a_name, b_name); // Sort by name (natural sorting).
 
 		return r != 0 ? r < 0 : (a->index < b->index);
 	}
@@ -91,25 +90,25 @@ struct SignList {
 	}
 
 	/** Filter sign list by sign name */
-	static bool CDECL SignNameFilter(const Sign * const *a, StringFilter &filter)
+	static bool SignNameFilter(const Sign * const *a, StringFilter &filter)
 	{
 		/* Same performance benefit as above for sorting. */
-		const char *a_name = (*a)->name.empty() ? SignList::default_name : (*a)->name.c_str();
+		const std::string &a_name = (*a)->name.empty() ? SignList::default_name : (*a)->name;
 
 		filter.ResetState();
-		filter.AddLine(a_name);
+		filter.AddLine(a_name.c_str());
 		return filter.GetState();
 	}
 
 	/** Filter sign list excluding OWNER_DEITY */
-	static bool CDECL OwnerDeityFilter(const Sign * const *a, StringFilter &filter)
+	static bool OwnerDeityFilter(const Sign * const *a, StringFilter &filter)
 	{
 		/* You should never be able to edit signs of owner DEITY */
 		return (*a)->owner != OWNER_DEITY;
 	}
 
 	/** Filter sign list by owner */
-	static bool CDECL OwnerVisibilityFilter(const Sign * const *a, StringFilter &filter)
+	static bool OwnerVisibilityFilter(const Sign * const *a, StringFilter &filter)
 	{
 		assert(!HasBit(_display_opt, DO_SHOW_COMPETITOR_SIGNS));
 		/* Hide sign if non-own signs are hidden in the viewport */
@@ -128,7 +127,7 @@ struct SignList {
 };
 
 bool SignList::match_case = false;
-char SignList::default_name[64];
+std::string SignList::default_name;
 
 /** Enum referring to the Hotkeys in the sign list window */
 enum SignListHotkeys {
@@ -163,7 +162,7 @@ struct SignListWindow : Window, SignList {
 	void OnInit() override
 	{
 		/* Default sign name, used if Sign::name is nullptr. */
-		GetString(SignList::default_name, STR_DEFAULT_SIGN_NAME, lastof(SignList::default_name));
+		SignList::default_name = GetString(STR_DEFAULT_SIGN_NAME);
 		this->signs.ForceResort();
 		this->SortSignsList();
 		this->SetDirty();
@@ -306,7 +305,7 @@ struct SignListWindow : Window, SignList {
 	{
 		if (this->signs.NeedRebuild()) {
 			this->BuildSignsList();
-			this->vscroll->SetCount((uint)this->signs.size());
+			this->vscroll->SetCount(this->signs.size());
 			this->SetWidgetDirty(WID_SIL_CAPTION);
 		}
 		this->SortSignsList();
@@ -414,7 +413,7 @@ Window *ShowSignList()
 static bool RenameSign(SignID index, const char *text)
 {
 	bool remove = StrEmpty(text);
-	Command<CMD_RENAME_SIGN>::Post(StrEmpty(text) ? STR_ERROR_CAN_T_DELETE_SIGN : STR_ERROR_CAN_T_CHANGE_SIGN_NAME, index, text);
+	DoCommandP(0, index, 0, CMD_RENAME_SIGN | (StrEmpty(text) ? CMD_MSG(STR_ERROR_CAN_T_DELETE_SIGN) : CMD_MSG(STR_ERROR_CAN_T_CHANGE_SIGN_NAME)), nullptr, text);
 	return remove;
 }
 
@@ -528,7 +527,7 @@ struct SignWindow : Window, SignList {
 				FALLTHROUGH;
 
 			case WID_QES_CANCEL:
-				this->Close();
+				delete this;
 				break;
 		}
 	}
@@ -537,7 +536,7 @@ struct SignWindow : Window, SignList {
 static const NWidgetPart _nested_query_sign_edit_widgets[] = {
 	NWidget(NWID_HORIZONTAL),
 		NWidget(WWT_CLOSEBOX, COLOUR_GREY),
-		NWidget(WWT_CAPTION, COLOUR_GREY, WID_QES_CAPTION), SetDataTip(STR_WHITE_STRING, STR_TOOLTIP_WINDOW_TITLE_DRAG_THIS),
+		NWidget(WWT_CAPTION, COLOUR_GREY, WID_QES_CAPTION), SetDataTip(STR_JUST_STRING, STR_TOOLTIP_WINDOW_TITLE_DRAG_THIS), SetTextStyle(TC_WHITE),
 		NWidget(WWT_PUSHIMGBTN, COLOUR_GREY, WID_QES_LOCATION), SetMinimalSize(12, 14), SetDataTip(SPR_GOTO_LOCATION, STR_EDIT_SIGN_LOCATION_TOOLTIP),
 	EndContainer(),
 	NWidget(WWT_PANEL, COLOUR_GREY),
@@ -570,7 +569,7 @@ void HandleClickOnSign(const Sign *si)
 	if (!CompanyCanRenameSign(si)) return;
 
 	if (_ctrl_pressed && (si->owner == _local_company || (si->owner == OWNER_DEITY && _game_mode == GM_EDITOR))) {
-		RenameSign(si->index, "");
+		RenameSign(si->index, nullptr);
 		return;
 	}
 
@@ -584,7 +583,7 @@ void HandleClickOnSign(const Sign *si)
 void ShowRenameSignWindow(const Sign *si)
 {
 	/* Delete all other edit windows */
-	CloseWindowByClass(WC_QUERY_STRING);
+	DeleteWindowByClass(WC_QUERY_STRING);
 
 	new SignWindow(&_query_sign_edit_desc, si);
 }
@@ -597,5 +596,5 @@ void DeleteRenameSignWindow(SignID sign)
 {
 	SignWindow *w = dynamic_cast<SignWindow *>(FindWindowById(WC_QUERY_STRING, WN_QUERY_STRING_SIGN));
 
-	if (w != nullptr && w->cur_sign == sign) w->Close();
+	if (w != nullptr && w->cur_sign == sign) delete w;
 }

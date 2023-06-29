@@ -32,7 +32,7 @@ bool NetworkTurnSocketHandler::HandlePacket(Packet *p)
 		case PACKET_TURN_TURN_CONNECTED: return this->Receive_TURN_CONNECTED(p);
 
 		default:
-			Debug(net, 0, "[tcp/turn] Received invalid packet type {}", type);
+			DEBUG(net, 0, "[tcp/turn] Received invalid packet type %u", type);
 			return false;
 	}
 }
@@ -43,12 +43,11 @@ bool NetworkTurnSocketHandler::HandlePacket(Packet *p)
  */
 bool NetworkTurnSocketHandler::ReceivePackets()
 {
-	Packet *p;
+	std::unique_ptr<Packet> p;
 	static const int MAX_PACKETS_TO_RECEIVE = 4;
 	int i = MAX_PACKETS_TO_RECEIVE;
 	while (--i != 0 && (p = this->ReceivePacket()) != nullptr) {
-		bool cont = this->HandlePacket(p);
-		delete p;
+		bool cont = this->HandlePacket(p.get());
 		if (!cont) return true;
 	}
 
@@ -62,7 +61,7 @@ bool NetworkTurnSocketHandler::ReceivePackets()
  */
 bool NetworkTurnSocketHandler::ReceiveInvalidPacket(PacketTurnType type)
 {
-	Debug(net, 0, "[tcp/turn] Received illegal packet type {}", type);
+	DEBUG(net, 0, "[tcp/turn] Received illegal packet type %u", type);
 	return false;
 }
 

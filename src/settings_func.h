@@ -19,7 +19,7 @@ struct IniFile;
 void IConsoleSetSetting(const char *name, const char *value, bool force_newgame = false);
 void IConsoleSetSetting(const char *name, int32 value);
 void IConsoleGetSetting(const char *name, bool force_newgame = false);
-void IConsoleListSettings(const char *prefilter);
+void IConsoleListSettings(const char *prefilter, bool show_defaults);
 
 void LoadFromConfig(bool minimal = false);
 void SaveToConfig();
@@ -35,5 +35,10 @@ void DeleteGRFPresetFromConfig(const char *config_name);
 void SetDefaultCompanySettings(CompanyID cid);
 
 void SyncCompanySettings();
+
+void SetupTimeSettings();
+
+const char *GetSettingNameByIndex(uint32 idx);
+const char *GetCompanySettingNameByIndex(uint32 idx);
 
 #endif /* SETTINGS_FUNC_H */

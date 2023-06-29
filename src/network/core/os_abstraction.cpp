@@ -20,6 +20,9 @@
 #include "os_abstraction.h"
 #include "../../string_func.h"
 #include <mutex>
+#if defined(__MINGW32__)
+#include "../../3rdparty/mingw-std-threads/mingw.mutex.h"
+#endif
 
 #include "../../safeguards.h"
 
@@ -76,7 +79,7 @@ bool NetworkError::IsConnectInProgress() const
  * Get the string representation of the error message.
  * @return The string representation that will get overwritten by next calls.
  */
-const std::string &NetworkError::AsString() const
+const char *NetworkError::AsString() const
 {
 	if (this->message.empty()) {
 #if defined(_WIN32)
@@ -97,7 +100,7 @@ const std::string &NetworkError::AsString() const
 		this->message.assign(strerror(this->error));
 #endif
 	}
-	return this->message;
+	return this->message.c_str();
 }
 
 /**
@@ -144,6 +147,24 @@ bool SetNonBlocking(SOCKET d)
 }
 
 /**
+ * Try to set the socket into blocking mode.
+ * @param d The socket to set the blocking more for.
+ * @return True if setting the blocking mode succeeded, otherwise false.
+ */
+bool SetBlocking(SOCKET d)
+{
+#if defined(_WIN32)
+	u_long nonblocking = 0;
+	return ioctlsocket(d, FIONBIO, &nonblocking) == 0;
+#elif defined __EMSCRIPTEN__
+	return true;
+#else
+	int nonblocking = 0;
+	return ioctl(d, FIONBIO, &nonblocking) == 0;
+#endif
+}
+
+/**
  * Try to set the socket to not delay sending.
  * @param d The socket to disable the delaying for.
  * @return True if disabling the delaying succeeded, otherwise false.
@@ -174,6 +195,31 @@ bool SetReusePort(SOCKET d)
 	int reuse_port = 1;
 	return setsockopt(d, SOL_SOCKET, SO_REUSEPORT, &reuse_port, sizeof(reuse_port)) == 0;
 #endif
+}
+
+/**
+ * Try to shutdown the socket in one or both directions.
+ * @param d The socket to disable the delaying for.
+ * @param read Whether to shutdown the read direction.
+ * @param write Whether to shutdown the write direction.
+ * @param linger_timeout The socket linger timeout.
+ * @return True if successful
+ */
+bool ShutdownSocket(SOCKET d, bool read, bool write, uint linger_timeout)
+{
+	if (!read && !write) return true;
+#ifdef _WIN32
+	LINGER ln = { 1U, (uint16) linger_timeout };
+#else
+	struct linger ln = { 1, (int) linger_timeout };
+#endif
+
+	setsockopt(d, SOL_SOCKET, SO_LINGER, (const char*)&ln, sizeof(ln));
+
+	int how = SD_BOTH;
+	if (!read) how = SD_SEND;
+	if (!write) how = SD_RECEIVE;
+	return shutdown(d, how) == 0;
 }
 
 /**

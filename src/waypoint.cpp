@@ -14,6 +14,9 @@
 #include "newgrf_station.h"
 #include "waypoint_base.h"
 #include "viewport_kdtree.h"
+#include "tracerestrict.h"
+#include "newgrf_debug.h"
+#include "news_func.h"
 
 #include "safeguards.h"
 
@@ -38,6 +41,10 @@ void Waypoint::GetTileArea(TileArea *ta, StationType type) const
 			*ta = this->train_station;
 			return;
 
+		case STATION_ROADWAYPOINT:
+			*ta = this->road_waypoint_area;
+			return;
+
 		case STATION_BUOY:
 			ta->tile = this->xy;
 			ta->w    = 1;
@@ -51,7 +58,14 @@ void Waypoint::GetTileArea(TileArea *ta, StationType type) const
 Waypoint::~Waypoint()
 {
 	if (CleaningPool()) return;
-	CloseWindowById(WC_WAYPOINT_VIEW, this->index);
+	DeleteWindowById(WC_WAYPOINT_VIEW, this->index);
+	DeleteNewGRFInspectWindow(GSF_FAKE_STATION_STRUCT, this->index);
 	RemoveOrderFromAllVehicles(OT_GOTO_WAYPOINT, this->index);
-	if (this->sign.kdtree_valid) _viewport_sign_kdtree.Remove(ViewportSignKdtreeItem::MakeWaypoint(this->index));
+	if (_viewport_sign_kdtree_valid && this->sign.kdtree_valid) _viewport_sign_kdtree.Remove(ViewportSignKdtreeItem::MakeWaypoint(this->index));
+	TraceRestrictRemoveDestinationID(TROCAF_WAYPOINT, this->index);
+
+	/* Remove all news items */
+	DeleteStationNews(this->index);
+
+	if (ShouldShowBaseStationViewportLabel(this)) this->sign.MarkDirty(ZOOM_LVL_DRAW_SPR);
 }

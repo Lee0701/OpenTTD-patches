@@ -14,9 +14,11 @@
 
 #include "../gamelog_internal.h"
 #include "../fios.h"
+#include "../string_func.h"
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
 
 class SlGamelogMode : public DefaultSaveLoadHandler<SlGamelogMode, LoggedChange> {
 public:
@@ -41,10 +43,14 @@ public:
 	void LoadCheck(LoggedChange *lc) const override { this->Load(lc); }
 };
 
+static char old_revision_text[GAMELOG_REVISION_LENGTH];
+static std::string revision_test;
+
 class SlGamelogRevision : public DefaultSaveLoadHandler<SlGamelogRevision, LoggedChange> {
 public:
 	inline static const SaveLoad description[] = {
-		SLE_ARR(LoggedChange, revision.text,     SLE_UINT8,  GAMELOG_REVISION_LENGTH),
+		SLEG_CONDARR("revision.text", old_revision_text, SLE_UINT8, GAMELOG_REVISION_LENGTH, SL_MIN_VERSION,     SLV_STRING_GAMELOG),
+		SLEG_CONDSSTR("revision.text",    revision_test, SLE_STR,                            SLV_STRING_GAMELOG, SL_MAX_VERSION),
 		SLE_VAR(LoggedChange, revision.newgrf,   SLE_UINT32),
 		SLE_VAR(LoggedChange, revision.slver,    SLE_UINT16),
 		SLE_VAR(LoggedChange, revision.modified, SLE_UINT8),
@@ -61,6 +67,11 @@ public:
 	{
 		if (lc->ct != GLCT_REVISION) return;
 		SlObject(lc, this->GetLoadDescription());
+		if (IsSavegameVersionBefore(SLV_STRING_GAMELOG)) {
+			lc->revision.text = stredup(old_revision_text, lastof(old_revision_text));
+		} else {
+			lc->revision.text = stredup(revision_test.c_str());
+		}
 	}
 
 	void LoadCheck(LoggedChange *lc) const override { this->Load(lc); }
@@ -413,3 +424,5 @@ static const ChunkHandlerRef gamelog_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _gamelog_chunk_handlers(gamelog_chunk_handlers);
+
+}

@@ -51,8 +51,15 @@ enum DisplayOptions {
 	DO_SHOW_COMPETITOR_SIGNS = 7, ///< Display signs, station names and waypoint names of opponent companies. Buoys and oilrig-stations are always shown, even if this option is turned off.
 };
 
+/** Extra Display Options */
+enum ExtraDisplayOptions {
+	XDO_SHOW_MONEY_TEXT_EFFECTS = 0, ///< Display money text effects.
+	XDO_SHOW_HIDDEN_SIGNS       = 1, ///< Show hidden signs
+};
+
 extern GameMode _game_mode;
 extern SwitchMode _switch_mode;
+extern bool _check_special_modes;
 extern std::atomic<bool> _exit_game;
 extern bool _save_config;
 
@@ -74,15 +81,19 @@ DECLARE_ENUM_AS_BIT_SET(PauseMode)
 
 /** The current pause mode */
 extern PauseMode _pause_mode;
+extern uint32 _pause_countdown;
 
 void AskExitGame();
 void AskExitToGameMenu();
 
 int openttd_main(int argc, char *argv[]);
+void StateGameLoop();
 void HandleExitGameRequest();
 
 void SwitchToMode(SwitchMode new_mode);
 
 bool RequestNewGRFScan(struct NewGRFScanCallback *callback = nullptr);
+
+void OpenBrowser(const char *url);
 
 #endif /* OPENTTD_H */

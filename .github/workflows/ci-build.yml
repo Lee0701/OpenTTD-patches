@@ -2,12 +2,21 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches:
-    - master
+#  push:
+#    branches:
+#    - master
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Ref to build (for Pull Requests, use refs/pull/NNN/head)'
+        required: true
 
 env:
   CTEST_OUTPUT_ON_FAILURE: 1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
   emscripten:
@@ -16,17 +25,24 @@ jobs:
     runs-on: ubuntu-20.04
     container:
       # If you change this version, change the number in the cache step too.
-      image: emscripten/emsdk:2.0.31
+      image: emscripten/emsdk:3.1.37
 
     steps:
     - name: Checkout
+      if: github.event_name != 'workflow_dispatch'
       uses: actions/checkout@v3
+
+    - name: Checkout (Manual)
+      if: github.event_name == 'workflow_dispatch'
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ github.event.inputs.ref }}
 
     - name: Setup cache
       uses: actions/cache@v3
       with:
         path: /emsdk/upstream/emscripten/cache
-        key: 2.0.31-${{ runner.os }}
+        key: 3.1.37-${{ runner.os }}
 
     - name: Patch Emscripten to support LZMA
       run: |
@@ -91,7 +107,14 @@ jobs:
 
     steps:
     - name: Checkout
+      if: github.event_name != 'workflow_dispatch'
       uses: actions/checkout@v3
+
+    - name: Checkout (Manual)
+      if: github.event_name == 'workflow_dispatch'
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ github.event.inputs.ref }}
 
     - name: Install dependencies
       run: |
@@ -102,9 +125,12 @@ jobs:
         echo "::group::Install dependencies"
         sudo apt-get install -y --no-install-recommends \
           liballegro4-dev \
+          libcurl4-openssl-dev \
           libfontconfig-dev \
+          libharfbuzz-dev \
           libicu-dev \
           liblzma-dev \
+          libzstd-dev \
           liblzo2-dev \
           ${{ matrix.libsdl }} \
           zlib1g-dev \
@@ -145,11 +171,6 @@ jobs:
         cmake --build . -j $(nproc)
         echo "::endgroup::"
 
-    - name: Test
-      run: |
-        cd build
-        ctest -j $(nproc) --timeout 120
-
   macos:
     name: Mac OS
 
@@ -162,11 +183,27 @@ jobs:
 
     runs-on: macos-latest
     env:
-      MACOSX_DEPLOYMENT_TARGET: 10.14
+      MACOSX_DEPLOYMENT_TARGET: 10.13
 
     steps:
     - name: Checkout
+      if: github.event_name != 'workflow_dispatch'
       uses: actions/checkout@v3
+
+    - name: Checkout (Manual)
+      if: github.event_name == 'workflow_dispatch'
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ github.event.inputs.ref }}
+
+    - name: Install dependencies
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: 1
+        HOMEBREW_NO_INSTALL_CLEANUP: 1
+      run: |
+        brew install \
+          pkg-config \
+          # EOF
 
     - name: Prepare cache key
       id: key
@@ -184,10 +221,12 @@ jobs:
     - name: Prepare vcpkg
       run: |
         vcpkg install --triplet=${{ matrix.arch }}-osx \
+          curl \
           liblzma \
           libpng \
           lzo \
           zlib \
+          zstd \
           # EOF
 
     - name: Install OpenGFX
@@ -226,11 +265,6 @@ jobs:
         cmake --build . -j $(sysctl -n hw.logicalcpu)
         echo "::endgroup::"
 
-    - name: Test
-      run: |
-        cd build
-        ctest -j $(sysctl -n hw.logicalcpu) --timeout 120
-
   windows:
     name: Windows
 
@@ -244,7 +278,14 @@ jobs:
 
     steps:
     - name: Checkout
+      if: github.event_name != 'workflow_dispatch'
       uses: actions/checkout@v3
+
+    - name: Checkout (Manual)
+      if: github.event_name == 'workflow_dispatch'
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ github.event.inputs.ref }}
 
     - name: Prepare cache key
       id: key
@@ -271,6 +312,7 @@ jobs:
           libpng \
           lzo \
           zlib \
+          zstd \
           # EOF
 
     - name: Install OpenGFX
@@ -315,13 +357,6 @@ jobs:
         cmake --build .
         echo "::endgroup::"
 
-    - name: Test
-      shell: bash
-      run: |
-        cd ${GITHUB_WORKSPACE}/build
-        ctest --timeout 120
-
-
   msys2:
     name: msys2
 
@@ -338,7 +373,14 @@ jobs:
 
     steps:
     - name: Checkout
+      if: github.event_name != 'workflow_dispatch'
       uses: actions/checkout@v3
+
+    - name: Checkout (Manual)
+      if: github.event_name == 'workflow_dispatch'
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ github.event.inputs.ref }}
 
     - name: Setup MSYS2
       uses: msys2/setup-msys2@v2
@@ -379,19 +421,13 @@ jobs:
         cd build
 
         echo "::group::CMake"
-        cmake .. -G"MSYS Makefiles"
+        cmake .. -DOPTION_NO_WARN_UNINIT=1 -G"MSYS Makefiles"
         echo "::endgroup::"
 
         echo "::group::Build"
         echo "Running on $(nproc) cores"
         cmake --build . -j $(nproc)
         echo "::endgroup::"
-
-    - name: Test
-      shell: msys2 {0}
-      run: |
-        cd build
-        ctest -j $(nproc) --timeout 120
 
   check_annotations:
     name: Check Annotations

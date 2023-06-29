@@ -70,6 +70,7 @@ static const CmdStruct _cmd_structs[] = {
 	{"STRING5",           EmitSingleChar, SCC_STRING5,            6, -1, C_CASE | C_GENDER}, // included string that consumes the string id and FIVE arguments
 	{"STRING6",           EmitSingleChar, SCC_STRING6,            7, -1, C_CASE | C_GENDER}, // included string that consumes the string id and SIX arguments
 	{"STRING7",           EmitSingleChar, SCC_STRING7,            8, -1, C_CASE | C_GENDER}, // included string that consumes the string id and SEVEN arguments
+	{"STRING8",           EmitSingleChar, SCC_STRING8,            9, -1, C_CASE | C_GENDER}, // included string that consumes the string id and EIGHT arguments
 
 	{"STATION_FEATURES",  EmitSingleChar, SCC_STATION_FEATURES,   1, -1, C_NONE}, // station features string, icons of the features
 	{"INDUSTRY",          EmitSingleChar, SCC_INDUSTRY_NAME,      1, -1, C_CASE | C_GENDER}, // industry, takes an industry #, can have cases
@@ -86,6 +87,8 @@ static const CmdStruct _cmd_structs[] = {
 	{"FORCE",             EmitSingleChar, SCC_FORCE,              1,  0, C_NONE},
 	{"VELOCITY",          EmitSingleChar, SCC_VELOCITY,           1,  0, C_NONE},
 	{"HEIGHT",            EmitSingleChar, SCC_HEIGHT,             1,  0, C_NONE},
+	{"POWER_WEIGHT_RATIO",EmitSingleChar, SCC_POWER_WEIGHT_RATIO, 1,  0, C_NONE},
+	{"FORCE_WEIGHT_RATIO",EmitSingleChar, SCC_FORCE_WEIGHT_RATIO, 1,  0, C_NONE},
 
 	{"P",                 EmitPlural,     0,                      0, -1, C_DONTCOUNT}, // plural specifier
 	{"G",                 EmitGender,     0,                      0, -1, C_DONTCOUNT}, // gender specifier
@@ -94,6 +97,14 @@ static const CmdStruct _cmd_structs[] = {
 	{"DATE_SHORT",        EmitSingleChar, SCC_DATE_SHORT,         1, -1, C_CASE},
 	{"DATE_LONG",         EmitSingleChar, SCC_DATE_LONG,          1, -1, C_CASE},
 	{"DATE_ISO",          EmitSingleChar, SCC_DATE_ISO,           1, -1, C_NONE},
+	{"DATE_WALLCLOCK_TINY",       EmitSingleChar, SCC_DATE_WALLCLOCK_TINY,          1, -1, C_NONE},
+	{"DATE_WALLCLOCK_SHORT",      EmitSingleChar, SCC_DATE_WALLCLOCK_SHORT,         1, -1, C_NONE},
+	{"DATE_WALLCLOCK_LONG",       EmitSingleChar, SCC_DATE_WALLCLOCK_LONG,          1, -1, C_NONE},
+	{"DATE_WALLCLOCK_ISO",        EmitSingleChar, SCC_DATE_WALLCLOCK_ISO,           1, -1, C_NONE},
+
+	{"TIME_HHMM",         EmitSingleChar, SCC_TIME_HHMM,          1, -1, C_NONE},
+	{"TT_TICKS",          EmitSingleChar, SCC_TT_TICKS,           1, -1, C_NONE},
+	{"TT_TICKS_LONG",     EmitSingleChar, SCC_TT_TICKS_LONG,      1, -1, C_NONE},
 
 	{"STRING",            EmitSingleChar, SCC_STRING,             1, -1, C_CASE | C_GENDER},
 	{"RAW_STRING",        EmitSingleChar, SCC_RAW_STRING_POINTER, 1, -1, C_NONE | C_GENDER},
@@ -101,7 +112,9 @@ static const CmdStruct _cmd_structs[] = {
 	/* Numbers */
 	{"COMMA",             EmitSingleChar, SCC_COMMA,              1,  0, C_NONE}, // Number with comma
 	{"DECIMAL",           EmitSingleChar, SCC_DECIMAL,            2,  0, C_NONE}, // Number with comma and fractional part. Second parameter is number of fractional digits, first parameter is number times 10**(second parameter).
+	{"DECIMAL1",          EmitSingleChar, SCC_DECIMAL1,           1,  0, C_NONE}, // Decimal with fixed second parameter of 1
 	{"NUM",               EmitSingleChar, SCC_NUM,                1,  0, C_NONE}, // Signed number
+	{"PLUS_NUM",          EmitSingleChar, SCC_PLUS_NUM,           1,  0, C_NONE}, // Signed number, with sign (+ or -) shown for both positive and negative numbers
 	{"ZEROFILL_NUM",      EmitSingleChar, SCC_ZEROFILL_NUM,       2,  0, C_NONE}, // Unsigned number with zero fill, e.g. "02". First parameter is number, second minimum length
 	{"BYTES",             EmitSingleChar, SCC_BYTES,              1,  0, C_NONE}, // Unsigned number with "bytes", i.e. "1.02 MiB or 123 KiB"
 	{"HEX",               EmitSingleChar, SCC_HEX,                1,  0, C_NONE}, // Hexadecimally printed number
@@ -120,6 +133,8 @@ static const CmdStruct _cmd_structs[] = {
 	{"COMPANY",           EmitSingleChar, SCC_COMPANY_NAME,       1, -1, C_NONE | C_GENDER},
 	{"COMPANY_NUM",       EmitSingleChar, SCC_COMPANY_NUM,        1, -1, C_NONE},
 	{"PRESIDENT_NAME",    EmitSingleChar, SCC_PRESIDENT_NAME,     1, -1, C_NONE | C_GENDER},
+	{"TRSLOT",            EmitSingleChar, SCC_TR_SLOT_NAME,       1, -1, C_NONE | C_GENDER},
+	{"TRCOUNTER",         EmitSingleChar, SCC_TR_COUNTER_NAME,    1, -1, C_NONE | C_GENDER},
 
 	{"",                  EmitSingleChar, '\n',                   0, -1, C_DONTCOUNT},
 	{"{",                 EmitSingleChar, '{',                    0, -1, C_DONTCOUNT},
@@ -131,6 +146,7 @@ static const CmdStruct _cmd_structs[] = {
 	{"BUS",               EmitSingleChar, SCC_BUS,                0, -1, C_DONTCOUNT},
 	{"PLANE",             EmitSingleChar, SCC_PLANE,              0, -1, C_DONTCOUNT},
 	{"SHIP",              EmitSingleChar, SCC_SHIP,               0, -1, C_DONTCOUNT},
+	{"SP",                EmitSingleChar, 0x20,                   0, -1, C_DONTCOUNT},
 	{"NBSP",              EmitSingleChar, 0xA0,                   0, -1, C_DONTCOUNT},
 	{"COPYRIGHT",         EmitSingleChar, 0xA9,                   0, -1, C_DONTCOUNT},
 	{"DOWN_ARROW",        EmitSingleChar, SCC_DOWN_ARROW,         0, -1, C_DONTCOUNT},
@@ -139,6 +155,8 @@ static const CmdStruct _cmd_structs[] = {
 	{"RIGHT_ARROW",       EmitSingleChar, SCC_RIGHT_ARROW,        0, -1, C_DONTCOUNT},
 	{"SMALL_LEFT_ARROW",  EmitSingleChar, SCC_LESS_THAN,          0, -1, C_DONTCOUNT},
 	{"SMALL_RIGHT_ARROW", EmitSingleChar, SCC_GREATER_THAN,       0, -1, C_DONTCOUNT},
+
+	{"CONSUME_ARG",       EmitSingleChar, SCC_CONSUME_ARG,        1,  0, C_NONE},
 
 	/* The following are directional formatting codes used to get the RTL strings right:
 	 * http://www.unicode.org/unicode/reports/tr9/#Directional_Formatting_Codes */

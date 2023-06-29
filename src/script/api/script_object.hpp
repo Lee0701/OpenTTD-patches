@@ -13,17 +13,26 @@
 #include "../../misc/countedptr.hpp"
 #include "../../road_type.h"
 #include "../../rail_type.h"
-#include "../../string_func.h"
-#include "../../command_func.h"
+#include "../../core/random_func.hpp"
 
 #include "script_types.hpp"
+#include "script_log_types.hpp"
 #include "../script_suspend.hpp"
 #include "../squirrel.hpp"
+
+#include <utility>
+
+struct CommandAuxiliaryBase;
 
 /**
  * The callback function for Mode-classes.
  */
 typedef bool (ScriptModeProc)();
+
+/**
+ * The callback function for Async Mode-classes.
+ */
+typedef bool (ScriptAsyncModeProc)();
 
 /**
  * Uper-parent object of all API classes. You should never use this class in
@@ -62,55 +71,53 @@ public:
 	static void SetLastCommandRes(bool res);
 
 	/**
-	 * Store the extra data return by the last DoCommand.
-	 * @param data Extra data return by the command.
-	 */
-	static void SetLastCommandResData(CommandDataBuffer data);
-
-	/**
 	 * Get the currently active instance.
 	 * @return The instance.
 	 */
 	static class ScriptInstance *GetActiveInstance();
 
-protected:
-	template<Commands TCmd, typename T> struct ScriptDoCommandHelper;
+	/**
+	 * Get a reference of the randomizer that brings this script random values.
+	 * @param owner The owner/script to get the randomizer for. This defaults to ScriptObject::GetRootCompany()
+	 */
+	static Randomizer &GetRandomizer(Owner owner = ScriptObject::GetRootCompany());
 
 	/**
-	 * Templated wrapper that exposes the command parameter arguments
-	 * on the various DoCommand calls.
-	 * @tparam Tcmd The command-id to execute.
-	 * @tparam Tret Return type of the command.
-	 * @tparam Targs The command parameter types.
+	 * Initialize/reset the script random states. The state of the scripts are
+	 * based on the current _random seed, but _random does not get changed.
 	 */
-	template <Commands Tcmd, typename Tret, typename... Targs>
-	struct ScriptDoCommandHelper<Tcmd, Tret(*)(DoCommandFlag, Targs...)> {
-		static bool Do(Script_SuspendCallbackProc *callback, Targs... args)
-		{
-			return Execute(callback, std::forward_as_tuple(args...));
-		}
+	static void InitializeRandomizers();
 
-		static bool Do(Targs... args)
-		{
-			return Execute(nullptr, std::forward_as_tuple(args...));
-		}
+protected:
+	/**
+	 * Executes a raw DoCommand for the script.
+	 */
+	static bool DoCommandEx(TileIndex tile, uint32 p1, uint32 p2, uint64 p3, uint cmd, const char *text = nullptr, const CommandAuxiliaryBase *aux_data = nullptr, Script_SuspendCallbackProc *callback = nullptr);
 
-	private:
-		static bool Execute(Script_SuspendCallbackProc *callback, std::tuple<Targs...> args);
-	};
+	static bool DoCommandEx(TileIndex tile, uint32 p1, uint32 p2, uint64 p3, uint cmd, const std::string &text, const CommandAuxiliaryBase *aux_data = nullptr, Script_SuspendCallbackProc *callback = nullptr)
+	{
+		return ScriptObject::DoCommandEx(tile, p1, p2, p3, cmd, text.c_str(), aux_data, callback);
+	}
 
-	template <Commands Tcmd>
-	using Command = ScriptDoCommandHelper<Tcmd, typename ::CommandTraits<Tcmd>::ProcType>;
+	static bool DoCommand(TileIndex tile, uint32 p1, uint32 p2, uint cmd, const char *text = nullptr, Script_SuspendCallbackProc *callback = nullptr)
+	{
+		return ScriptObject::DoCommandEx(tile, p1, p2, 0, cmd, text, nullptr, callback);
+	}
+
+	static bool DoCommand(TileIndex tile, uint32 p1, uint32 p2, uint cmd, const std::string &text, Script_SuspendCallbackProc *callback = nullptr)
+	{
+		return ScriptObject::DoCommandEx(tile, p1, p2, 0, cmd, text.c_str(), nullptr, callback);
+	}
 
 	/**
 	 * Store the latest command executed by the script.
 	 */
-	static void SetLastCommand(TileIndex tile, const CommandDataBuffer &data, Commands cmd);
+	static void SetLastCommand(TileIndex tile, uint32 p1, uint32 p2, uint64 p3, uint cmd);
 
 	/**
 	 * Check if it's the latest command executed by the script.
 	 */
-	static bool CheckLastCommand(TileIndex tile, const CommandDataBuffer &data, Commands cmd);
+	static bool CheckLastCommand(TileIndex tile, uint32 p1, uint32 p2, uint64 p3, uint cmd);
 
 	/**
 	 * Sets the DoCommand costs counter to a value.
@@ -173,6 +180,21 @@ protected:
 	static ScriptObject *GetDoCommandModeInstance();
 
 	/**
+	 * Set the current async mode of your script to this proc.
+	 */
+	static void SetDoCommandAsyncMode(ScriptAsyncModeProc *proc, ScriptObject *instance);
+
+	/**
+	 * Get the current async mode your script is currently under.
+	 */
+	static ScriptModeProc *GetDoCommandAsyncMode();
+
+	/**
+	 * Get the instance of the current async mode your script is currently under.
+	 */
+	static ScriptObject *GetDoCommandAsyncModeInstance();
+
+	/**
 	 * Set the delay of the DoCommand.
 	 */
 	static void SetDoCommandDelay(uint ticks);
@@ -188,9 +210,34 @@ protected:
 	static bool GetLastCommandRes();
 
 	/**
-	 * Get the extra return data from the last DoCommand.
+	 * Get the latest stored new_vehicle_id.
 	 */
-	static const CommandDataBuffer &GetLastCommandResData();
+	static VehicleID GetNewVehicleID();
+
+	/**
+	 * Get the latest stored new_sign_id.
+	 */
+	static SignID GetNewSignID();
+
+	/**
+	 * Get the latest stored new_group_id.
+	 */
+	static GroupID GetNewGroupID();
+
+	/**
+	 * Get the latest stored new_goal_id.
+	 */
+	static GoalID GetNewGoalID();
+
+	/**
+	 * Get the latest stored new_story_page_id.
+	 */
+	static StoryPageID GetNewStoryPageID();
+
+	/**
+	 * Get the latest stored new_story_page_id.
+	 */
+	static StoryPageID GetNewStoryPageElementID();
 
 	/**
 	 * Store a allow_do_command per company.
@@ -239,6 +286,16 @@ protected:
 	static Money GetLastCost();
 
 	/**
+	 * Set the result data of the last command.
+	 */
+	static void SetLastCommandResultData(uint32 last_result);
+
+	/**
+	 * Get the result data of the last command.
+	 */
+	static uint32 GetLastCommandResultData();
+
+	/**
 	 * Set a variable that can be used by callback functions to pass information.
 	 */
 	static void SetCallbackVariable(int index, int value);
@@ -261,93 +318,119 @@ protected:
 	/**
 	 * Get the pointer to store log message in.
 	 */
-	static void *&GetLogPointer();
+	static ScriptLogTypes::LogData &GetLogData();
 
 	/**
 	 * Get an allocated string with all control codes stripped off.
 	 */
 	static char *GetString(StringID string);
 
+	static bool IsNewUniqueLogMessage(const std::string &msg);
+
+	static void RegisterUniqueLogMessage(std::string &&msg);
+
 private:
-	/* Helper functions for DoCommand. */
-	static std::tuple<bool, bool, bool> DoCommandPrep();
-	static bool DoCommandProcessResult(const CommandCost &res, Script_SuspendCallbackProc *callback, bool estimate_only);
-	static CommandCallbackData *GetDoCommandCallback();
+	/**
+	 * Store a new_vehicle_id per company.
+	 * @param vehicle_id The new VehicleID.
+	 */
+	static void SetNewVehicleID(VehicleID vehicle_id);
+
+	/**
+	 * Store a new_sign_id per company.
+	 * @param sign_id The new SignID.
+	 */
+	static void SetNewSignID(SignID sign_id);
+
+	/**
+	 * Store a new_group_id per company.
+	 * @param group_id The new GroupID.
+	 */
+	static void SetNewGroupID(GroupID group_id);
+
+	/**
+	 * Store a new_goal_id per company.
+	 * @param goal_id The new GoalID.
+	 */
+	static void SetNewGoalID(GoalID goal_id);
+
+	/**
+	 * Store a new_story_page_id per company.
+	 * @param story_page_id The new StoryPageID.
+	 */
+	static void SetNewStoryPageID(StoryPageID story_page_id);
+
+	/**
+	 * Store a new_story_page_id per company.
+	 * @param story_page_id The new StoryPageID.
+	 */
+	static void SetNewStoryPageElementID(StoryPageElementID story_page_element_id);
+
+	static Randomizer random_states[OWNER_END]; ///< Random states for each of the scripts (game script uses OWNER_DEITY)
 };
 
-namespace ScriptObjectInternal {
-	/** Validate a single string argument coming from network. */
-	template <class T>
-	static inline void SanitizeSingleStringHelper(T &data)
+/**
+ * Internally used class to automate the ScriptObject reference counting.
+ * @api -all
+ */
+template <typename T>
+class ScriptObjectRef {
+private:
+	T *data; ///< The reference counted object.
+public:
+	/**
+	 * Create the reference counter for the given ScriptObject instance.
+	 * @param data The underlying object.
+	 */
+	ScriptObjectRef(T *data) : data(data)
 	{
-		if constexpr (std::is_same_v<std::string, T>) {
-			/* The string must be valid, i.e. not contain special codes. Since some
-			 * can be made with GSText, make sure the control codes are removed. */
-			data = ::StrMakeValid(data, SVS_NONE);
-		}
+		this->data->AddRef();
 	}
 
-	/** Helper function to perform validation on command data strings. */
-	template<class Ttuple, size_t... Tindices>
-	static inline void SanitizeStringsHelper(Ttuple &values, std::index_sequence<Tindices...>)
+	/* No copy constructor. */
+	ScriptObjectRef(const ScriptObjectRef<T> &ref) = delete;
+
+	/* Move constructor. */
+	ScriptObjectRef(ScriptObjectRef<T> &&ref) noexcept : data(std::exchange(ref.data, nullptr))
 	{
-		((SanitizeSingleStringHelper(std::get<Tindices>(values))), ...);
 	}
 
-	/** Helper to process a single ClientID argument. */
-	template <class T>
-	static inline void SetClientIdHelper(T &data)
+	/* No copy assignment. */
+	ScriptObjectRef& operator=(const ScriptObjectRef<T> &other) = delete;
+
+	/* Move assignment. */
+	ScriptObjectRef& operator=(ScriptObjectRef<T> &&other) noexcept
 	{
-		if constexpr (std::is_same_v<ClientID, T>) {
-			if (data == INVALID_CLIENT_ID) data = (ClientID)UINT32_MAX;
-		}
+		std::swap(this->data, other.data);
+		return *this;
 	}
 
-	/** Set all invalid ClientID's to the proper value. */
-	template<class Ttuple, size_t... Tindices>
-	static inline void SetClientIds(Ttuple &values, std::index_sequence<Tindices...>)
+	/**
+	 * Release the reference counted object.
+	 */
+	~ScriptObjectRef()
 	{
-		((SetClientIdHelper(std::get<Tindices>(values))), ...);
+		if (this->data != nullptr) this->data->Release();
 	}
 
-	/** Remove the first element of a tuple. */
-	template <template <typename...> typename Tt, typename T1, typename... Ts>
-	static inline Tt<Ts...> RemoveFirstTupleElement(const Tt<T1, Ts...> &tuple)
+	/**
+	 * Dereferencing this reference returns a reference to the reference
+	 * counted object
+	 * @return Reference to the underlying object.
+	 */
+	T &operator*()
 	{
-		return std::apply([](auto &&, const auto&... args) { return std::tie(args...); }, tuple);
-	}
-}
-
-template <Commands Tcmd, typename Tret, typename... Targs>
-bool ScriptObject::ScriptDoCommandHelper<Tcmd, Tret(*)(DoCommandFlag, Targs...)>::Execute(Script_SuspendCallbackProc *callback, std::tuple<Targs...> args)
-{
-	auto [err, estimate_only, networking] = ScriptObject::DoCommandPrep();
-	if (err) return false;
-
-	if ((::GetCommandFlags<Tcmd>() & CMD_STR_CTRL) == 0) {
-		ScriptObjectInternal::SanitizeStringsHelper(args, std::index_sequence_for<Targs...>{});
+		return *this->data;
 	}
 
-	TileIndex tile{};
-	if constexpr (std::is_same_v<TileIndex, std::tuple_element_t<0, decltype(args)>>) {
-		tile = std::get<0>(args);
+	/**
+	 * The arrow operator on this reference returns the reference counted object.
+	 * @return Pointer to the underlying object.
+	 */
+	T *operator->()
+	{
+		return this->data;
 	}
-
-	/* Only set ClientID parameters when the command does not come from the network. */
-	if constexpr ((::GetCommandFlags<Tcmd>() & CMD_CLIENT_ID) != 0) ScriptObjectInternal::SetClientIds(args, std::index_sequence_for<Targs...>{});
-
-	/* Store the command for command callback validation. */
-	if (!estimate_only && networking) ScriptObject::SetLastCommand(tile, EndianBufferWriter<CommandDataBuffer>::FromValue(args), Tcmd);
-
-	/* Try to perform the command. */
-	Tret res = ::Command<Tcmd>::Unsafe((StringID)0, networking ? ScriptObject::GetDoCommandCallback() : nullptr, false, estimate_only, tile, args);
-
-	if constexpr (std::is_same_v<Tret, CommandCost>) {
-		return ScriptObject::DoCommandProcessResult(res, callback, estimate_only);
-	} else {
-		ScriptObject::SetLastCommandResData(EndianBufferWriter<CommandDataBuffer>::FromValue(ScriptObjectInternal::RemoveFirstTupleElement(res)));
-		return ScriptObject::DoCommandProcessResult(std::get<0>(res), callback, estimate_only);
-	}
-}
+};
 
 #endif /* SCRIPT_OBJECT_HPP */

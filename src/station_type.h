@@ -12,10 +12,11 @@
 
 #include "core/smallstack_type.hpp"
 #include "tilearea_type.h"
-#include <set>
+#include "3rdparty/cpp-btree/btree_set.h"
 
 typedef uint16 StationID;
 typedef uint16 RoadStopID;
+typedef uint16 DockID;
 
 struct BaseStation;
 struct Station;
@@ -25,6 +26,8 @@ struct Waypoint;
 
 static const StationID NEW_STATION = 0xFFFE;
 static const StationID INVALID_STATION = 0xFFFF;
+
+static const uint MAX_STATION_CARGO_HISTORY_DAYS = 24;
 
 typedef SmallStack<StationID, StationID, INVALID_STATION, 8, 0xFFFD> StationIDStack;
 
@@ -38,13 +41,13 @@ enum StationType {
 	STATION_DOCK,
 	STATION_BUOY,
 	STATION_WAYPOINT,
+	STATION_ROADWAYPOINT,
 };
 
 /** Types of RoadStops */
-enum RoadStopType : byte {
+enum RoadStopType {
 	ROADSTOP_BUS,    ///< A standard stop for buses
 	ROADSTOP_TRUCK,  ///< A standard stop for trucks
-	ROADSTOP_END,    ///< End of valid types
 };
 
 /** The facilities a station might be having */
@@ -85,14 +88,19 @@ enum CatchmentArea {
 	MAX_CATCHMENT      = 10, ///< Maximum catchment for airports with "modified catchment" enabled
 };
 
-static const uint MAX_LENGTH_STATION_NAME_CHARS = 32; ///< The maximum length of a station name in characters including '\0'
+enum StationDelivery : byte {
+	SD_NEAREST_FIRST = 0, ///< Station delivers cargo only to the nearest accepting industry
+	SD_BALANCED      = 1  ///< Station delivers cargo equally among accepting industries
+};
+
+static const uint MAX_LENGTH_STATION_NAME_CHARS = 128; ///< The maximum length of a station name in characters including '\0'
 
 struct StationCompare {
 	bool operator() (const Station *lhs, const Station *rhs) const;
 };
 
 /** List of stations */
-typedef std::set<Station *, StationCompare> StationList;
+typedef btree::btree_set<Station *, StationCompare> StationList;
 
 /**
  * Structure contains cached list of stations nearby. The list

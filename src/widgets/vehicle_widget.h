@@ -36,6 +36,7 @@ enum VehicleRefitWidgets {
 	WID_VR_VEHICLE_PANEL_DISPLAY, ///< Display with a representation of the vehicle to refit.
 	WID_VR_SHOW_HSCROLLBAR,       ///< Selection widget for the horizontal scrollbar.
 	WID_VR_HSCROLLBAR,            ///< Horizontal scrollbar or the vehicle display.
+	WID_VR_VEHICLE_DROPDOWN,      ///< Dropdown for the vehicle display.
 	WID_VR_SELECT_HEADER,         ///< Header with question about the cargo to carry.
 	WID_VR_MATRIX,                ///< Options to refit to.
 	WID_VR_SCROLLBAR,             ///< Scrollbar for the refit options.
@@ -62,6 +63,7 @@ enum VehicleDetailsWidgets {
 
 /** Widgets of the #VehicleListWindow class. */
 enum VehicleListWidgets {
+	WID_VL_LIST,                     ///< List of the vehicles, this must be first, see: DirtyVehicleListWindowForVehicle
 	WID_VL_CAPTION,                  ///< Caption of window (for non shared orders windows).
 	WID_VL_CAPTION_SHARED_ORDERS,    ///< Caption of window (for shared orders windows).
 	WID_VL_CAPTION_SELECTION,        ///< Selection for caption.
@@ -70,9 +72,8 @@ enum VehicleListWidgets {
 	WID_VL_GROUP_BY_PULLDOWN,        ///< Group by dropdown list.
 	WID_VL_SORT_ORDER,               ///< Sort order.
 	WID_VL_SORT_BY_PULLDOWN,         ///< Sort by dropdown list.
-	WID_VL_FILTER_BY_CARGO,          ///< Cargo filter dropdown list.
-	WID_VL_FILTER_BY_CARGO_SEL,      ///< Cargo filter dropdown list panel selector.
-	WID_VL_LIST,                     ///< List of the vehicles.
+	WID_VL_FILTER_BY_CARGO,          ///< Cargo filter dropdown list
+	WID_VL_FILTER_BY_CARGO_SEL,      ///< Cargo filter dropdown list panel selector
 	WID_VL_SCROLLBAR,                ///< Scrollbar for the list.
 	WID_VL_HIDE_BUTTONS,             ///< Selection to hide the buttons.
 	WID_VL_AVAILABLE_VEHICLES,       ///< Available vehicles.

@@ -23,6 +23,8 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 static std::string _ai_saveload_name;
 static int         _ai_saveload_version;
 static std::string _ai_saveload_settings;
@@ -77,7 +79,7 @@ struct AIPLChunkHandler : ChunkHandler {
 			_ai_saveload_version = -1;
 			SlObject(nullptr, slt);
 
-			if (_networking && !_network_server) {
+			if (_game_mode == GM_MENU || (_networking && !_network_server)) {
 				if (Company::IsValidAiID(index)) AIInstance::LoadEmpty();
 				continue;
 			}
@@ -94,15 +96,15 @@ struct AIPLChunkHandler : ChunkHandler {
 					config->Change(_ai_saveload_name.c_str(), -1, false, _ai_saveload_is_random);
 					if (!config->HasScript()) {
 						if (_ai_saveload_name.compare("%_dummy") != 0) {
-							Debug(script, 0, "The savegame has an AI by the name '{}', version {} which is no longer available.", _ai_saveload_name, _ai_saveload_version);
-							Debug(script, 0, "A random other AI will be loaded in its place.");
+							DEBUG(script, 0, "The savegame has an AI by the name '%s', version %u which is no longer available.", _ai_saveload_name.c_str(), _ai_saveload_version);
+							DEBUG(script, 0, "A random other AI will be loaded in its place.");
 						} else {
-							Debug(script, 0, "The savegame had no AIs available at the time of saving.");
-							Debug(script, 0, "A random available AI will be loaded now.");
+							DEBUG(script, 0, "The savegame had no AIs available at the time of saving.");
+							DEBUG(script, 0, "A random available AI will be loaded now.");
 						}
 					} else {
-						Debug(script, 0, "The savegame has an AI by the name '{}', version {} which is no longer available.", _ai_saveload_name, _ai_saveload_version);
-						Debug(script, 0, "The latest version of that AI has been loaded instead, but it'll not get the savegame data as it's incompatible.");
+						DEBUG(script, 0, "The savegame has an AI by the name '%s', version %u which is no longer available.", _ai_saveload_name.c_str(), _ai_saveload_version);
+						DEBUG(script, 0, "The latest version of that AI has been loaded instead, but it'll not get the savegame data as it's incompatible.");
 					}
 					/* Make sure the AI doesn't get the saveload data, as it was not the
 					 *  writer of the saveload data in the first place */
@@ -112,11 +114,8 @@ struct AIPLChunkHandler : ChunkHandler {
 
 			config->StringToSettings(_ai_saveload_settings);
 
-			/* Start the AI directly if it was active in the savegame */
-			if (Company::IsValidAiID(index)) {
-				AI::StartNew(index, false);
-				AI::Load(index, _ai_saveload_version);
-			}
+			/* Load the AI saved data */
+			if (Company::IsValidAiID(index)) config->SetToLoadData(AIInstance::Load(_ai_saveload_version));
 		}
 	}
 
@@ -137,3 +136,5 @@ static const ChunkHandlerRef ai_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _ai_chunk_handlers(ai_chunk_handlers);
+
+}

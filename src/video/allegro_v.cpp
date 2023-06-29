@@ -43,7 +43,6 @@ static BITMAP *_allegro_screen;
 #define MAX_DIRTY_RECTS 100
 static PointDimension _dirty_rects[MAX_DIRTY_RECTS];
 static int _num_dirty_rects;
-static Palette _local_palette; ///< Current palette to use for drawing.
 
 void VideoDriver_Allegro::MakeDirty(int left, int top, int width, int height)
 {
@@ -81,9 +80,9 @@ static void UpdatePalette(uint start, uint count)
 
 	uint end = start + count;
 	for (uint i = start; i != end; i++) {
-		pal[i].r = _local_palette.palette[i].r / 4;
-		pal[i].g = _local_palette.palette[i].g / 4;
-		pal[i].b = _local_palette.palette[i].b / 4;
+		pal[i].r = _cur_palette.palette[i].r / 4;
+		pal[i].g = _cur_palette.palette[i].g / 4;
+		pal[i].b = _cur_palette.palette[i].b / 4;
 		pal[i].filler = 0;
 	}
 
@@ -97,24 +96,25 @@ static void InitPalette()
 
 void VideoDriver_Allegro::CheckPaletteAnim()
 {
-	if (!CopyPalette(_local_palette)) return;
+	if (_cur_palette.count_dirty != 0) {
+		Blitter *blitter = BlitterFactory::GetCurrentBlitter();
 
-	Blitter *blitter = BlitterFactory::GetCurrentBlitter();
+		switch (blitter->UsePaletteAnimation()) {
+			case Blitter::PALETTE_ANIMATION_VIDEO_BACKEND:
+				UpdatePalette(_cur_palette.first_dirty, _cur_palette.count_dirty);
+				break;
 
-	switch (blitter->UsePaletteAnimation()) {
-		case Blitter::PALETTE_ANIMATION_VIDEO_BACKEND:
-			UpdatePalette(_local_palette.first_dirty, _local_palette.count_dirty);
-			break;
+			case Blitter::PALETTE_ANIMATION_BLITTER:
+				blitter->PaletteAnimate(_cur_palette);
+				break;
 
-		case Blitter::PALETTE_ANIMATION_BLITTER:
-			blitter->PaletteAnimate(_local_palette);
-			break;
+			case Blitter::PALETTE_ANIMATION_NONE:
+				break;
 
-		case Blitter::PALETTE_ANIMATION_NONE:
-			break;
-
-		default:
-			NOT_REACHED();
+			default:
+				NOT_REACHED();
+		}
+		_cur_palette.count_dirty = 0;
 	}
 }
 
@@ -191,7 +191,7 @@ static bool CreateMainSurface(uint w, uint h)
 
 	GetAvailableVideoMode(&w, &h);
 	if (set_gfx_mode(_fullscreen ? GFX_AUTODETECT_FULLSCREEN : GFX_AUTODETECT_WINDOWED, w, h, 0, 0) != 0) {
-		Debug(driver, 0, "Allegro: Couldn't allocate a window to draw on '{}'", allegro_error);
+		DEBUG(driver, 0, "Allegro: Couldn't allocate a window to draw on '%s'", allegro_error);
 		return false;
 	}
 
@@ -204,7 +204,7 @@ static bool CreateMainSurface(uint w, uint h)
 	_screen.dst_ptr = _allegro_screen->line[0];
 
 	/* Initialise the screen so we don't blit garbage to the screen */
-	memset(_screen.dst_ptr, 0, _screen.height * _screen.pitch);
+	memset(_screen.dst_ptr, 0, static_cast<size_t>(_screen.height) * _screen.pitch);
 
 	/* Set the mouse at the place where we expect it */
 	poll_mouse();
@@ -327,8 +327,8 @@ static uint32 ConvertAllegroKeyIntoMy(WChar *character)
 	if (key_shifts & KB_CTRL_FLAG)  key |= WKC_CTRL;
 	if (key_shifts & KB_ALT_FLAG)   key |= WKC_ALT;
 #if 0
-	Debug(driver, 0, "Scancode character pressed {}", scancode);
-	Debug(driver, 0, "Unicode character pressed {}", unicode);
+	DEBUG(driver, 0, "Scancode character pressed %u", scancode);
+	DEBUG(driver, 0, "Unicode character pressed %u", unicode);
 #endif
 
 	*character = unicode;
@@ -425,7 +425,7 @@ int _allegro_instance_count = 0;
 const char *VideoDriver_Allegro::Start(const StringList &param)
 {
 	if (_allegro_instance_count == 0 && install_allegro(SYSTEM_AUTODETECT, &errno, nullptr)) {
-		Debug(driver, 0, "allegro: install_allegro failed '{}'", allegro_error);
+		DEBUG(driver, 0, "allegro: install_allegro failed '%s'", allegro_error);
 		return "Failed to set up Allegro";
 	}
 	_allegro_instance_count++;
@@ -463,17 +463,14 @@ void VideoDriver_Allegro::Stop()
 void VideoDriver_Allegro::InputLoop()
 {
 	bool old_ctrl_pressed = _ctrl_pressed;
+	bool old_shift_pressed = _shift_pressed;
 
-	_ctrl_pressed  = !!(key_shifts & KB_CTRL_FLAG);
-	_shift_pressed = !!(key_shifts & KB_SHIFT_FLAG);
+	_ctrl_pressed  = !!(key_shifts & KB_CTRL_FLAG) != _invert_ctrl;
+	_shift_pressed = !!(key_shifts & KB_SHIFT_FLAG) != _invert_shift;
 
-#if defined(_DEBUG)
-	this->fast_forward_key_pressed = _shift_pressed;
-#else
 	/* Speedup when pressing tab, except when using ALT+TAB
 	 * to switch to another application. */
 	this->fast_forward_key_pressed = key[KEY_TAB] && (key_shifts & KB_ALT_FLAG) == 0;
-#endif
 
 	/* Determine which directional keys are down. */
 	_dirkeys =
@@ -483,6 +480,7 @@ void VideoDriver_Allegro::InputLoop()
 		(key[KEY_DOWN]  ? 8 : 0);
 
 	if (old_ctrl_pressed != _ctrl_pressed) HandleCtrlChanged();
+	if (old_shift_pressed != _shift_pressed) HandleShiftChanged();
 }
 
 void VideoDriver_Allegro::MainLoop()

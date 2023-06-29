@@ -14,8 +14,11 @@
 #include "core/bitmath_func.hpp"
 #include "core/math_func.hpp"
 #include "strings_type.h"
+#include "gfx_func.h"
 #include "gfx_type.h"
 #include "window_type.h"
+
+#include <vector>
 
 static const int WIDGET_LIST_END = -1; ///< indicate the end of widgets' list for vararg functions
 
@@ -41,7 +44,7 @@ enum ArrowWidgetValues {
 /**
  * Window widget types, nested widget types, and nested widget part types.
  */
-enum WidgetType {
+enum WidgetType : uint8 {
 	/* Window widget types. */
 	WWT_EMPTY,      ///< Empty widget, place holder to reserve space in widget array
 
@@ -89,7 +92,7 @@ enum WidgetType {
 	WPT_DATATIP,      ///< Widget part for specifying data and tooltip.
 	WPT_PADDING,      ///< Widget part for specifying a padding.
 	WPT_PIPSPACE,     ///< Widget part for specifying pre/inter/post space for containers.
-	WPT_TEXTCOLOUR,   ///< Widget part for specifying text colour.
+	WPT_TEXTSTYLE,    ///< Widget part for specifying text colour.
 	WPT_ALIGNMENT,    ///< Widget part for specifying text/image alignment.
 	WPT_ENDCONTAINER, ///< Widget part to denote end of a container.
 	WPT_FUNCTION,     ///< Widget part for calling a user function.
@@ -106,6 +109,14 @@ enum WidgetType {
 	WWT_PUSHARROWBTN  = WWT_ARROWBTN | WWB_PUSHBUTTON,    ///< Normal push-button (no toggle button) with arrow caption
 	NWID_PUSHBUTTON_DROPDOWN = NWID_BUTTON_DROPDOWN | WWB_PUSHBUTTON,
 };
+
+/**
+ * Base widget flags.
+ */
+enum WidgetBaseFlags : uint8 {
+	WBF_DIRTY            = 1 <<  0, ///< Widget is dirty.
+};
+DECLARE_ENUM_AS_BIT_SET(WidgetBaseFlags)
 
 /** Different forms of sizing nested widgets, using NWidgetBase::AssignSizePosition() */
 enum SizingType {
@@ -170,7 +181,8 @@ public:
 	inline uint GetVerticalStepSize(SizingType sizing) const;
 
 	virtual void Draw(const Window *w) = 0;
-	virtual void SetDirty(const Window *w) const;
+	virtual void FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets) = 0;
+	virtual void SetDirty(Window *w);
 
 	Rect GetCurrentRect() const
 	{
@@ -183,6 +195,7 @@ public:
 	}
 
 	WidgetType type;      ///< Type of the widget / nested widget.
+	WidgetBaseFlags base_flags; ///< Widget base flags
 	uint fill_x;          ///< Horizontal fill stepsize (from initial size, \c 0 means not resizable).
 	uint fill_y;          ///< Vertical fill stepsize (from initial size, \c 0 means not resizable).
 	uint resize_x;        ///< Horizontal resize step (\c 0 means not resizable).
@@ -204,6 +217,13 @@ public:
 
 	RectPadding padding;    ///< Padding added to the widget. Managed by parent container widget. (parent container may swap left and right for RTL)
 	RectPadding uz_padding; ///< Unscaled padding, for resize calculation.
+
+	inline bool IsOutsideDrawArea() const
+	{
+		if ((int)(this->pos_x + this->current_x) <= _cur_dpi->left || (int)(this->pos_x) >= _cur_dpi->left + _cur_dpi->width) return true;
+		if ((int)(this->pos_y + this->current_y) <= _cur_dpi->top || (int)(this->pos_y) >= _cur_dpi->top + _cur_dpi->height) return true;
+		return false;
+	}
 
 protected:
 	inline void StoreSizePosition(SizingType sizing, uint x, uint y, uint given_width, uint given_height);
@@ -263,6 +283,8 @@ public:
 	void SetFill(uint fill_x, uint fill_y);
 	void SetResize(uint resize_x, uint resize_y);
 
+	bool UpdateVerticalSize(uint min_y);
+
 	void AssignSizePosition(SizingType sizing, uint x, uint y, uint given_width, uint given_height, bool rtl) override;
 
 	uint min_x; ///< Minimal horizontal size of only this widget.
@@ -318,7 +340,7 @@ public:
 	void SetIndex(int index);
 	void SetDataTip(uint32 widget_data, StringID tool_tip);
 	void SetToolTip(StringID tool_tip);
-	void SetTextColour(TextColour colour);
+	void SetTextStyle(TextColour colour, FontSize size);
 	void SetAlignment(StringAlignment align);
 
 	inline void SetLowered(bool lowered);
@@ -331,6 +353,7 @@ public:
 	bool IsHighlighted() const override;
 	TextColour GetHighlightColour() const override;
 	void SetHighlighted(TextColour highlight_colour) override;
+	void FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets) override;
 
 	NWidgetDisplay disp_flags; ///< Flags that affect display and interaction with the widget.
 	Colours colour;            ///< Colour of this widget.
@@ -340,6 +363,7 @@ public:
 	int scrollbar_index;       ///< Index of an attached scrollbar.
 	TextColour highlight_colour; ///< Colour of highlight.
 	TextColour text_colour;    ///< Colour of text within widget.
+	FontSize text_size;        ///< Size of text within widget.
 	StringAlignment align;     ///< Alignment of text/image within widget.
 };
 
@@ -451,6 +475,7 @@ public:
 
 	void Draw(const Window *w) override;
 	NWidgetCore *GetWidgetFromPos(int x, int y) override;
+	void FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets) override;
 
 	void SetDisplayedPlane(int plane);
 
@@ -479,6 +504,7 @@ public:
 
 	void Draw(const Window *w) override;
 	NWidgetCore *GetWidgetFromPos(int x, int y) override;
+	void FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets) override;
 
 protected:
 	NWidContainerFlags flags; ///< Flags of the container.
@@ -549,6 +575,7 @@ public:
 	void FillNestedArray(NWidgetBase **array, uint length) override;
 
 	NWidgetCore *GetWidgetFromPos(int x, int y) override;
+	void FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets) override;
 	void Draw(const Window *w) override;
 protected:
 	int index;      ///< If non-negative, index in the #Window::nested_array.
@@ -578,8 +605,9 @@ public:
 	void FillNestedArray(NWidgetBase **array, uint length) override;
 
 	void Draw(const Window *w) override;
-	void SetDirty(const Window *w) const override;
+	void SetDirty(Window *w) override;
 	NWidgetCore *GetWidgetFromPos(int x, int y) override;
+	void FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets) override;
 };
 
 /**
@@ -603,6 +631,7 @@ public:
 	void Draw(const Window *w) override;
 	NWidgetCore *GetWidgetFromPos(int x, int y) override;
 	NWidgetBase *GetWidgetOfType(WidgetType tp) override;
+	void FillDirtyWidgets(std::vector<NWidgetBase *> &dirty_widgets) override;
 
 private:
 	NWidgetPIPContainer *child; ///< Child widget.
@@ -701,10 +730,11 @@ public:
 	 * Set the distance to scroll when using the buttons or the wheel.
 	 * @param stepsize Scrolling speed.
 	 */
-	void SetStepSize(uint16 stepsize)
+	void SetStepSize(size_t stepsize)
 	{
 		assert(stepsize > 0);
-		this->stepsize = stepsize;
+
+		this->stepsize = ClampTo<uint16_t>(stepsize);
 	}
 
 	/**
@@ -712,15 +742,13 @@ public:
 	 * @param num the number of elements in the list
 	 * @note updates the position if needed
 	 */
-	void SetCount(int num)
+	void SetCount(size_t num)
 	{
-		assert(num >= 0);
 		assert(num <= MAX_UVALUE(uint16));
 
-		this->count = num;
-		num -= this->cap;
-		if (num < 0) num = 0;
-		if (num < this->pos) this->pos = num;
+		this->count = ClampTo<uint16_t>(num);
+		/* Ensure position is within bounds */
+		this->SetPosition(this->pos);
 	}
 
 	/**
@@ -728,13 +756,13 @@ public:
 	 * @param capacity the new capacity
 	 * @note updates the position if needed
 	 */
-	void SetCapacity(int capacity)
+	void SetCapacity(size_t capacity)
 	{
-		assert(capacity > 0);
 		assert(capacity <= MAX_UVALUE(uint16));
 
-		this->cap = capacity;
-		if (this->cap + this->pos > this->count) this->pos = std::max(0, this->count - this->cap);
+		this->cap = ClampTo<uint16_t>(capacity);
+		/* Ensure position is within bounds */
+		this->SetPosition(this->pos);
 	}
 
 	void SetCapacityFromWidget(Window *w, int widget, int padding = 0);
@@ -746,10 +774,8 @@ public:
 	 */
 	bool SetPosition(int position)
 	{
-		assert(position >= 0);
-		assert(this->count <= this->cap ? (position == 0) : (position + this->cap <= this->count));
 		uint16 old_pos = this->pos;
-		this->pos = position;
+		this->pos = Clamp(position, 0, std::max(this->count - this->cap, 0));
 		return this->pos != old_pos;
 	}
 
@@ -768,7 +794,7 @@ public:
 			case SS_BIG:   difference *= this->cap; break;
 			default: break;
 		}
-		return this->SetPosition(Clamp(this->pos + difference, 0, std::max(this->count - this->cap, 0)));
+		return this->SetPosition(this->pos + difference);
 	}
 
 	/**
@@ -948,8 +974,9 @@ struct NWidgetPartTextLines {
  * Widget part for storing text colour.
  * @ingroup NestedWidgetParts
  */
-struct NWidgetPartTextColour {
+struct NWidgetPartTextStyle {
 	TextColour colour; ///< TextColour for DrawString.
+	FontSize size; ///< Font size of text.
 };
 
 /**
@@ -981,7 +1008,7 @@ struct NWidgetPart {
 		NWidgetPartPaddings padding;     ///< Part with paddings.
 		NWidgetPartPIP pip;              ///< Part with pre/inter/post spaces.
 		NWidgetPartTextLines text_lines; ///< Part with text line data.
-		NWidgetPartTextColour colour;    ///< Part with text colour data.
+		NWidgetPartTextStyle text_style; ///< Part with text style data.
 		NWidgetPartAlignment align;      ///< Part with internal alignment.
 		NWidgetFunctionType *func_ptr;   ///< Part with a function call.
 		NWidContainerFlags cont_flags;   ///< Part with container flags.
@@ -1042,16 +1069,18 @@ static inline NWidgetPart SetMinimalTextLines(uint8 lines, uint8 spacing, FontSi
 }
 
 /**
- * Widget part function for setting the text colour.
+ * Widget part function for setting the text style.
  * @param colour Colour to draw string within widget.
+ * @param size Font size to draw string within widget.
  * @ingroup NestedWidgetParts
  */
-static inline NWidgetPart SetTextColour(TextColour colour)
+static inline NWidgetPart SetTextStyle(TextColour colour, FontSize size = FS_NORMAL)
 {
 	NWidgetPart part;
 
-	part.type = WPT_TEXTCOLOUR;
-	part.u.colour.colour = colour;
+	part.type = WPT_TEXTSTYLE;
+	part.u.text_style.colour = colour;
+	part.u.text_style.size = size;
 
 	return part;
 }

@@ -17,8 +17,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <map>
+#include <memory>
 #include <thread>
+#if defined(__MINGW32__)
+#include "3rdparty/mingw-std-threads/mingw.thread.h"
+#endif
 
 /** The states of sending the packets. */
 enum SendPacketsState {
@@ -31,8 +36,8 @@ enum SendPacketsState {
 /** Base socket handler for all TCP sockets */
 class NetworkTCPSocketHandler : public NetworkSocketHandler {
 private:
-	Packet *packet_queue;     ///< Packets that are awaiting delivery
-	Packet *packet_recv;      ///< Partially received packet
+	std::deque<std::unique_ptr<Packet>> packet_queue; ///< Packets that are awaiting delivery
+	std::unique_ptr<Packet> packet_recv;              ///< Partially received packet
 
 	void EmptyPacketQueue();
 public:
@@ -48,10 +53,18 @@ public:
 	virtual NetworkRecvStatus CloseConnection(bool error = true);
 	void CloseSocket();
 
-	virtual void SendPacket(Packet *packet);
+	void SendPacket(std::unique_ptr<Packet> packet);
+	void SendPrependPacket(std::unique_ptr<Packet> packet, int queue_after_packet_type);
+
+	void SendPacket(Packet *packet)
+	{
+		this->SendPacket(std::unique_ptr<Packet>(packet));
+	}
+
 	SendPacketsState SendPackets(bool closing_down = false);
 
-	virtual Packet *ReceivePacket();
+	virtual std::unique_ptr<Packet> ReceivePacket();
+	virtual void LogSentPacket(const Packet &pkt);
 
 	bool CanSendReceive();
 
@@ -59,7 +72,7 @@ public:
 	 * Whether there is something pending in the send queue.
 	 * @return true when something is pending in the send queue.
 	 */
-	bool HasSendQueue() { return this->packet_queue != nullptr; }
+	bool HasSendQueue() { return !this->packet_queue.empty(); }
 
 	NetworkTCPSocketHandler(SOCKET s = INVALID_SOCKET);
 	~NetworkTCPSocketHandler();
@@ -115,7 +128,7 @@ private:
 
 public:
 	TCPConnecter() {};
-	TCPConnecter(const std::string &connection_string, uint16 default_port, NetworkAddress bind_address = {}, int family = AF_UNSPEC);
+	TCPConnecter(const std::string &connection_string, uint16 default_port, const NetworkAddress &bind_address = {}, int family = AF_UNSPEC);
 	virtual ~TCPConnecter();
 
 	/**

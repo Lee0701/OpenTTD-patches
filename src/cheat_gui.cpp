@@ -13,8 +13,7 @@
 #include "company_base.h"
 #include "company_func.h"
 #include "date_func.h"
-#include "saveload/saveload.h"
-#include "vehicle_base.h"
+#include "sl/saveload.h"
 #include "textbuf_gui.h"
 #include "window_gui.h"
 #include "string_func.h"
@@ -28,7 +27,10 @@
 #include "tile_map.h"
 #include "newgrf.h"
 #include "error.h"
-#include "misc_cmd.h"
+#include "network/network.h"
+#include "order_base.h"
+#include "vehicle_base.h"
+#include "currency.h"
 #include "core/geometry_func.hpp"
 
 #include "widgets/cheat_widget.h"
@@ -56,7 +58,7 @@ static int32 _money_cheat_amount = 10000000;
  */
 static int32 ClickMoneyCheat(int32 p1, int32 p2)
 {
-	Command<CMD_MONEY_CHEAT>::Post(p2 * _money_cheat_amount);
+	DoCommandPEx(0, 0, 0, (uint64)(p2 * _money_cheat_amount), _network_server || _network_settings_access ? CMD_MONEY_CHEAT_ADMIN : CMD_MONEY_CHEAT);
 	return _money_cheat_amount;
 }
 
@@ -96,27 +98,34 @@ extern void EnginesMonthlyLoop();
 
 /**
  * Handle changing of the current year.
- * @param p1 Unused.
+ * @param p1 The chosen year to change to.
  * @param p2 +1 (increase) or -1 (decrease).
  * @return New year.
  */
 static int32 ClickChangeDateCheat(int32 p1, int32 p2)
 {
-	YearMonthDay ymd;
-	ConvertDateToYMD(_date, &ymd);
-
+	/* Don't allow changing to an invalid year, or the current year. */
 	p1 = Clamp(p1, MIN_YEAR, MAX_YEAR);
 	if (p1 == _cur_year) return _cur_year;
 
+	YearMonthDay ymd;
+	ConvertDateToYMD(_date, &ymd);
 	Date new_date = ConvertYMDToDate(p1, ymd.month, ymd.day);
-	for (auto v : Vehicle::Iterate()) v->ShiftDates(new_date - _date);
+
+	/* Shift cached dates. */
 	LinkGraphSchedule::instance.ShiftDates(new_date - _date);
+	ShiftOrderDates(new_date - _date);
+	ShiftVehicleDates(new_date - _date);
+
+	/* Change the date. */
 	SetDate(new_date, _date_fract);
+
 	EnginesMonthlyLoop();
-	SetWindowDirty(WC_STATUS_BAR, 0);
 	InvalidateWindowClassesData(WC_BUILD_STATION, 0);
+	InvalidateWindowClassesData(WC_BUS_STATION, 0);
 	InvalidateWindowClassesData(WC_BUILD_OBJECT, 0);
 	ResetSignalVariant();
+	MarkWholeScreenDirty();
 	return _cur_year;
 }
 
@@ -151,20 +160,6 @@ static int32 ClickChangeMaxHlCheat(int32 p1, int32 p2)
 	return _settings_game.construction.map_height_limit;
 }
 
-/** Available cheats. */
-enum CheatNumbers {
-	CHT_MONEY,           ///< Change amount of money.
-	CHT_CHANGE_COMPANY,  ///< Switch company.
-	CHT_EXTRA_DYNAMITE,  ///< Dynamite anything.
-	CHT_CROSSINGTUNNELS, ///< Allow tunnels to cross each other.
-	CHT_NO_JETCRASH,     ///< Disable jet-airplane crashes.
-	CHT_SETUP_PROD,      ///< Allow manually editing of industry production.
-	CHT_EDIT_MAX_HL,     ///< Edit maximum allowed heightlevel
-	CHT_CHANGE_DATE,     ///< Do time traveling.
-
-	CHT_NUM_CHEATS,      ///< Number of cheats.
-};
-
 /**
  * Signature of handler function when user clicks at a cheat.
  * @param p1 The new value.
@@ -172,8 +167,15 @@ enum CheatNumbers {
  */
 typedef int32 CheckButtonClick(int32 p1, int32 p2);
 
+enum CheatNetworkMode {
+	CNM_ALL,
+	CNM_LOCAL_ONLY,
+	CNM_MONEY,
+};
+
 /** Information of a cheat. */
 struct CheatEntry {
+	CheatNetworkMode mode; ///< network/local mode
 	VarType type;          ///< type of selector
 	StringID str;          ///< string with descriptive text
 	void *variable;        ///< pointer to the variable
@@ -186,15 +188,34 @@ struct CheatEntry {
  * Order matches with the values of #CheatNumbers
  */
 static const CheatEntry _cheats_ui[] = {
-	{SLE_INT32, STR_CHEAT_MONEY,           &_money_cheat_amount,                          &_cheats.money.been_used,            &ClickMoneyCheat         },
-	{SLE_UINT8, STR_CHEAT_CHANGE_COMPANY,  &_local_company,                               &_cheats.switch_company.been_used,   &ClickChangeCompanyCheat },
-	{SLE_BOOL,  STR_CHEAT_EXTRA_DYNAMITE,  &_cheats.magic_bulldozer.value,                &_cheats.magic_bulldozer.been_used,  nullptr                  },
-	{SLE_BOOL,  STR_CHEAT_CROSSINGTUNNELS, &_cheats.crossing_tunnels.value,               &_cheats.crossing_tunnels.been_used, nullptr                  },
-	{SLE_BOOL,  STR_CHEAT_NO_JETCRASH,     &_cheats.no_jetcrash.value,                    &_cheats.no_jetcrash.been_used,      nullptr                  },
-	{SLE_BOOL,  STR_CHEAT_SETUP_PROD,      &_cheats.setup_prod.value,                     &_cheats.setup_prod.been_used,       &ClickSetProdCheat       },
-	{SLE_UINT8, STR_CHEAT_EDIT_MAX_HL,     &_settings_game.construction.map_height_limit, &_cheats.edit_max_hl.been_used,      &ClickChangeMaxHlCheat   },
-	{SLE_INT32, STR_CHEAT_CHANGE_DATE,     &_cur_year,                                    &_cheats.change_date.been_used,      &ClickChangeDateCheat    },
+	{CNM_MONEY,      SLE_INT32,       STR_CHEAT_MONEY,            &_money_cheat_amount,                          &_cheats.money.been_used,                  &ClickMoneyCheat           },
+	{CNM_LOCAL_ONLY, SLE_UINT8,       STR_CHEAT_CHANGE_COMPANY,   &_local_company,                               &_cheats.switch_company.been_used,         &ClickChangeCompanyCheat   },
+	{CNM_ALL,        SLE_BOOL,        STR_CHEAT_EXTRA_DYNAMITE,   &_cheats.magic_bulldozer.value,                &_cheats.magic_bulldozer.been_used,        nullptr                    },
+	{CNM_ALL,        SLE_BOOL,        STR_CHEAT_CROSSINGTUNNELS,  &_cheats.crossing_tunnels.value,               &_cheats.crossing_tunnels.been_used,       nullptr                    },
+	{CNM_ALL,        SLE_BOOL,        STR_CHEAT_NO_JETCRASH,      &_cheats.no_jetcrash.value,                    &_cheats.no_jetcrash.been_used,            nullptr                    },
+	{CNM_LOCAL_ONLY, SLE_BOOL,        STR_CHEAT_SETUP_PROD,       &_cheats.setup_prod.value,                     &_cheats.setup_prod.been_used,             &ClickSetProdCheat         },
+	{CNM_LOCAL_ONLY, SLE_UINT8,       STR_CHEAT_EDIT_MAX_HL,      &_settings_game.construction.map_height_limit, &_cheats.edit_max_hl.been_used,            &ClickChangeMaxHlCheat     },
+	{CNM_LOCAL_ONLY, SLE_INT32,       STR_CHEAT_CHANGE_DATE,      &_cur_date_ymd.year,                           &_cheats.change_date.been_used,            &ClickChangeDateCheat      },
+	{CNM_ALL,        SLF_ALLOW_CONTROL, STR_CHEAT_INFLATION_COST,   &_economy.inflation_prices,                  &_extra_cheats.inflation_cost.been_used,   nullptr                    },
+	{CNM_ALL,        SLF_ALLOW_CONTROL, STR_CHEAT_INFLATION_INCOME, &_economy.inflation_payment,                 &_extra_cheats.inflation_income.been_used, nullptr                    },
+	{CNM_ALL,        SLE_BOOL,        STR_CHEAT_STATION_RATING,   &_extra_cheats.station_rating.value,           &_extra_cheats.station_rating.been_used,   nullptr                    },
+	{CNM_ALL,        SLE_BOOL,        STR_CHEAT_TOWN_RATING,      &_extra_cheats.town_rating.value,              &_extra_cheats.town_rating.been_used,      nullptr                    },
 };
+
+static bool IsCheatAllowed(CheatNetworkMode mode)
+{
+	switch (mode) {
+		case CNM_ALL:
+			return !_networking || _network_server || _network_settings_access;
+
+		case CNM_LOCAL_ONLY:
+			return !_networking;
+
+		case CNM_MONEY:
+			return !_networking || _network_server || _network_settings_access || _settings_game.difficulty.money_cheat_in_multiplayer;
+	}
+	return false;
+}
 
 static_assert(CHT_NUM_CHEATS == lengthof(_cheats_ui));
 
@@ -251,10 +272,23 @@ struct CheatWindow : Window {
 
 		for (int i = 0; i != lengthof(_cheats_ui); i++) {
 			const CheatEntry *ce = &_cheats_ui[i];
+			if (!IsCheatAllowed(ce->mode)) continue;
 
 			DrawSprite((*ce->been_used) ? SPR_BOX_CHECKED : SPR_BOX_EMPTY, PAL_NONE, box_left, y + box_y_offset);
 
 			switch (ce->type) {
+				case SLF_ALLOW_CONTROL: {
+					/* Change inflation factors */
+
+					/* Draw [<][>] boxes for settings of an integer-type */
+					DrawArrowButtons(button_left, y + button_y_offset, COLOUR_YELLOW, clicked - (i * 2), true, true);
+
+					uint64 val = (uint64)ReadValue(ce->variable, SLE_UINT64);
+					SetDParam(0, val * 1000 >> 16);
+					SetDParam(1, 3);
+					break;
+				}
+
 				case SLE_BOOL: {
 					bool on = (*(bool*)ce->variable);
 
@@ -265,7 +299,6 @@ struct CheatWindow : Window {
 
 				default: {
 					int32 val = (int32)ReadValue(ce->variable, ce->type);
-					char buf[512];
 
 					/* Draw [<][>] boxes for settings of an integer-type */
 					DrawArrowButtons(button_left, y + button_y_offset, COLOUR_YELLOW, clicked - (i * 2), true, true);
@@ -277,8 +310,7 @@ struct CheatWindow : Window {
 						/* Draw coloured flag for change company cheat */
 						case STR_CHEAT_CHANGE_COMPANY: {
 							SetDParam(0, val + 1);
-							GetString(buf, STR_CHEAT_CHANGE_COMPANY, lastof(buf));
-							uint offset = WidgetDimensions::scaled.hsep_indent + GetStringBoundingBox(buf).width;
+							uint offset = WidgetDimensions::scaled.hsep_indent + GetStringBoundingBox(ce->str).width;
 							DrawCompanyIcon(_local_company, rtl ? text_right - offset - WidgetDimensions::scaled.hsep_indent : text_left + offset, y + icon_y_offset);
 							break;
 						}
@@ -300,9 +332,16 @@ struct CheatWindow : Window {
 		if (widget != WID_C_PANEL) return;
 
 		uint width = 0;
+		uint lines = 0;
 		for (int i = 0; i != lengthof(_cheats_ui); i++) {
 			const CheatEntry *ce = &_cheats_ui[i];
+			if (!IsCheatAllowed(ce->mode)) continue;
+			lines++;
 			switch (ce->type) {
+				case SLF_ALLOW_CONTROL:
+					/* Change inflation factors */
+					break;
+
 				case SLE_BOOL:
 					SetDParam(0, STR_CONFIG_SETTING_ON);
 					width = std::max(width, GetStringBoundingBox(ce->str).width);
@@ -338,7 +377,7 @@ struct CheatWindow : Window {
 		this->line_height = std::max<uint>(this->line_height, FONT_HEIGHT_NORMAL) + WidgetDimensions::scaled.framerect.Vertical();
 
 		size->width = width + WidgetDimensions::scaled.hsep_wide * 4 + this->box.width + SETTING_BUTTON_WIDTH /* stuff on the left */ + WidgetDimensions::scaled.hsep_wide * 2 /* extra spacing on right */;
-		size->height = WidgetDimensions::scaled.framerect.Vertical() + this->line_height * lengthof(_cheats_ui);
+		size->height = WidgetDimensions::scaled.framerect.Vertical() + this->line_height * lines;
 	}
 
 	void OnClick(Point pt, int widget, int click_count) override
@@ -348,6 +387,11 @@ struct CheatWindow : Window {
 		uint x = pt.x - r.left;
 		bool rtl = _current_text_dir == TD_RTL;
 		if (rtl) x = r.Width() - 1 - x;
+
+		for (uint i = 0; i != lengthof(_cheats_ui) && i <= btn; i++) {
+			const CheatEntry *ce = &_cheats_ui[i];
+			if (!IsCheatAllowed(ce->mode)) btn++;
+		}
 
 		if (btn >= lengthof(_cheats_ui)) return;
 
@@ -366,29 +410,70 @@ struct CheatWindow : Window {
 			SetDParam(0, value);
 			ShowQueryString(STR_JUST_INT, STR_CHEAT_EDIT_MAX_HL_QUERY_CAPT, 8, this, CS_NUMERAL, QSF_ACCEPT_UNCHANGED);
 			return;
+		} else if (btn == CHT_MONEY && x >= 20 + this->box.width + SETTING_BUTTON_WIDTH) {
+			clicked_widget = CHT_MONEY;
+			SetDParam(0, value);
+			ShowQueryString(STR_JUST_INT, STR_CHEAT_EDIT_MONEY_QUERY_CAPT, 20, this, CS_NUMERAL_SIGNED, QSF_ACCEPT_UNCHANGED);
+			return;
+		} else if (ce->type == SLF_ALLOW_CONTROL && x >= 20 + this->box.width + SETTING_BUTTON_WIDTH) {
+			clicked_widget = btn;
+			uint64 val = (uint64)ReadValue(ce->variable, SLE_UINT64);
+			SetDParam(0, val * 1000 >> 16);
+			SetDParam(1, 3);
+			StringID str = (btn == CHT_INFLATION_COST) ? STR_CHEAT_INFLATION_COST_QUERY_CAPT : STR_CHEAT_INFLATION_INCOME_QUERY_CAPT;
+			std::string saved = std::move(_settings_game.locale.digit_group_separator);
+			_settings_game.locale.digit_group_separator = "";
+			ShowQueryString(STR_JUST_DECIMAL, str, 12, this, CS_NUMERAL_DECIMAL, QSF_ACCEPT_UNCHANGED);
+			_settings_game.locale.digit_group_separator = std::move(saved);
+			return;
 		}
 
 		/* Not clicking a button? */
 		if (!IsInsideMM(x, WidgetDimensions::scaled.hsep_wide * 2 + this->box.width, WidgetDimensions::scaled.hsep_wide * 2 + this->box.width + SETTING_BUTTON_WIDTH)) return;
 
-		*ce->been_used = true;
+		if (!_networking) *ce->been_used = true;
+
+		auto get_arrow_button_value = [&]() -> int {
+			return (x >= WidgetDimensions::scaled.hsep_wide * 2 + this->box.width + SETTING_BUTTON_WIDTH / 2) ? 1 : -1;
+		};
+
+		auto register_arrow_button_clicked = [&]() {
+			this->clicked = btn * 2 + 1 + ((x >= WidgetDimensions::scaled.hsep_wide * 2 + this->box.width + SETTING_BUTTON_WIDTH / 2) != rtl ? 1 : 0);
+		};
 
 		switch (ce->type) {
+			case SLF_ALLOW_CONTROL: {
+				/* Change inflation factors */
+				uint64 oldvalue = (uint64)ReadValue(ce->variable, SLE_UINT64);
+				uint64 value = oldvalue + (uint64)(get_arrow_button_value() << 16);
+				value = Clamp<uint64>(value, 1 << 16, MAX_INFLATION);
+				DoCommandP(0, (uint32)btn, (uint32)value, CMD_CHEAT_SETTING);
+				if (value != oldvalue) register_arrow_button_clicked();
+				break;
+			}
+
 			case SLE_BOOL:
 				value ^= 1;
-				if (ce->proc != nullptr) ce->proc(value, 0);
+				if (ce->proc != nullptr && !_networking) ce->proc(value, 0);
 				break;
 
 			default:
 				/* Take whatever the function returns */
-				value = ce->proc(value + ((x >= WidgetDimensions::scaled.hsep_wide * 2 + this->box.width + SETTING_BUTTON_WIDTH / 2) ? 1 : -1), (x >= WidgetDimensions::scaled.hsep_wide * 2 + this->box.width + SETTING_BUTTON_WIDTH / 2) ? 1 : -1);
+				int offset = get_arrow_button_value();
+				value = ce->proc(value + offset, offset);
 
 				/* The first cheat (money), doesn't return a different value. */
-				if (value != oldvalue || btn == CHT_MONEY) this->clicked = btn * 2 + 1 + ((x >= WidgetDimensions::scaled.hsep_wide * 2 + this->box.width + SETTING_BUTTON_WIDTH / 2) != rtl ? 1 : 0);
+				if (value != oldvalue || btn == CHT_MONEY) register_arrow_button_clicked();
 				break;
 		}
 
-		if (value != oldvalue) WriteValue(ce->variable, ce->type, (int64)value);
+		if (value != oldvalue) {
+			if (_networking || btn == CHT_STATION_RATING || btn == CHT_TOWN_RATING) {
+				if (btn != CHT_MONEY) DoCommandP(0, (uint32)btn, (uint32)value, CMD_CHEAT_SETTING);
+			} else {
+				WriteValue(ce->variable, ce->type, (int64)value);
+			}
+		}
 
 		this->SetTimeout();
 
@@ -407,6 +492,21 @@ struct CheatWindow : Window {
 		if (str == nullptr || StrEmpty(str)) return;
 
 		const CheatEntry *ce = &_cheats_ui[clicked_widget];
+
+		if (ce->type == SLF_ALLOW_CONTROL) {
+			char tmp_buffer[32];
+			strecpy(tmp_buffer, str, lastof(tmp_buffer));
+			str_replace_wchar(tmp_buffer, lastof(tmp_buffer), GetDecimalSeparatorChar(), '.');
+			DoCommandP(0, (uint32)clicked_widget, (uint32)Clamp<uint64>(atof(tmp_buffer) * 65536.0, 1 << 16, MAX_INFLATION), CMD_CHEAT_SETTING);
+			return;
+		}
+		if (ce->mode == CNM_MONEY) {
+			if (!_networking) *ce->been_used = true;
+			DoCommandPEx(0, 0, 0, (std::strtoll(str, nullptr, 10) / _currency->rate), _network_server || _network_settings_access ? CMD_MONEY_CHEAT_ADMIN : CMD_MONEY_CHEAT);
+			return;
+		}
+
+		if (_networking) return;
 		int oldvalue = (int32)ReadValue(ce->variable, ce->type);
 		int value = atoi(str);
 		*ce->been_used = true;
@@ -428,6 +528,8 @@ static WindowDesc _cheats_desc(
 /** Open cheat window. */
 void ShowCheatWindow()
 {
-	CloseWindowById(WC_CHEATS, 0);
-	new CheatWindow(&_cheats_desc);
+	DeleteWindowById(WC_CHEATS, 0);
+	if (!_networking || _network_server || _network_settings_access || _settings_game.difficulty.money_cheat_in_multiplayer) {
+		new CheatWindow(&_cheats_desc);
+	}
 }

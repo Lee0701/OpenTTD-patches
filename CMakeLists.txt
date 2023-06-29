@@ -5,16 +5,11 @@ if(NOT BINARY_NAME)
 endif()
 
 project(${BINARY_NAME}
-    VERSION 13.0
+    VERSION 14.0
 )
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
     message(FATAL_ERROR "In-source builds not allowed. Please run \"cmake ..\" from the build directory. You may need to delete \"${CMAKE_SOURCE_DIR}/CMakeCache.txt\" first.")
-endif()
-
-# Debug mode by default.
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug)
 endif()
 
 if (EMSCRIPTEN)
@@ -22,7 +17,7 @@ if (EMSCRIPTEN)
 endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
-set(CMAKE_OSX_DEPLOYMENT_TARGET 10.14)
+set(CMAKE_OSX_DEPLOYMENT_TARGET 10.13)
 
 # Use GNUInstallDirs to allow customisation
 # but set our own default data and bin dir
@@ -69,19 +64,6 @@ if(WIN32)
     list(APPEND GENERATED_SOURCE_FILES "${CMAKE_BINARY_DIR}/generated/ottdres.rc")
 endif()
 
-# Generate a target to determine version, which is execute every 'make' run
-add_custom_target(find_version
-        ${CMAKE_COMMAND}
-                -DFIND_VERSION_BINARY_DIR=${CMAKE_BINARY_DIR}/generated
-                -DCPACK_BINARY_DIR=${CMAKE_BINARY_DIR}
-                -DREV_MAJOR=${PROJECT_VERSION_MAJOR}
-                -DREV_MINOR=${PROJECT_VERSION_MINOR}
-                -DWINDOWS=${WIN32}
-                -P "${CMAKE_SOURCE_DIR}/cmake/scripts/FindVersion.cmake"
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        BYPRODUCTS ${GENERATED_SOURCE_FILES}
-)
-
 # Documentation
 if(DOXYGEN_EXECUTABLE)
     add_custom_target(docs)
@@ -106,6 +88,20 @@ if(OPTION_TOOLS_ONLY)
         unset(HOST_BINARY_DIR CACHE)
     endif()
     add_subdirectory(${CMAKE_SOURCE_DIR}/src)
+
+    # Cut down find_version which doesn't include cfg defines set in full configure
+    add_custom_target(find_version
+            ${CMAKE_COMMAND}
+                    -DFIND_VERSION_BINARY_DIR=${CMAKE_BINARY_DIR}/generated
+                    -DCPACK_BINARY_DIR=${CMAKE_BINARY_DIR}
+                    -DREV_MAJOR=${PROJECT_VERSION_MAJOR}
+                    -DREV_MINOR=${PROJECT_VERSION_MINOR}
+                    $<$<PLATFORM_ID:Windows>:-DWIN32=TRUE>
+                    -P "${CMAKE_SOURCE_DIR}/cmake/scripts/FindVersion.cmake"
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            BYPRODUCTS ${GENERATED_SOURCE_FILES}
+    )
+
     return()
 endif()
 
@@ -122,7 +118,16 @@ find_package(Threads REQUIRED)
 find_package(ZLIB)
 find_package(LibLZMA)
 find_package(LZO)
+find_package(ZSTD 1.4)
 find_package(PNG)
+
+if(WIN32 OR EMSCRIPTEN)
+    # Windows uses WinHttp for HTTP requests.
+    # Emscripten uses Javascript for HTTP requests.
+else()
+    # All other targets use libcurl.
+    find_package(CURL)
+endif()
 
 if(NOT OPTION_DEDICATED)
     if(NOT WIN32)
@@ -135,7 +140,8 @@ if(NOT OPTION_DEDICATED)
             endif()
             find_package(Fluidsynth)
             find_package(Fontconfig)
-            find_package(ICU OPTIONAL_COMPONENTS i18n lx)
+            find_package(Harfbuzz)
+            find_package(ICU OPTIONAL_COMPONENTS i18n)
         endif()
     endif()
 endif()
@@ -146,6 +152,8 @@ if(APPLE)
     find_library(AUDIOUNIT_LIBRARY AudioUnit)
     find_library(COCOA_LIBRARY Cocoa)
     find_library(QUARTZCORE_LIBRARY QuartzCore)
+
+    find_package(MacUcontext)
 endif()
 
 if(NOT EMSCRIPTEN AND NOT OPTION_DEDICATED)
@@ -154,7 +162,38 @@ endif()
 
 if(MSVC)
     find_package(Editbin REQUIRED)
+else()
+    find_package(Builtins)
 endif()
+
+if (UNIX)
+    find_package(DL)
+    find_package(Demangle)
+    find_package(Sigaction)
+    find_package(Sigaltstack)
+    find_package(SelfDbg)
+    find_package(Ucontext)
+    find_package(BFD)
+endif (UNIX)
+
+if(UNIX AND NOT APPLE AND NOT OPTION_DEDICATED)
+    find_package(Fcitx QUIET)
+    if (Fcitx_FOUND)
+        message(STATUS "Found: Fcitx: ${Fcitx_VERSION}")
+        find_package(DBus1)
+        find_package(X11)
+    else(Fcitx_FOUND)
+        message(STATUS "Could not find Fcitx (Fcitx is OPTIONAL)")
+    endif(Fcitx_FOUND)
+endif()
+
+if (MINGW)
+    find_package(Demangle)
+    if (OPTION_ENABLE_MINGW_BFD)
+        find_package(BFD)
+    endif (OPTION_ENABLE_MINGW_BFD)
+    find_package(DbgHelp)
+endif (MINGW)
 
 find_package(SSE)
 find_package(Xaudio2)
@@ -169,6 +208,12 @@ show_options()
 if(UNIX AND NOT APPLE AND NOT OPTION_DEDICATED)
     if(NOT SDL_FOUND AND NOT SDL2_FOUND AND NOT ALLEGRO_FOUND)
         message(FATAL_ERROR "SDL, SDL2 or Allegro is required for this platform")
+    endif()
+    if(HARFBUZZ_FOUND AND NOT ICU_i18n_FOUND)
+        message(WARNING "HarfBuzz depends on ICU i18n to function; HarfBuzz will be disabled")
+    endif()
+    if(NOT HARFBUZZ_FOUND)
+        message(WARNING "Without HarfBuzz and ICU i18n the game will not be able to render right-to-left languages correctly")
     endif()
 endif()
 if(APPLE)
@@ -220,6 +265,38 @@ add_executable(openttd WIN32 ${GENERATED_SOURCE_FILES})
 set_target_properties(openttd PROPERTIES OUTPUT_NAME "${BINARY_NAME}")
 # All other files are added via target_sources()
 
+set(host_tools_list strgen settingsgen)
+
+if(HOST_BINARY_DIR)
+    # Host tools already exist, nothing to do
+elseif(CMAKE_CROSSCOMPILING)
+    # Pawn off the creation of the host utilities into its own dedicated space
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/host_tools)
+    file(TO_NATIVE_PATH ${CMAKE_COMMAND} native_cmake_command)
+    file(TO_NATIVE_PATH ${CMAKE_CURRENT_SOURCE_DIR} native_cmake_current_source_dir)
+    execute_process(
+        COMMAND "${native_cmake_command}" "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}" "${native_cmake_current_source_dir}"
+                "-DCMAKE_C_COMPILER=/usr/bin/cc" "-DCMAKE_CXX_COMPILER=/usr/bin/c++"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/host_tools
+    )
+
+    add_custom_target(host_tools
+        COMMAND ${CMAKE_COMMAND} --build . --target host_tools --config $<CONFIG>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/host_tools
+    )
+    include(${CMAKE_CURRENT_BINARY_DIR}/host_tools/host_tools.cmake)
+
+    foreach(tgt IN ITEMS ${host_tools_list})
+        add_dependencies(host${tgt} host_tools)
+    endforeach()
+
+else()
+    # Add an empty target, host tools are built inplace
+    add_custom_target(host_tools
+        DEPENDS ${host_tools_list}
+    )
+endif()
+
 if(MSVC)
     # Add DPI manifest to project; other WIN32 targets get this via ottdres.rc
     target_sources(openttd PRIVATE "${CMAKE_SOURCE_DIR}/os/windows/openttd.manifest")
@@ -228,6 +305,14 @@ endif()
 add_subdirectory(${CMAKE_SOURCE_DIR}/bin)
 add_subdirectory(${CMAKE_SOURCE_DIR}/src)
 add_subdirectory(${CMAKE_SOURCE_DIR}/media)
+
+if(NOT CMAKE_CROSSCOMPILING AND NOT HOST_BINARY_DIR)
+    foreach(tgt IN ITEMS ${host_tools_list})
+        add_executable(host${tgt} ALIAS ${tgt})
+    endforeach()
+
+    export(TARGETS ${host_tools_list} NAMESPACE host FILE host_tools.cmake)
+endif()
 
 add_dependencies(openttd
     find_version)
@@ -238,6 +323,7 @@ target_link_libraries(openttd
     openttd::media
     openttd::basesets
     openttd::script_api
+    openttd::binfiles
     Threads::Threads
 )
 
@@ -258,6 +344,11 @@ link_package(PNG TARGET PNG::PNG ENCOURAGED)
 link_package(ZLIB TARGET ZLIB::ZLIB ENCOURAGED)
 link_package(LIBLZMA TARGET LibLZMA::LibLZMA ENCOURAGED)
 link_package(LZO)
+link_package(ZSTD TARGET ZSTD::ZSTD RECOMMENDED)
+
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    link_package(CURL ENCOURAGED)
+endif()
 
 if(NOT OPTION_DEDICATED)
     link_package(Fluidsynth)
@@ -266,8 +357,11 @@ if(NOT OPTION_DEDICATED)
     link_package(Allegro)
     link_package(FREETYPE TARGET Freetype::Freetype)
     link_package(Fontconfig TARGET Fontconfig::Fontconfig)
-    link_package(ICU_lx)
+    link_package(Harfbuzz TARGET harfbuzz::harfbuzz)
     link_package(ICU_i18n)
+    link_package(Fcitx)
+    link_package(DBus1)
+    link_package(X11)
 
     if(SDL2_FOUND AND OPENGL_FOUND AND UNIX)
         # SDL2 dynamically loads OpenGL if needed, so do not link to OpenGL when
@@ -279,6 +373,8 @@ if(NOT OPTION_DEDICATED)
         link_package(OpenGL TARGET OpenGL::GL)
     endif()
 endif()
+
+include(CheckAtomic)
 
 if(APPLE)
     link_package(Iconv TARGET Iconv::Iconv)
@@ -368,6 +464,7 @@ if(WIN32)
         imm32
         usp10
         psapi
+        winhttp
     )
 endif()
 
@@ -383,3 +480,28 @@ if(APPLE OR WIN32)
 endif()
 
 include(InstallAndPackage)
+
+get_property(CFG_DEFS DIRECTORY . PROPERTY COMPILE_OPTIONS)
+list(FILTER CFG_DEFS INCLUDE REGEX "^-D")
+
+# list TRANSFORM requires 3.12 or later
+#list(TRANSFORM CFG_DEFS REPLACE "^-D" "")
+string(REGEX REPLACE "(^|;)-D" "\\1" CFG_DEFS "${CFG_DEFS}")
+
+get_property(CFG_DEFS_2 DIRECTORY . PROPERTY COMPILE_DEFINITIONS)
+list(APPEND CFG_DEFS ${CFG_DEFS_2})
+list(FILTER CFG_DEFS EXCLUDE REGEX "_DIR=")
+
+# Generate a target to determine version, which is execute every 'make' run
+add_custom_target(find_version
+        ${CMAKE_COMMAND}
+                -DFIND_VERSION_BINARY_DIR=${CMAKE_BINARY_DIR}/generated
+                -DCPACK_BINARY_DIR=${CMAKE_BINARY_DIR}
+                -DREV_MAJOR=${PROJECT_VERSION_MAJOR}
+                -DREV_MINOR=${PROJECT_VERSION_MINOR}
+                -DCONFIGURE_DEFINES="${CFG_DEFS}"
+                $<$<PLATFORM_ID:Windows>:-DWIN32=TRUE>
+                -P "${CMAKE_SOURCE_DIR}/cmake/scripts/FindVersion.cmake"
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        BYPRODUCTS ${GENERATED_SOURCE_FILES}
+)

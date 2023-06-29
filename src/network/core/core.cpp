@@ -27,9 +27,9 @@ bool NetworkCoreInitialize()
 #ifdef _WIN32
 	{
 		WSADATA wsa;
-		Debug(net, 5, "Loading windows socket library");
+		DEBUG(net, 5, "Loading windows socket library");
 		if (WSAStartup(MAKEWORD(2, 0), &wsa) != 0) {
-			Debug(net, 0, "WSAStartup failed, network unavailable");
+			DEBUG(net, 0, "WSAStartup failed, network unavailable");
 			return false;
 		}
 	}

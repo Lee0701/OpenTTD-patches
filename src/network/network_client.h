@@ -13,11 +13,12 @@
 #include "network_internal.h"
 
 /** Class for handling the client side of the game connection. */
-class ClientNetworkGameSocketHandler : public ZeroedMemoryAllocator, public NetworkGameSocketHandler {
+class ClientNetworkGameSocketHandler : public NetworkGameSocketHandler {
 private:
 	std::string connection_string; ///< Address we are connected to.
 	struct PacketReader *savegame; ///< Packet reader for reading the savegame.
 	byte token;                    ///< The token we need to send back to the server to prove we're the right client.
+	NetworkSharedSecrets last_rcon_shared_secrets; ///< Keys for last rcon (and incoming replies)
 
 	/** Status of the connection with the server. */
 	enum ServerStatus {
@@ -30,10 +31,19 @@ private:
 		STATUS_MAP_WAIT,      ///< The client is waiting as someone else is downloading the map.
 		STATUS_MAP,           ///< The client is downloading the map.
 		STATUS_ACTIVE,        ///< The client is active within in the game.
+		STATUS_CLOSING,       ///< The client connection is in the process of being closed.
 		STATUS_END,           ///< Must ALWAYS be on the end of this list!! (period)
 	};
 
 	ServerStatus status; ///< Status of the connection with the server.
+
+	FILE *desync_log_file = nullptr;
+	std::string server_desync_log;
+	bool emergency_save_done = false;
+
+	NetworkGameKeys intl_keys;
+
+	static const char *GetServerStatusName(ServerStatus status);
 
 protected:
 	friend void NetworkExecuteLocalCommandQueue();
@@ -46,6 +56,7 @@ protected:
 	NetworkRecvStatus Receive_SERVER_CLIENT_INFO(Packet *p) override;
 	NetworkRecvStatus Receive_SERVER_NEED_GAME_PASSWORD(Packet *p) override;
 	NetworkRecvStatus Receive_SERVER_NEED_COMPANY_PASSWORD(Packet *p) override;
+	NetworkRecvStatus Receive_SERVER_SETTINGS_ACCESS(Packet *p) override;
 	NetworkRecvStatus Receive_SERVER_WELCOME(Packet *p) override;
 	NetworkRecvStatus Receive_SERVER_WAIT(Packet *p) override;
 	NetworkRecvStatus Receive_SERVER_MAP_BEGIN(Packet *p) override;
@@ -60,6 +71,7 @@ protected:
 	NetworkRecvStatus Receive_SERVER_EXTERNAL_CHAT(Packet *p) override;
 	NetworkRecvStatus Receive_SERVER_QUIT(Packet *p) override;
 	NetworkRecvStatus Receive_SERVER_ERROR_QUIT(Packet *p) override;
+	NetworkRecvStatus Receive_SERVER_DESYNC_LOG(Packet *p) override;
 	NetworkRecvStatus Receive_SERVER_SHUTDOWN(Packet *p) override;
 	NetworkRecvStatus Receive_SERVER_NEWGAME(Packet *p) override;
 	NetworkRecvStatus Receive_SERVER_RCON(Packet *p) override;
@@ -72,23 +84,38 @@ protected:
 	static NetworkRecvStatus SendGetMap();
 	static NetworkRecvStatus SendMapOk();
 	void CheckConnection();
+
+	NetworkRecvStatus SendKeyPasswordPacket(PacketType packet_type, NetworkSharedSecrets &ss, const std::string &password, const std::string *payload);
+
 public:
-	ClientNetworkGameSocketHandler(SOCKET s, const std::string &connection_string);
+	ClientNetworkGameSocketHandler(SOCKET s, std::string connection_string);
 	~ClientNetworkGameSocketHandler();
 
 	NetworkRecvStatus CloseConnection(NetworkRecvStatus status) override;
 	void ClientError(NetworkRecvStatus res);
 
+	std::string GetDebugInfo() const override;
+
+	const NetworkGameKeys &GetKeys()
+	{
+		if (!this->intl_keys.inited) this->intl_keys.Initialise();
+		return this->intl_keys;
+	}
+
 	static NetworkRecvStatus SendJoin();
 	static NetworkRecvStatus SendCommand(const CommandPacket *cp);
-	static NetworkRecvStatus SendError(NetworkErrorCode errorno);
+	static NetworkRecvStatus SendError(NetworkErrorCode errorno, NetworkRecvStatus recvstatus = NETWORK_RECV_STATUS_OKAY);
+	static NetworkRecvStatus SendDesyncLog(const std::string &log);
+	static NetworkRecvStatus SendDesyncMessage(const char *msg);
+	static NetworkRecvStatus SendDesyncSyncData();
 	static NetworkRecvStatus SendQuit();
 	static NetworkRecvStatus SendAck();
 
 	static NetworkRecvStatus SendGamePassword(const std::string &password);
 	static NetworkRecvStatus SendCompanyPassword(const std::string &password);
+	static NetworkRecvStatus SendSettingsPassword(const std::string &password);
 
-	static NetworkRecvStatus SendChat(NetworkAction action, DestType type, int dest, const std::string &msg, int64 data);
+	static NetworkRecvStatus SendChat(NetworkAction action, DestType type, int dest, const std::string &msg, NetworkTextMessageData data);
 	static NetworkRecvStatus SendSetPassword(const std::string &password);
 	static NetworkRecvStatus SendSetName(const std::string &name);
 	static NetworkRecvStatus SendRCon(const std::string &password, const std::string &command);
@@ -99,6 +126,8 @@ public:
 	static void Send();
 	static bool Receive();
 	static bool GameLoop();
+
+	static bool EmergencySavePossible();
 };
 
 /** Helper to make the code look somewhat nicer. */

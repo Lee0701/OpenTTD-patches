@@ -17,68 +17,7 @@
 
 #include "../safeguards.h"
 
-/**
- * Savegame conversion for cargopackets.
- */
-/* static */ void CargoPacket::AfterLoad()
-{
-	if (IsSavegameVersionBefore(SLV_44)) {
-		/* If we remove a station while cargo from it is still en route, payment calculation will assume
-		 * 0, 0 to be the source of the cargo, resulting in very high payments usually. v->source_xy
-		 * stores the coordinates, preserving them even if the station is removed. However, if a game is loaded
-		 * where this situation exists, the cargo-source information is lost. in this case, we set the source
-		 * to the current tile of the vehicle to prevent excessive profits
-		 */
-		for (const Vehicle *v : Vehicle::Iterate()) {
-			const CargoPacketList *packets = v->cargo.Packets();
-			for (VehicleCargoList::ConstIterator it(packets->begin()); it != packets->end(); it++) {
-				CargoPacket *cp = *it;
-				cp->source_xy = Station::IsValidID(cp->source) ? Station::Get(cp->source)->xy : v->tile;
-				cp->loaded_at_xy = cp->source_xy;
-			}
-		}
-
-		/* Store position of the station where the goods come from, so there
-		 * are no very high payments when stations get removed. However, if the
-		 * station where the goods came from is already removed, the source
-		 * information is lost. In that case we set it to the position of this
-		 * station */
-		for (Station *st : Station::Iterate()) {
-			for (CargoID c = 0; c < NUM_CARGO; c++) {
-				GoodsEntry *ge = &st->goods[c];
-
-				const StationCargoPacketMap *packets = ge->cargo.Packets();
-				for (StationCargoList::ConstIterator it(packets->begin()); it != packets->end(); it++) {
-					CargoPacket *cp = *it;
-					cp->source_xy = Station::IsValidID(cp->source) ? Station::Get(cp->source)->xy : st->xy;
-					cp->loaded_at_xy = cp->source_xy;
-				}
-			}
-		}
-	}
-
-	if (IsSavegameVersionBefore(SLV_120)) {
-		/* CargoPacket's source should be either INVALID_STATION or a valid station */
-		for (CargoPacket *cp : CargoPacket::Iterate()) {
-			if (!Station::IsValidID(cp->source)) cp->source = INVALID_STATION;
-		}
-	}
-
-	if (!IsSavegameVersionBefore(SLV_68)) {
-		/* Only since version 68 we have cargo packets. Savegames from before used
-		 * 'new CargoPacket' + cargolist.Append so their caches are already
-		 * correct and do not need rebuilding. */
-		for (Vehicle *v : Vehicle::Iterate()) v->cargo.InvalidateCache();
-
-		for (Station *st : Station::Iterate()) {
-			for (CargoID c = 0; c < NUM_CARGO; c++) st->goods[c].cargo.InvalidateCache();
-		}
-	}
-
-	if (IsSavegameVersionBefore(SLV_181)) {
-		for (Vehicle *v : Vehicle::Iterate()) v->cargo.KeepAll();
-	}
-}
+namespace upstream_sl {
 
 /**
  * Wrapper function to get the CargoPacket's internal structure while
@@ -88,14 +27,15 @@
 SaveLoadTable GetCargoPacketDesc()
 {
 	static const SaveLoad _cargopacket_desc[] = {
-		     SLE_VAR(CargoPacket, source,          SLE_UINT16),
-		     SLE_VAR(CargoPacket, source_xy,       SLE_UINT32),
-		     SLE_VAR(CargoPacket, loaded_at_xy,    SLE_UINT32),
-		     SLE_VAR(CargoPacket, count,           SLE_UINT16),
-		     SLE_VAR(CargoPacket, days_in_transit, SLE_UINT8),
-		     SLE_VAR(CargoPacket, feeder_share,    SLE_INT64),
-		 SLE_CONDVAR(CargoPacket, source_type,     SLE_UINT8,  SLV_125, SL_MAX_VERSION),
-		 SLE_CONDVAR(CargoPacket, source_id,       SLE_UINT16, SLV_125, SL_MAX_VERSION),
+		SLE_VAR(CargoPacket, source,          SLE_UINT16),
+		SLE_VAR(CargoPacket, source_xy,       SLE_UINT32),
+		SLE_VAR(CargoPacket, loaded_at_xy,    SLE_UINT32),
+		SLE_VAR(CargoPacket, count,           SLE_UINT16),
+		SLE_CONDVAR(CargoPacket, days_in_transit, SLE_FILE_U8 | SLE_VAR_U16, SL_MIN_VERSION, SLV_MORE_CARGO_AGE),
+		SLE_CONDVAR(CargoPacket, days_in_transit, SLE_UINT16, SLV_MORE_CARGO_AGE, SL_MAX_VERSION),
+		SLE_VAR(CargoPacket, feeder_share,    SLE_INT64),
+		SLE_CONDVAR(CargoPacket, source_type,     SLE_UINT8,  SLV_125, SL_MAX_VERSION),
+		SLE_CONDVAR(CargoPacket, source_id,       SLE_UINT16, SLV_125, SL_MAX_VERSION),
 	};
 	return _cargopacket_desc;
 }
@@ -132,3 +72,5 @@ static const ChunkHandlerRef cargopacket_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _cargopacket_chunk_handlers(cargopacket_chunk_handlers);
+
+}

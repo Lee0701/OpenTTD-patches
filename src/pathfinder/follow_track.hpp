@@ -17,6 +17,7 @@
 #include "../tunnelbridge.h"
 #include "../tunnelbridge_map.h"
 #include "../depot_map.h"
+#include "../infrastructure_func.h"
 #include "pathfinder_func.h"
 
 /**
@@ -57,22 +58,22 @@ struct CFollowTrackT
 
 	inline CFollowTrackT(Owner o, RailTypes railtype_override = INVALID_RAILTYPES)
 	{
-		assert(IsRailTT());
+		dbg_assert(IsRailTT());
 		m_veh = nullptr;
 		Init(o, railtype_override);
 	}
 
 	inline void Init(const VehicleType *v, RailTypes railtype_override)
 	{
-		assert(!IsRailTT() || (v != nullptr && v->type == VEH_TRAIN));
+		dbg_assert(!IsRailTT() || (v != nullptr && v->type == VEH_TRAIN));
 		m_veh = v;
 		Init(v != nullptr ? v->owner : INVALID_OWNER, IsRailTT() && railtype_override == INVALID_RAILTYPES ? Train::From(v)->compatible_railtypes : railtype_override);
 	}
 
 	inline void Init(Owner o, RailTypes railtype_override)
 	{
-		assert(!IsRoadTT() || m_veh != nullptr);
-		assert(!IsRailTT() || railtype_override != INVALID_RAILTYPES);
+		dbg_assert(!IsRoadTT() || m_veh != nullptr);
+		dbg_assert(!IsRailTT() || railtype_override != INVALID_RAILTYPES);
 		m_veh_owner = o;
 		/* don't worry, all is inlined so compiler should remove unnecessary initializations */
 		m_old_tile = INVALID_TILE;
@@ -86,21 +87,22 @@ struct CFollowTrackT
 		m_railtypes = railtype_override;
 	}
 
-	inline static TransportType TT() { return Ttr_type_; }
-	inline static bool IsWaterTT() { return TT() == TRANSPORT_WATER; }
-	inline static bool IsRailTT() { return TT() == TRANSPORT_RAIL; }
-	inline bool IsTram() { return IsRoadTT() && RoadTypeIsTram(RoadVehicle::From(m_veh)->roadtype); }
-	inline static bool IsRoadTT() { return TT() == TRANSPORT_ROAD; }
+	debug_inline static TransportType TT() { return Ttr_type_; }
+	debug_inline static bool IsWaterTT() { return TT() == TRANSPORT_WATER; }
+	debug_inline static bool IsRailTT() { return TT() == TRANSPORT_RAIL; }
+	inline bool IsTram() const { return IsRoadTT() && RoadTypeIsTram(RoadVehicle::From(m_veh)->roadtype); }
+	debug_inline static bool IsRoadTT() { return TT() == TRANSPORT_ROAD; }
 	inline static bool Allow90degTurns() { return T90deg_turns_allowed_; }
 	inline static bool DoTrackMasking() { return Tmask_reserved_tracks; }
 
 	/** Tests if a tile is a road tile with a single tramtrack (tram can reverse) */
 	inline DiagDirection GetSingleTramBit(TileIndex tile)
 	{
-		assert(IsTram()); // this function shouldn't be called in other cases
+		dbg_assert(IsTram()); // this function shouldn't be called in other cases
 
-		if (IsNormalRoadTile(tile)) {
-			RoadBits rb = GetRoadBits(tile, RTT_TRAM);
+		const bool is_bridge = IsRoadCustomBridgeHeadTile(tile);
+		if (is_bridge || IsNormalRoadTile(tile)) {
+			RoadBits rb = is_bridge ? GetCustomBridgeHeadRoadBits(tile, RTT_TRAM) : GetRoadBits(tile, RTT_TRAM);
 			switch (rb) {
 				case ROAD_NW: return DIAGDIR_NW;
 				case ROAD_SW: return DIAGDIR_SW;
@@ -121,11 +123,11 @@ struct CFollowTrackT
 		m_old_tile = old_tile;
 		m_old_td = old_td;
 		m_err = EC_NONE;
-		assert(
-			((TrackStatusToTrackdirBits(
-				GetTileTrackStatus(m_old_tile, TT(), (IsRoadTT() && m_veh != nullptr) ? (this->IsTram() ? RTT_TRAM : RTT_ROAD) : 0)
-			) & TrackdirToTrackdirBits(m_old_td)) != 0) ||
-			(IsTram() && GetSingleTramBit(m_old_tile) != INVALID_DIAGDIR) // Disable the assertion for single tram bits
+		dbg_assert_tile(
+			((GetTileTrackdirBits(m_old_tile, TT(), (IsRoadTT() && m_veh != nullptr) ? (this->IsTram() ? RTT_TRAM : RTT_ROAD) : 0)
+			& TrackdirToTrackdirBits(m_old_td)) != 0) ||
+			(IsTram() && GetSingleTramBit(m_old_tile) != INVALID_DIAGDIR), // Disable the assertion for single tram bits
+			m_old_tile
 		);
 		m_exitdir = TrackdirToExitdir(m_old_td);
 		if (ForcedReverse()) return true;
@@ -154,7 +156,7 @@ struct CFollowTrackT
 
 			return false;
 		}
-		if ((!IsRailTT() && !Allow90degTurns()) || (IsRailTT() && Rail90DegTurnDisallowed(GetTileRailType(m_old_tile), GetTileRailType(m_new_tile), !Allow90degTurns()))) {
+		if (m_tiles_skipped == 0 && ((!IsRailTT() && !Allow90degTurns()) || (IsRailTT() && Rail90DegTurnDisallowedTilesFromDiagDir(m_old_tile, m_new_tile, m_exitdir, !Allow90degTurns())))) {
 			m_new_td_bits &= (TrackdirBits)~(int)TrackdirCrossesTrackdirs(m_old_td);
 			if (m_new_td_bits == TRACKDIR_BIT_NONE) {
 				m_err = EC_90DEG;
@@ -216,7 +218,9 @@ protected:
 				m_tiles_skipped = GetTunnelBridgeLength(m_new_tile, m_old_tile);
 				return;
 			}
-			assert(ReverseDiagDir(enterdir) == m_exitdir);
+			if (!IsRoadCustomBridgeHeadTile(m_old_tile) && !IsRailCustomBridgeHeadTile(m_old_tile)) {
+				dbg_assert(ReverseDiagDir(enterdir) == m_exitdir);
+			}
 		}
 
 		/* normal or station tile, do one step */
@@ -225,7 +229,7 @@ protected:
 		/* special handling for stations */
 		if (IsRailTT() && HasStationTileRail(m_new_tile)) {
 			m_is_station = true;
-		} else if (IsRoadTT() && IsRoadStopTile(m_new_tile)) {
+		} else if (IsRoadTT() && IsStationRoadStopTile(m_new_tile)) {
 			m_is_station = true;
 		}
 	}
@@ -238,7 +242,7 @@ protected:
 		} else if (IsRoadTT()) {
 			m_new_td_bits = GetTrackdirBitsForRoad(m_new_tile, this->IsTram() ? RTT_TRAM : RTT_ROAD);
 		} else {
-			m_new_td_bits = TrackStatusToTrackdirBits(GetTileTrackStatus(m_new_tile, TT(), 0));
+			m_new_td_bits = GetTileTrackdirBits(m_new_tile, TT(), 0);
 		}
 		return (m_new_td_bits != TRACKDIR_BIT_NONE);
 	}
@@ -285,6 +289,11 @@ protected:
 				m_err = EC_NO_WAY;
 				return false;
 			}
+			/* road stops shouldn't be entered unless allowed to */
+			if (!IsInfraTileUsageAllowed(VEH_ROAD, m_veh_owner, m_new_tile)) {
+				m_err = EC_OWNER;
+				return false;
+			}
 		}
 
 		/* single tram bits can only be entered from one direction */
@@ -303,8 +312,8 @@ protected:
 				m_err = EC_NO_WAY;
 				return false;
 			}
-			/* don't try to enter other company's depots */
-			if (GetTileOwner(m_new_tile) != m_veh_owner) {
+			/* don't try to enter other company's depots if not allowed */
+			if (!IsInfraTileUsageAllowed(VEH_ROAD, m_veh_owner, m_new_tile)) {
 				m_err = EC_OWNER;
 				return false;
 			}
@@ -317,8 +326,8 @@ protected:
 			}
 		}
 
-		/* rail transport is possible only on tiles with the same owner as vehicle */
-		if (IsRailTT() && GetTileOwner(m_new_tile) != m_veh_owner) {
+		/* rail transport is possible only on allowed tiles */
+		if (IsRailTT() && !IsInfraTileUsageAllowed(VEH_TRAIN, m_veh_owner, m_new_tile)) {
 			/* different owner */
 			m_err = EC_NO_WAY;
 			return false;
@@ -326,7 +335,7 @@ protected:
 
 		/* rail transport is possible only on compatible rail types */
 		if (IsRailTT()) {
-			RailType rail_type = GetTileRailType(m_new_tile);
+			RailType rail_type = GetTileRailTypeByEntryDir(m_new_tile, m_exitdir);
 			if (!HasBit(m_railtypes, rail_type)) {
 				/* incompatible rail type */
 				m_err = EC_RAIL_ROAD_TYPE;
@@ -356,8 +365,22 @@ protected:
 					}
 				}
 			} else { // IsBridge(m_new_tile)
-				if (!m_is_bridge) {
-					DiagDirection ramp_enderdir = GetTunnelBridgeDirection(m_new_tile);
+				DiagDirection ramp_enderdir = GetTunnelBridgeDirection(m_new_tile);
+				if (!m_is_bridge && ramp_enderdir == ReverseDiagDir(m_exitdir)) {
+					m_err = EC_NO_WAY;
+					return false;
+				}
+				if (!m_is_bridge && IsRoadTT() && IsRoadCustomBridgeHeadTile(m_new_tile)) {
+					if (!(DiagDirToRoadBits(ReverseDiagDir(m_exitdir)) & GetCustomBridgeHeadRoadBits(m_new_tile, IsTram() ? RTT_TRAM : RTT_ROAD))) {
+						m_err = EC_NO_WAY;
+						return false;
+					}
+				} else if (!m_is_bridge && IsRailTT() && IsRailCustomBridgeHeadTile(m_new_tile)) {
+					if (!(DiagdirReachesTracks(m_exitdir) & GetCustomBridgeHeadTrackBits(m_new_tile))) {
+						m_err = EC_NO_WAY;
+						return false;
+					}
+				} else if (!m_is_bridge) {
 					if (ramp_enderdir != m_exitdir) {
 						m_err = EC_NO_WAY;
 						return false;
@@ -371,7 +394,7 @@ protected:
 			/* entered railway station
 			 * get platform length */
 			uint length = BaseStation::GetByTile(m_new_tile)->GetPlatformLength(m_new_tile, TrackdirToExitdir(m_old_td));
-			/* how big step we must do to get to the last platform tile; */
+			/* how big step we must do to get to the last platform tile? */
 			m_tiles_skipped = length - 1;
 			/* move to the platform end */
 			TileIndexDiff diff = TileOffsByDiagDir(m_exitdir);
@@ -450,7 +473,7 @@ public:
 		}
 		/* Check for speed limit imposed by railtype */
 		if (IsRailTT()) {
-			uint16 rail_speed = GetRailTypeInfo(GetRailType(m_old_tile))->max_speed;
+			uint16 rail_speed = GetRailTypeInfo(GetRailTypeByTrack(m_old_tile, TrackdirToTrack(m_old_td)))->max_speed;
 			if (rail_speed > 0) max_speed = std::min<int>(max_speed, rail_speed);
 		}
 		if (IsRoadTT()) {

@@ -17,6 +17,8 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 /** Description of a sign within the savegame. */
 static const SaveLoad _sign_desc[] = {
 	SLE_CONDVAR(Sign, name,  SLE_NAME,                   SL_MIN_VERSION, SLV_84),
@@ -62,7 +64,7 @@ struct SIGNChunkHandler : ChunkHandler {
 			}
 
 			/* Signs placed in scenario editor shall now be OWNER_DEITY */
-			if (IsSavegameVersionBefore(SLV_171) && si->owner == OWNER_NONE && _file_to_saveload.abstract_ftype == FT_SCENARIO) {
+			if (IsSavegameVersionBefore(SLV_171) && si->owner == OWNER_NONE && SaveLoadFileTypeIsScenario()) {
 				si->owner = OWNER_DEITY;
 			}
 		}
@@ -75,3 +77,5 @@ static const ChunkHandlerRef sign_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _sign_chunk_handlers(sign_chunk_handlers);
+
+}

@@ -42,6 +42,9 @@ static const uint MAX_LENGTH_COMPANY_NAME_CHARS   = 32; ///< The maximum length 
 static const uint MAX_HISTORY_QUARTERS            = 24; ///< The maximum number of quarters kept as performance's history
 static const uint MAX_COMPANY_SHARE_OWNERS        =  4; ///< The maximum number of shares of a company that can be owned by another company.
 
+static const uint MIN_COMPETITORS_INTERVAL = 0;   ///< The minimum interval (in minutes) between competitors.
+static const uint MAX_COMPETITORS_INTERVAL = 500; ///< The maximum interval (in minutes) between competitors.
+
 /** Define basic enum properties */
 template <> struct EnumPropsT<Owner> : MakeEnumPropsT<Owner, byte, OWNER_BEGIN, OWNER_END, INVALID_OWNER> {};
 
@@ -53,21 +56,20 @@ struct Company;
 typedef uint32 CompanyManagerFace; ///< Company manager face bits, info see in company_manager_face.h
 
 /** The reason why the company was removed. */
-enum CompanyRemoveReason : uint8 {
+enum CompanyRemoveReason {
 	CRR_MANUAL,    ///< The company is manually removed.
 	CRR_AUTOCLEAN, ///< The company is removed due to autoclean.
 	CRR_BANKRUPT,  ///< The company went belly-up.
 
 	CRR_END,       ///< Sentinel for end.
-
-	CRR_NONE = CRR_MANUAL, ///< Dummy reason for actions that don't need one.
 };
 
 /** The action to do with CMD_COMPANY_CTRL. */
-enum CompanyCtrlAction : uint8 {
+enum CompanyCtrlAction {
 	CCA_NEW,    ///< Create a new company.
 	CCA_NEW_AI, ///< Create a new AI company.
 	CCA_DELETE, ///< Delete a company.
+	CCA_SALE,   ///< Offer a company for sale.
 
 	CCA_END,    ///< Sentinel for end.
 };

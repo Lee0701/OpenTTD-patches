@@ -42,6 +42,14 @@ enum GenerateLandscapeWidgets {
 	WID_GL_DESERT_COVERAGE_TEXT,        ///< Desert coverage.
 	WID_GL_DESERT_COVERAGE_UP,          ///< Increase desert coverage.
 
+	WID_GL_SNOW_LEVEL_DOWN,             ///< Decrease snow level.
+	WID_GL_SNOW_LEVEL_TEXT,             ///< Snow level.
+	WID_GL_SNOW_LEVEL_UP,               ///< Increase snow level.
+
+	WID_GL_RAINFOREST_LEVEL_DOWN,       ///< Decrease rainforest level.
+	WID_GL_RAINFOREST_LEVEL_TEXT,       ///< Rainforest level.
+	WID_GL_RAINFOREST_LEVEL_UP,         ///< Increase rainforest level.
+
 	WID_GL_LANDSCAPE_PULLDOWN,          ///< Dropdown 'Land generator'.
 
 	WID_GL_HEIGHTMAP_NAME_TEXT,         ///< Heightmap name.

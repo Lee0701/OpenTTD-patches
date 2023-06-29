@@ -86,6 +86,9 @@ static const KeycodeNames _keycode_to_name[] = {
 	{".", WKC_PERIOD}, /* deprecated, use PERIOD */
 	{"MINUS", WKC_MINUS},
 	{"-", WKC_MINUS}, /* deprecated, use MINUS */
+	{"HASH", WKC_HASH},
+	{"PAGE_UP", WKC_PAGEUP},
+	{"PAGE_DOWN", WKC_PAGEDOWN},
 };
 
 /**
@@ -99,8 +102,9 @@ static uint16 ParseCode(const char *start, const char *end)
 	assert(start <= end);
 	while (start < end && *start == ' ') start++;
 	while (end > start && *end == ' ') end--;
+	std::string_view str{start, (size_t)(end - start)};
 	for (uint i = 0; i < lengthof(_keycode_to_name); i++) {
-		if (strlen(_keycode_to_name[i].name) == (size_t)(end - start) && strncasecmp(start, _keycode_to_name[i].name, end - start) == 0) {
+		if (StrEqualsIgnoreCase(str, _keycode_to_name[i].name)) {
 			return _keycode_to_name[i].keycode;
 		}
 	}

@@ -24,10 +24,12 @@
 #include "core/geometry_func.hpp"
 #include "newgrf_debug.h"
 #include "zoom_func.h"
+#include "tunnelbridge_map.h"
+#include "viewport_type.h"
 #include "guitimer_func.h"
 #include "viewport_func.h"
-#include "landscape_cmd.h"
 #include "rev.h"
+#include "core/backup_type.hpp"
 
 #include "widgets/misc_widget.h"
 
@@ -101,7 +103,7 @@ public:
 
 		if (!this->cargo_acceptance.empty()) {
 			uint width = GetStringBoundingBox(this->cargo_acceptance).width + WidgetDimensions::scaled.frametext.Horizontal();
-			size->width = std::max(size->width, std::min(300u, width));
+			size->width = std::max(size->width, std::min(static_cast<uint>(ScaleGUITrad(300)), width));
 			SetDParamStr(0, cargo_acceptance);
 			size->height += GetStringHeight(STR_JUST_RAW_STRING, size->width - WidgetDimensions::scaled.frametext.Horizontal());
 		}
@@ -116,17 +118,34 @@ public:
 #else
 #	define LANDINFOD_LEVEL 1
 #endif
-		Debug(misc, LANDINFOD_LEVEL, "TILE: {:#x} ({},{})", tile, TileX(tile), TileY(tile));
-		Debug(misc, LANDINFOD_LEVEL, "type   = {:#x}", _m[tile].type);
-		Debug(misc, LANDINFOD_LEVEL, "height = {:#x}", _m[tile].height);
-		Debug(misc, LANDINFOD_LEVEL, "m1     = {:#x}", _m[tile].m1);
-		Debug(misc, LANDINFOD_LEVEL, "m2     = {:#x}", _m[tile].m2);
-		Debug(misc, LANDINFOD_LEVEL, "m3     = {:#x}", _m[tile].m3);
-		Debug(misc, LANDINFOD_LEVEL, "m4     = {:#x}", _m[tile].m4);
-		Debug(misc, LANDINFOD_LEVEL, "m5     = {:#x}", _m[tile].m5);
-		Debug(misc, LANDINFOD_LEVEL, "m6     = {:#x}", _me[tile].m6);
-		Debug(misc, LANDINFOD_LEVEL, "m7     = {:#x}", _me[tile].m7);
-		Debug(misc, LANDINFOD_LEVEL, "m8     = {:#x}", _me[tile].m8);
+		if (_debug_misc_level >= LANDINFOD_LEVEL) {
+			DEBUG(misc, LANDINFOD_LEVEL, "TILE: %#x (%i,%i)", tile, TileX(tile), TileY(tile));
+			if (IsTunnelTile(tile)) {
+				DEBUG(misc, LANDINFOD_LEVEL, "tunnel pool size: %u", (uint)Tunnel::GetPoolSize());
+				DEBUG(misc, LANDINFOD_LEVEL, "index: %#x"          , Tunnel::GetByTile(tile)->index);
+				DEBUG(misc, LANDINFOD_LEVEL, "north tile: %#x"     , Tunnel::GetByTile(tile)->tile_n);
+				DEBUG(misc, LANDINFOD_LEVEL, "south tile: %#x"     , Tunnel::GetByTile(tile)->tile_s);
+				DEBUG(misc, LANDINFOD_LEVEL, "is chunnel: %u"      , Tunnel::GetByTile(tile)->is_chunnel);
+			}
+			if (IsBridgeTile(tile)) {
+				const BridgeSpec *b = GetBridgeSpec(GetBridgeType(tile));
+				DEBUG(misc, LANDINFOD_LEVEL, "bridge: flags: %X, ctrl_flags: %X", b->flags, b->ctrl_flags);
+			}
+			if (IsBridgeAbove(tile)) {
+				BridgePieceDebugInfo info = GetBridgePieceDebugInfo(tile);
+				DEBUG(misc, LANDINFOD_LEVEL, "bridge above: piece: %u, pillars: %X, pillar index: %u", info.piece, info.pillar_flags, info.pillar_index);
+			}
+			DEBUG(misc, LANDINFOD_LEVEL, "type   = %#x", _m[tile].type);
+			DEBUG(misc, LANDINFOD_LEVEL, "height = %#x", _m[tile].height);
+			DEBUG(misc, LANDINFOD_LEVEL, "m1     = %#x", _m[tile].m1);
+			DEBUG(misc, LANDINFOD_LEVEL, "m2     = %#x", _m[tile].m2);
+			DEBUG(misc, LANDINFOD_LEVEL, "m3     = %#x", _m[tile].m3);
+			DEBUG(misc, LANDINFOD_LEVEL, "m4     = %#x", _m[tile].m4);
+			DEBUG(misc, LANDINFOD_LEVEL, "m5     = %#x", _m[tile].m5);
+			DEBUG(misc, LANDINFOD_LEVEL, "m6     = %#x", _me[tile].m6);
+			DEBUG(misc, LANDINFOD_LEVEL, "m7     = %#x", _me[tile].m7);
+			DEBUG(misc, LANDINFOD_LEVEL, "m8     = %#x", _me[tile].m8);
+		}
 #undef LANDINFOD_LEVEL
 	}
 
@@ -158,7 +177,9 @@ public:
 		td.airport_name = STR_NULL;
 		td.airport_tile_name = STR_NULL;
 		td.railtype = STR_NULL;
+		td.railtype2 = STR_NULL;
 		td.rail_speed = 0;
+		td.rail_speed2 = 0;
 		td.roadtype = STR_NULL;
 		td.road_speed = 0;
 		td.tramtype = STR_NULL;
@@ -174,6 +195,9 @@ public:
 
 		/* Tiletype */
 		SetDParam(0, td.dparam[0]);
+		SetDParam(1, td.dparam[1]);
+		SetDParam(2, td.dparam[2]);
+		SetDParam(3, td.dparam[3]);
 		this->landinfo_data.push_back(GetString(td.str));
 
 		/* Up to four owners */
@@ -190,7 +214,7 @@ public:
 		Company *c = Company::GetIfValid(_local_company);
 		if (c != nullptr) {
 			assert(_current_company == _local_company);
-			CommandCost costclear = Command<CMD_LANDSCAPE_CLEAR>::Do(DC_QUERY_COST, tile);
+			CommandCost costclear = DoCommand(tile, 0, 0, DC_QUERY_COST, CMD_LANDSCAPE_CLEAR);
 			if (costclear.Succeeded()) {
 				Money cost = costclear.GetCost();
 				if (cost < 0) {
@@ -267,7 +291,19 @@ public:
 
 		/* Rail speed limit */
 		if (td.rail_speed != 0) {
-			SetDParam(0, td.rail_speed);
+			SetDParam(0, PackVelocity(td.rail_speed, VEH_TRAIN));
+			this->landinfo_data.push_back(GetString(STR_LANG_AREA_INFORMATION_RAIL_SPEED_LIMIT));
+		}
+
+		/* 2nd Rail type name */
+		if (td.railtype2 != STR_NULL) {
+			SetDParam(0, td.railtype2);
+			this->landinfo_data.push_back(GetString(STR_LANG_AREA_INFORMATION_RAIL_TYPE));
+		}
+
+		/* 2nd Rail speed limit */
+		if (td.rail_speed2 != 0) {
+			SetDParam(0, td.rail_speed2);
 			this->landinfo_data.push_back(GetString(STR_LANG_AREA_INFORMATION_RAIL_SPEED_LIMIT));
 		}
 
@@ -279,7 +315,7 @@ public:
 
 		/* Road speed limit */
 		if (td.road_speed != 0) {
-			SetDParam(0, td.road_speed);
+			SetDParam(0, PackVelocity(td.road_speed, VEH_ROAD));
 			this->landinfo_data.push_back(GetString(STR_LANG_AREA_INFORMATION_ROAD_SPEED_LIMIT));
 		}
 
@@ -291,7 +327,7 @@ public:
 
 		/* Tram speed limit */
 		if (td.tram_speed != 0) {
-			SetDParam(0, td.tram_speed);
+			SetDParam(0, PackVelocity(td.tram_speed, VEH_ROAD));
 			this->landinfo_data.push_back(GetString(STR_LANG_AREA_INFORMATION_TRAM_SPEED_LIMIT));
 		}
 
@@ -360,12 +396,9 @@ public:
 	void OnInvalidateData(int data = 0, bool gui_scope = true) override
 	{
 		if (!gui_scope) return;
-		switch (data) {
-			case 1:
-				/* ReInit, "debug" sprite might have changed */
-				this->ReInit();
-				break;
-		}
+
+		/* ReInit, "debug" sprite might have changed */
+		if (data == 1) this->ReInit();
 	}
 };
 
@@ -375,7 +408,7 @@ public:
  */
 void ShowLandInfo(TileIndex tile)
 {
-	CloseWindowById(WC_LAND_INFO, 0);
+	DeleteWindowById(WC_LAND_INFO, 0);
 	new LandInfoWindow(tile);
 }
 
@@ -390,7 +423,9 @@ static const NWidgetPart _nested_about_widgets[] = {
 		NWidget(WWT_FRAME, COLOUR_GREY), SetPadding(0, 5, 1, 5),
 			NWidget(WWT_EMPTY, INVALID_COLOUR, WID_A_SCROLLING_TEXT),
 		EndContainer(),
-		NWidget(WWT_LABEL, COLOUR_GREY, WID_A_WEBSITE), SetDataTip(STR_BLACK_RAW_STRING, STR_NULL),
+		NWidget(WWT_LABEL, COLOUR_GREY, WID_A_WEBSITE), SetDataTip(STR_JUST_RAW_STRING, STR_NULL),
+		NWidget(WWT_LABEL, COLOUR_GREY, WID_A_WEBSITE1), SetDataTip(STR_JUST_RAW_STRING, STR_NULL),
+		NWidget(WWT_LABEL, COLOUR_GREY, WID_A_WEBSITE2), SetDataTip(STR_JUST_RAW_STRING, STR_NULL),
 		NWidget(WWT_LABEL, COLOUR_GREY, WID_A_COPYRIGHT), SetDataTip(STR_ABOUT_COPYRIGHT_OPENTTD, STR_NULL),
 	EndContainer(),
 };
@@ -464,6 +499,10 @@ static const char * const _credits[] = {
 	u8"  Bug Reporters - Without whom OpenTTD would still be full of bugs!",
 	u8"",
 	u8"",
+	u8"Developer of this patchpack:",
+	u8"  Jonathan G. Rennison (JGR)",
+	u8"",
+	u8"",
 	u8"And last but not least:",
 	u8"  Chris Sawyer - For an amazing game!"
 };
@@ -485,7 +524,9 @@ struct AboutWindow : public Window {
 
 	void SetStringParameters(int widget) const override
 	{
-		if (widget == WID_A_WEBSITE) SetDParamStr(0, "Website: https://www.openttd.org");
+		if (widget == WID_A_WEBSITE) SetDParamStr(0, "Main project website: https://www.openttd.org");
+		if (widget == WID_A_WEBSITE1) SetDParamStr(0, "Patchpack thread: https://www.tt-forums.net/viewtopic.php?f=33&t=73469");
+		if (widget == WID_A_WEBSITE2) SetDParamStr(0, "Patchpack Github: https://github.com/JGRennison/OpenTTD-patches");
 		if (widget == WID_A_COPYRIGHT) SetDParamStr(0, _openttd_revision_year);
 	}
 
@@ -540,7 +581,7 @@ struct AboutWindow : public Window {
 
 void ShowAboutWindow()
 {
-	CloseWindowByClass(WC_GAME_OPTIONS);
+	DeleteWindowByClass(WC_GAME_OPTIONS);
 	new AboutWindow();
 }
 
@@ -571,9 +612,8 @@ void ShowEstimatedCostOrIncome(Money cost, int x, int y)
  */
 void ShowCostOrIncomeAnimation(int x, int y, int z, Money cost)
 {
-	if (cost == 0) {
-		return;
-	}
+	if (!HasBit(_extra_display_opt, XDO_SHOW_MONEY_TEXT_EFFECTS) || cost == 0) return;
+
 	Point pt = RemapCoords(x, y, z);
 	StringID msg = STR_INCOME_FLOAT_COST;
 
@@ -595,6 +635,8 @@ void ShowCostOrIncomeAnimation(int x, int y, int z, Money cost)
  */
 void ShowFeederIncomeAnimation(int x, int y, int z, Money transfer, Money income)
 {
+	if (!HasBit(_extra_display_opt, XDO_SHOW_MONEY_TEXT_EFFECTS)) return;
+
 	Point pt = RemapCoords(x, y, z);
 
 	SetDParam(0, transfer);
@@ -671,8 +713,12 @@ struct TooltipsWindow : public Window
 {
 	StringID string_id;               ///< String to display as tooltip.
 	byte paramcount;                  ///< Number of string parameters in #string_id.
-	uint64 params[8];                 ///< The string parameters.
+	uint64 params[5];                 ///< The string parameters.
 	TooltipCloseCondition close_cond; ///< Condition for closing the window.
+	char buffer[DRAW_STRING_BUFFER];  ///< Text to draw
+	int viewport_virtual_left;        ///< Owner viewport state: left
+	int viewport_virtual_top;         ///< Owner viewport state: top
+	bool delete_next_mouse_loop;      ///< Delete window on the next mouse loop
 
 	TooltipsWindow(Window *parent, StringID str, uint paramcount, const uint64 params[], TooltipCloseCondition close_tooltip) : Window(&_tool_tips_desc)
 	{
@@ -680,13 +726,15 @@ struct TooltipsWindow : public Window
 		this->string_id = str;
 		static_assert(sizeof(this->params[0]) == sizeof(params[0]));
 		assert(paramcount <= lengthof(this->params));
-		if (params == nullptr) {
-			_global_string_params.offset = 0;
-			params = _global_string_params.GetDataPointer();
-		}
 		if (paramcount > 0) memcpy(this->params, params, sizeof(this->params[0]) * paramcount);
 		this->paramcount = paramcount;
 		this->close_cond = close_tooltip;
+		this->delete_next_mouse_loop = false;
+		if (this->paramcount == 0) GetString(this->buffer, str, lastof(this->buffer)); // Get the text while params are available
+		if (close_tooltip == TCC_HOVER_VIEWPORT) {
+			this->viewport_virtual_left = parent->viewport->virtual_left;
+			this->viewport_virtual_top = parent->viewport->virtual_top;
+		}
 
 		this->InitNested();
 
@@ -716,10 +764,15 @@ struct TooltipsWindow : public Window
 	void UpdateWidgetSize(int widget, Dimension *size, const Dimension &padding, Dimension *fill, Dimension *resize) override
 	{
 		/* There is only one widget. */
-		for (uint i = 0; i != this->paramcount; i++) SetDParam(i, this->params[i]);
+		if (this->paramcount == 0) {
+			size->width  = std::min<uint>(GetStringBoundingBox(this->buffer).width, ScaleGUITrad(194));
+			size->height = GetStringHeight(this->buffer, size->width);
+		} else {
+			for (uint i = 0; i != this->paramcount; i++) SetDParam(i, this->params[i]);
 
-		size->width  = std::min<uint>(GetStringBoundingBox(this->string_id).width, ScaleGUITrad(194));
-		size->height = GetStringHeight(this->string_id, size->width);
+			size->width  = std::min<uint>(GetStringBoundingBox(this->string_id).width, ScaleGUITrad(194));
+			size->height = GetStringHeight(this->string_id, size->width);
+		}
 
 		/* Increase slightly to have some space around the box. */
 		size->width  += WidgetDimensions::scaled.framerect.Horizontal()  + WidgetDimensions::scaled.fullbevel.Horizontal();
@@ -732,30 +785,48 @@ struct TooltipsWindow : public Window
 		GfxFillRect(r, PC_BLACK);
 		GfxFillRect(r.Shrink(WidgetDimensions::scaled.bevel), PC_LIGHT_YELLOW);
 
-		for (uint arg = 0; arg < this->paramcount; arg++) {
-			SetDParam(arg, this->params[arg]);
+		if (this->paramcount == 0) {
+			DrawStringMultiLine(r.Shrink(WidgetDimensions::scaled.framerect).Shrink(WidgetDimensions::scaled.fullbevel), this->buffer, TC_BLACK, SA_CENTER);
+		} else {
+			for (uint arg = 0; arg < this->paramcount; arg++) {
+				SetDParam(arg, this->params[arg]);
+			}
+			DrawStringMultiLine(r.Shrink(WidgetDimensions::scaled.framerect).Shrink(WidgetDimensions::scaled.fullbevel), this->string_id, TC_BLACK, SA_CENTER);
 		}
-		DrawStringMultiLine(r.Shrink(WidgetDimensions::scaled.framerect).Shrink(WidgetDimensions::scaled.fullbevel), this->string_id, TC_FROMSTRING, SA_CENTER);
 	}
 
 	void OnMouseLoop() override
 	{
 		/* Always close tooltips when the cursor is not in our window. */
-		if (!_cursor.in_window) {
-			this->Close();
+		if (!_cursor.in_window || this->delete_next_mouse_loop) {
+			delete this;
 			return;
 		}
 
 		/* We can show tooltips while dragging tools. These are shown as long as
 		 * we are dragging the tool. Normal tooltips work with hover or rmb. */
 		switch (this->close_cond) {
-			case TCC_RIGHT_CLICK: if (!_right_button_down) this->Close(); break;
-			case TCC_HOVER: if (!_mouse_hovering) this->Close(); break;
+			case TCC_RIGHT_CLICK: if (!_right_button_down) delete this; break;
+			case TCC_HOVER: if (!_mouse_hovering) delete this; break;
 			case TCC_NONE: break;
+			case TCC_NEXT_LOOP: this->delete_next_mouse_loop = true; break;
+
+			case TCC_HOVER_VIEWPORT:
+				if (_settings_client.gui.hover_delay_ms == 0) {
+					if (!_right_button_down) this->delete_next_mouse_loop = true;
+				} else if (!_mouse_hovering) {
+					delete this;
+					break;
+				}
+				if (this->viewport_virtual_left != this->parent->viewport->virtual_left ||
+						this->viewport_virtual_top != this->parent->viewport->virtual_top) {
+					this->delete_next_mouse_loop = true;
+				}
+				break;
 
 			case TCC_EXIT_VIEWPORT: {
 				Window *w = FindWindowFromPt(_cursor.pos.x, _cursor.pos.y);
-				if (w == nullptr || IsPtInWindowViewport(w, _cursor.pos.x, _cursor.pos.y) == nullptr) this->Close();
+				if (w == nullptr || IsPtInWindowViewport(w, _cursor.pos.x, _cursor.pos.y) == nullptr) delete this;
 				break;
 			}
 		}
@@ -772,7 +843,7 @@ struct TooltipsWindow : public Window
  */
 void GuiShowTooltips(Window *parent, StringID str, uint paramcount, const uint64 params[], TooltipCloseCondition close_tooltip)
 {
-	CloseWindowById(WC_TOOLTIPS, 0);
+	DeleteWindowById(WC_TOOLTIPS, 0);
 
 	if (str == STR_NULL || !_cursor.in_window) return;
 
@@ -789,6 +860,11 @@ void QueryString::HandleEditBox(Window *w, int wid)
 	}
 }
 
+static int GetCaretWidth()
+{
+	return GetCharacterWidth(FS_NORMAL, '_');
+}
+
 void QueryString::DrawEditBox(const Window *w, int wid) const
 {
 	const NWidgetLeaf *wi = w->GetWidget<NWidgetLeaf>(wid);
@@ -796,7 +872,7 @@ void QueryString::DrawEditBox(const Window *w, int wid) const
 	assert((wi->type & WWT_MASK) == WWT_EDITBOX);
 
 	bool rtl = _current_text_dir == TD_RTL;
-	Dimension sprite_size = GetSpriteSize(rtl ? SPR_IMG_DELETE_RIGHT : SPR_IMG_DELETE_LEFT);
+	Dimension sprite_size = GetScaledSpriteSize(rtl ? SPR_IMG_DELETE_RIGHT : SPR_IMG_DELETE_LEFT);
 	int clearbtn_width = sprite_size.width + WidgetDimensions::scaled.imgbtn.Horizontal();
 
 	Rect r = wi->GetCurrentRect();
@@ -804,7 +880,7 @@ void QueryString::DrawEditBox(const Window *w, int wid) const
 	Rect fr = r.Indent(clearbtn_width, !rtl);
 
 	DrawFrameRect(cr, wi->colour, wi->IsLowered() ? FR_LOWERED : FR_NONE);
-	DrawSprite(rtl ? SPR_IMG_DELETE_RIGHT : SPR_IMG_DELETE_LEFT, PAL_NONE, cr.left + WidgetDimensions::scaled.imgbtn.left + (wi->IsLowered() ? 1 : 0), CenterBounds(r.top, r.bottom, sprite_size.height) + (wi->IsLowered() ? 1 : 0));
+	DrawSpriteIgnorePadding(rtl ? SPR_IMG_DELETE_RIGHT : SPR_IMG_DELETE_LEFT, PAL_NONE, cr, wi->IsLowered(), SA_CENTER);
 	if (this->text.bytes == 1) GfxFillRect(cr.Shrink(WidgetDimensions::scaled.bevel), _colour_gradient[wi->colour & 0xF][2], FILLRECT_CHECKER);
 
 	DrawFrameRect(fr, wi->colour, FR_LOWERED | FR_DARKENED);
@@ -815,13 +891,12 @@ void QueryString::DrawEditBox(const Window *w, int wid) const
 	DrawPixelInfo dpi;
 	if (!FillDrawPixelInfo(&dpi, fr.left, fr.top, fr.Width(), fr.Height())) return;
 
-	DrawPixelInfo *old_dpi = _cur_dpi;
-	_cur_dpi = &dpi;
+	AutoRestoreBackup dpi_backup(_cur_dpi, &dpi);
 
 	/* We will take the current widget length as maximum width, with a small
 	 * space reserved at the end for the caret to show */
 	const Textbuf *tb = &this->text;
-	int delta = std::min(0, (fr.right - fr.left) - tb->pixels - 10);
+	int delta = std::min(0, (fr.right - fr.left) - tb->pixels - GetCaretWidth());
 
 	if (tb->caretxoffs + delta < 0) delta = -tb->caretxoffs;
 
@@ -834,8 +909,6 @@ void QueryString::DrawEditBox(const Window *w, int wid) const
 		int caret_width = GetStringBoundingBox("_").width;
 		DrawString(tb->caretxoffs + delta, tb->caretxoffs + delta + caret_width, 0, "_", TC_WHITE);
 	}
-
-	_cur_dpi = old_dpi;
 }
 
 /**
@@ -851,14 +924,14 @@ Point QueryString::GetCaretPosition(const Window *w, int wid) const
 	assert((wi->type & WWT_MASK) == WWT_EDITBOX);
 
 	bool rtl = _current_text_dir == TD_RTL;
-	Dimension sprite_size = GetSpriteSize(rtl ? SPR_IMG_DELETE_RIGHT : SPR_IMG_DELETE_LEFT);
+	Dimension sprite_size = GetScaledSpriteSize(rtl ? SPR_IMG_DELETE_RIGHT : SPR_IMG_DELETE_LEFT);
 	int clearbtn_width = sprite_size.width + WidgetDimensions::scaled.imgbtn.Horizontal();
 
 	Rect r = wi->GetCurrentRect().Indent(clearbtn_width, !rtl).Shrink(WidgetDimensions::scaled.framerect);
 
 	/* Clamp caret position to be inside out current width. */
 	const Textbuf *tb = &this->text;
-	int delta = std::min(0, (r.right - r.left) - tb->pixels - 10);
+	int delta = std::min(0, (r.right - r.left) - tb->pixels - GetCaretWidth());
 	if (tb->caretxoffs + delta < 0) delta = -tb->caretxoffs;
 
 	Point pt = {r.left + tb->caretxoffs + delta, r.top};
@@ -880,14 +953,14 @@ Rect QueryString::GetBoundingRect(const Window *w, int wid, const char *from, co
 	assert((wi->type & WWT_MASK) == WWT_EDITBOX);
 
 	bool rtl = _current_text_dir == TD_RTL;
-	Dimension sprite_size = GetSpriteSize(rtl ? SPR_IMG_DELETE_RIGHT : SPR_IMG_DELETE_LEFT);
+	Dimension sprite_size = GetScaledSpriteSize(rtl ? SPR_IMG_DELETE_RIGHT : SPR_IMG_DELETE_LEFT);
 	int clearbtn_width = sprite_size.width + WidgetDimensions::scaled.imgbtn.Horizontal();
 
 	Rect r = wi->GetCurrentRect().Indent(clearbtn_width, !rtl).Shrink(WidgetDimensions::scaled.framerect);
 
 	/* Clamp caret position to be inside our current width. */
 	const Textbuf *tb = &this->text;
-	int delta = std::min(0, r.Width() - tb->pixels - 10);
+	int delta = std::min(0, r.Width() - tb->pixels - GetCaretWidth());
 	if (tb->caretxoffs + delta < 0) delta = -tb->caretxoffs;
 
 	/* Get location of first and last character. */
@@ -902,25 +975,25 @@ Rect QueryString::GetBoundingRect(const Window *w, int wid, const char *from, co
  * @param w Window the edit box is in.
  * @param wid Widget index.
  * @param pt Position to test.
- * @return Pointer to the character at the position or nullptr if no character is at the position.
+ * @return Index of the character position or -1 if no character is at the position.
  */
-const char *QueryString::GetCharAtPosition(const Window *w, int wid, const Point &pt) const
+ptrdiff_t QueryString::GetCharAtPosition(const Window *w, int wid, const Point &pt) const
 {
 	const NWidgetLeaf *wi = w->GetWidget<NWidgetLeaf>(wid);
 
 	assert((wi->type & WWT_MASK) == WWT_EDITBOX);
 
 	bool rtl = _current_text_dir == TD_RTL;
-	Dimension sprite_size = GetSpriteSize(rtl ? SPR_IMG_DELETE_RIGHT : SPR_IMG_DELETE_LEFT);
+	Dimension sprite_size = GetScaledSpriteSize(rtl ? SPR_IMG_DELETE_RIGHT : SPR_IMG_DELETE_LEFT);
 	int clearbtn_width = sprite_size.width + WidgetDimensions::scaled.imgbtn.Horizontal();
 
 	Rect r = wi->GetCurrentRect().Indent(clearbtn_width, !rtl).Shrink(WidgetDimensions::scaled.framerect);
 
-	if (!IsInsideMM(pt.y, r.top, r.bottom)) return nullptr;
+	if (!IsInsideMM(pt.y, r.top, r.bottom)) return -1;
 
 	/* Clamp caret position to be inside our current width. */
 	const Textbuf *tb = &this->text;
-	int delta = std::min(0, r.Width() - tb->pixels - 10);
+	int delta = std::min(0, r.Width() - tb->pixels - GetCaretWidth());
 	if (tb->caretxoffs + delta < 0) delta = -tb->caretxoffs;
 
 	return ::GetCharAtPosition(tb->buf, pt.x - delta - r.left);
@@ -933,7 +1006,8 @@ void QueryString::ClickEditBox(Window *w, Point pt, int wid, int click_count, bo
 	assert((wi->type & WWT_MASK) == WWT_EDITBOX);
 
 	bool rtl = _current_text_dir == TD_RTL;
-	int clearbtn_width = GetSpriteSize(rtl ? SPR_IMG_DELETE_RIGHT : SPR_IMG_DELETE_LEFT).width;
+	Dimension sprite_size = GetScaledSpriteSize(rtl ? SPR_IMG_DELETE_RIGHT : SPR_IMG_DELETE_LEFT);
+	int clearbtn_width = sprite_size.width + WidgetDimensions::scaled.imgbtn.Horizontal();
 
 	Rect cr = wi->GetCurrentRect().WithWidth(clearbtn_width, !rtl);
 
@@ -964,6 +1038,8 @@ struct QueryStringWindow : public Window
 	QueryStringWindow(StringID str, StringID caption, uint max_bytes, uint max_chars, WindowDesc *desc, Window *parent, CharSetFilter afilter, QueryStringFlags flags) :
 			Window(desc), editbox(max_bytes, max_chars)
 	{
+		assert(parent != nullptr);
+
 		char *last_of = &this->editbox.text.buf[this->editbox.text.max_bytes - 1];
 		GetString(this->editbox.text.buf, str, last_of);
 		StrMakeValidInPlace(this->editbox.text.buf, last_of, SVS_NONE);
@@ -976,7 +1052,7 @@ struct QueryStringWindow : public Window
 
 		this->editbox.text.UpdateSize();
 
-		if ((flags & QSF_ACCEPT_UNCHANGED) == 0) this->editbox.orig = stredup(this->editbox.text.buf);
+		if ((flags & QSF_ACCEPT_UNCHANGED) == 0) this->editbox.orig = this->editbox.text.buf;
 
 		this->querystrings[WID_QS_TEXT] = &this->editbox;
 		this->editbox.caption = caption;
@@ -1038,7 +1114,7 @@ struct QueryStringWindow : public Window
 
 	void OnOk()
 	{
-		if (this->editbox.orig == nullptr || strcmp(this->editbox.text.buf, this->editbox.orig) != 0) {
+		if (!this->editbox.orig.has_value() || this->editbox.text.buf != this->editbox.orig) {
 			assert(this->parent != nullptr);
 
 			this->parent->OnQueryTextFinished(this->editbox.text.buf);
@@ -1058,26 +1134,25 @@ struct QueryStringWindow : public Window
 				FALLTHROUGH;
 
 			case WID_QS_CANCEL:
-				this->Close();
+				delete this;
 				break;
 		}
 	}
 
-	void Close() override
+	~QueryStringWindow()
 	{
 		if (!this->editbox.handled && this->parent != nullptr) {
 			Window *parent = this->parent;
-			this->parent = nullptr; // so parent doesn't try to close us again
+			this->parent = nullptr; // so parent doesn't try to delete us again
 			parent->OnQueryTextFinished(nullptr);
 		}
-		this->Window::Close();
 	}
 };
 
 static const NWidgetPart _nested_query_string_widgets[] = {
 	NWidget(NWID_HORIZONTAL),
 		NWidget(WWT_CLOSEBOX, COLOUR_GREY),
-		NWidget(WWT_CAPTION, COLOUR_GREY, WID_QS_CAPTION), SetDataTip(STR_WHITE_STRING, STR_NULL),
+		NWidget(WWT_CAPTION, COLOUR_GREY, WID_QS_CAPTION), SetDataTip(STR_JUST_STRING, STR_NULL), SetTextStyle(TC_WHITE),
 	EndContainer(),
 	NWidget(WWT_PANEL, COLOUR_GREY),
 		NWidget(WWT_EDITBOX, COLOUR_GREY, WID_QS_TEXT), SetMinimalSize(256, 12), SetFill(1, 1), SetPadding(2, 2, 2, 2),
@@ -1102,15 +1177,14 @@ static WindowDesc _query_string_desc(
  * @param str StringID for the text shown in the textbox
  * @param caption StringID of text shown in caption of querywindow
  * @param maxsize maximum size in bytes or characters (including terminating '\0') depending on flags
- * @param parent pointer to a Window that will handle the events (ok/cancel) of this window.
+ * @param parent pointer to a Window that will handle the events (ok/cancel) of this
+ *        window. If nullptr, results are handled by global function HandleOnEditText
  * @param afilter filters out unwanted character input
  * @param flags various flags, @see QueryStringFlags
  */
 void ShowQueryString(StringID str, StringID caption, uint maxsize, Window *parent, CharSetFilter afilter, QueryStringFlags flags)
 {
-	assert(parent != nullptr);
-
-	CloseWindowByClass(WC_QUERY_STRING);
+	DeleteWindowByClass(WC_QUERY_STRING);
 	new QueryStringWindow(str, caption, ((flags & QSF_LEN_IN_CHARS) ? MAX_CHAR_LENGTH : 1) * maxsize, maxsize, &_query_string_desc, parent, afilter, flags);
 }
 
@@ -1122,11 +1196,15 @@ struct QueryWindow : public Window {
 	uint64 params[10];       ///< local copy of #_global_string_params
 	StringID message;        ///< message shown for query window
 	StringID caption;        ///< title of window
+	bool precomposed;
+	std::string caption_str;
+	mutable std::string message_str;
 
 	QueryWindow(WindowDesc *desc, StringID caption, StringID message, Window *parent, QueryCallbackProc *callback) : Window(desc)
 	{
 		/* Create a backup of the variadic arguments to strings because it will be
 		 * overridden pretty often. We will copy these back for drawing */
+		this->precomposed = false;
 		CopyOutDParam(this->params, 0, lengthof(this->params));
 		this->caption = caption;
 		this->message = message;
@@ -1136,17 +1214,29 @@ struct QueryWindow : public Window {
 		this->InitNested(WN_CONFIRM_POPUP_QUERY);
 	}
 
-	void Close() override
+	QueryWindow(WindowDesc *desc, std::string caption, std::string message, Window *parent, QueryCallbackProc *callback) : Window(desc)
+	{
+		this->precomposed = true;
+		this->caption = SPECSTR_TEMP_START;
+		this->message = STR_EMPTY;
+		this->caption_str = std::move(caption);
+		this->message_str = std::move(message);
+		this->proc    = callback;
+		this->parent  = parent;
+
+		this->InitNested(WN_CONFIRM_POPUP_QUERY);
+	}
+
+	~QueryWindow()
 	{
 		if (this->proc != nullptr) this->proc(this->parent, false);
-		this->Window::Close();
 	}
 
 	void FindWindowPlacementAndResize(int def_width, int def_height) override
 	{
 		/* Position query window over the calling window, ensuring it's within screen bounds. */
-		this->left = Clamp(parent->left + (parent->width / 2) - (this->width / 2), 0, _screen.width - this->width);
-		this->top = Clamp(parent->top + (parent->height / 2) - (this->height / 2), 0, _screen.height - this->height);
+		this->left = SoftClamp(parent->left + (parent->width / 2) - (this->width / 2), 0, _screen.width - this->width);
+		this->top = SoftClamp(parent->top + (parent->height / 2) - (this->height / 2), 0, _screen.height - this->height);
 		this->SetDirty();
 	}
 
@@ -1154,12 +1244,18 @@ struct QueryWindow : public Window {
 	{
 		switch (widget) {
 			case WID_Q_CAPTION:
-				CopyInDParam(1, this->params, lengthof(this->params));
+				if (this->precomposed) {
+					_temp_special_strings[0] = this->caption_str;
+				} else {
+					CopyInDParam(1, this->params, lengthof(this->params));
+				}
 				SetDParam(0, this->caption);
 				break;
 
 			case WID_Q_TEXT:
-				CopyInDParam(0, this->params, lengthof(this->params));
+				if (!this->precomposed) {
+					CopyInDParam(0, this->params, lengthof(this->params));
+				}
 				break;
 		}
 	}
@@ -1168,7 +1264,9 @@ struct QueryWindow : public Window {
 	{
 		if (widget != WID_Q_TEXT) return;
 
-		Dimension d = GetStringMultiLineBoundingBox(this->message, *size);
+		if (!this->precomposed) this->message_str = GetString(this->message);
+
+		Dimension d = GetStringMultiLineBoundingBox(this->message_str.c_str(), *size);
 		d.width += WidgetDimensions::scaled.frametext.Horizontal();
 		d.height += WidgetDimensions::scaled.framerect.Vertical();
 		*size = d;
@@ -1178,8 +1276,10 @@ struct QueryWindow : public Window {
 	{
 		if (widget != WID_Q_TEXT) return;
 
+		if (!this->precomposed) this->message_str = GetString(this->message);
+
 		DrawStringMultiLine(r.Shrink(WidgetDimensions::scaled.frametext, WidgetDimensions::scaled.framerect),
-				this->message, TC_FROMSTRING, SA_CENTER);
+				this->message_str, TC_FROMSTRING, SA_CENTER);
 	}
 
 	void OnClick(Point pt, int widget, int click_count) override
@@ -1187,12 +1287,12 @@ struct QueryWindow : public Window {
 		switch (widget) {
 			case WID_Q_YES: {
 				/* in the Generate New World window, clicking 'Yes' causes
-				 * CloseNonVitalWindows() to be called - we shouldn't be in a window then */
+				 * DeleteNonVitalWindows() to be called - we shouldn't be in a window then */
 				QueryCallbackProc *proc = this->proc;
 				Window *parent = this->parent;
 				/* Prevent the destructor calling the callback function */
 				this->proc = nullptr;
-				this->Close();
+				delete this;
 				if (proc != nullptr) {
 					proc(parent, true);
 					proc = nullptr;
@@ -1200,7 +1300,7 @@ struct QueryWindow : public Window {
 				break;
 			}
 			case WID_Q_NO:
-				this->Close();
+				delete this;
 				break;
 		}
 	}
@@ -1218,7 +1318,7 @@ struct QueryWindow : public Window {
 				FALLTHROUGH;
 
 			case WKC_ESC:
-				this->Close();
+				delete this;
 				return ES_HANDLED;
 		}
 		return ES_NOT_HANDLED;
@@ -1248,6 +1348,19 @@ static WindowDesc _query_desc(
 	_nested_query_widgets, lengthof(_nested_query_widgets)
 );
 
+static void RemoveExistingQueryWindow(Window *parent, QueryCallbackProc *callback)
+{
+	for (const Window *w : Window::IterateFromBack()) {
+		if (w->window_class != WC_CONFIRM_POPUP_QUERY) continue;
+
+		const QueryWindow *qw = (const QueryWindow *)w;
+		if (qw->parent != parent || qw->proc != callback) continue;
+
+		delete qw;
+		break;
+	}
+}
+
 /**
  * Show a modal confirmation window with standard 'yes' and 'no' buttons
  * The window is aligned to the centre of its parent.
@@ -1259,17 +1372,111 @@ static WindowDesc _query_desc(
  */
 void ShowQuery(StringID caption, StringID message, Window *parent, QueryCallbackProc *callback)
 {
-	if (parent == nullptr) parent = FindWindowById(WC_MAIN_WINDOW, 0);
+	if (parent == nullptr) parent = GetMainWindow();
 
-	for (Window *w : Window::Iterate()) {
-		if (w->window_class != WC_CONFIRM_POPUP_QUERY) continue;
-
-		QueryWindow *qw = dynamic_cast<QueryWindow *>(w);
-		if (qw->parent != parent || qw->proc != callback) continue;
-
-		qw->Close();
-		break;
-	}
+	RemoveExistingQueryWindow(parent, callback);
 
 	new QueryWindow(&_query_desc, caption, message, parent, callback);
+}
+
+/**
+ * Show a modal confirmation window with standard 'yes' and 'no' buttons
+ * The window is aligned to the centre of its parent.
+ * @param caption string shown as window caption
+ * @param message string that will be shown for the window
+ * @param parent pointer to parent window, if this pointer is nullptr the parent becomes
+ * the main window WC_MAIN_WINDOW
+ * @param callback callback function pointer to set in the window descriptor
+ */
+void ShowQuery(std::string caption, std::string message, Window *parent, QueryCallbackProc *callback)
+{
+	if (parent == nullptr) parent = GetMainWindow();
+
+	RemoveExistingQueryWindow(parent, callback);
+
+	new QueryWindow(&_query_desc, std::move(caption), std::move(message), parent, callback);
+}
+
+static const NWidgetPart _modifier_key_toggle_widgets[] = {
+	NWidget(NWID_HORIZONTAL),
+		NWidget(WWT_CLOSEBOX, COLOUR_GREY),
+		NWidget(WWT_CAPTION, COLOUR_GREY), SetDataTip(STR_MODIFIER_KEY_TOGGLE_CAPTION, STR_TOOLTIP_WINDOW_TITLE_DRAG_THIS),
+		NWidget(WWT_SHADEBOX, COLOUR_GREY),
+		NWidget(WWT_STICKYBOX, COLOUR_GREY),
+	EndContainer(),
+	NWidget(WWT_PANEL, COLOUR_GREY),
+		NWidget(NWID_SPACER), SetMinimalSize(0, 2),
+		NWidget(NWID_HORIZONTAL, NC_EQUALSIZE), SetPIP(2, 0, 2),
+			NWidget(WWT_TEXTBTN, COLOUR_GREY, WID_MKT_SHIFT), SetMinimalSize(78, 12), SetFill(1, 0),
+										SetDataTip(STR_SHIFT_KEY_NAME, STR_MODIFIER_TOGGLE_SHIFT_TOOLTIP),
+			NWidget(WWT_TEXTBTN, COLOUR_GREY, WID_MKT_CTRL), SetMinimalSize(78, 12), SetFill(1, 0),
+										SetDataTip(STR_CTRL_KEY_NAME, STR_MODIFIER_TOGGLE_CTRL_TOOLTIP),
+		EndContainer(),
+		NWidget(NWID_SPACER), SetMinimalSize(0, 2),
+	EndContainer(),
+};
+
+struct ModifierKeyToggleWindow : Window {
+	ModifierKeyToggleWindow(WindowDesc *desc, WindowNumber window_number) :
+			Window(desc)
+	{
+		this->InitNested(window_number);
+		this->UpdateButtons();
+	}
+
+	~ModifierKeyToggleWindow()
+	{
+		_invert_shift = false;
+		_invert_ctrl = false;
+	}
+
+	void UpdateButtons()
+	{
+		this->SetWidgetLoweredState(WID_MKT_SHIFT, _shift_pressed);
+		this->SetWidgetLoweredState(WID_MKT_CTRL, _ctrl_pressed);
+		this->SetDirty();
+	}
+
+	void OnCTRLStateChangeAlways() override
+	{
+		this->UpdateButtons();
+	}
+
+	void OnShiftStateChange() override
+	{
+		this->UpdateButtons();
+	}
+
+	void OnClick(Point pt, int widget, int click_count) override
+	{
+		switch (widget) {
+			case WID_MKT_SHIFT:
+				_invert_shift = !_invert_shift;
+				UpdateButtons();
+				break;
+
+			case WID_MKT_CTRL:
+				_invert_ctrl = !_invert_ctrl;
+				UpdateButtons();
+				break;
+		}
+	}
+
+	void OnInvalidateData(int data = 0, bool gui_scope = true) override
+	{
+		if (!gui_scope) return;
+		this->UpdateButtons();
+	}
+};
+
+static WindowDesc _modifier_key_toggle_desc(
+	WDP_AUTO, "modifier_key_toggle", 0, 0,
+	WC_MODIFIER_KEY_TOGGLE, WC_NONE,
+	WDF_NO_FOCUS,
+	_modifier_key_toggle_widgets, lengthof(_modifier_key_toggle_widgets)
+);
+
+void ShowModifierKeyToggleWindow()
+{
+	AllocateWindowDescFront<ModifierKeyToggleWindow>(&_modifier_key_toggle_desc, 0);
 }

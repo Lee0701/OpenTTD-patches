@@ -35,7 +35,6 @@
 #include "guitimer_func.h"
 #include "group_gui.h"
 #include "zoom_func.h"
-#include "news_cmd.h"
 
 #include "widgets/news_widget.h"
 
@@ -73,7 +72,7 @@ static TileIndex GetReferenceTile(NewsReferenceType reftype, uint32 ref)
 {
 	switch (reftype) {
 		case NR_TILE:     return (TileIndex)ref;
-		case NR_STATION:  return Station::Get((StationID)ref)->xy;
+		case NR_STATION:  return BaseStation::Get((StationID)ref)->xy;
 		case NR_INDUSTRY: return Industry::Get((IndustryID)ref)->location.tile + TileDiffXY(1, 1);
 		case NR_TOWN:     return Town::Get((TownID)ref)->xy;
 		default:          return INVALID_TILE;
@@ -87,7 +86,7 @@ static const NWidgetPart _nested_normal_news_widgets[] = {
 			NWidget(WWT_CLOSEBOX, COLOUR_WHITE, WID_N_CLOSEBOX), SetPadding(0, 0, 0, 1),
 			NWidget(NWID_SPACER), SetFill(1, 0),
 			NWidget(NWID_VERTICAL),
-				NWidget(WWT_LABEL, COLOUR_WHITE, WID_N_DATE), SetDataTip(STR_DATE_LONG_SMALL, STR_NULL),
+				NWidget(WWT_LABEL, COLOUR_WHITE, WID_N_DATE), SetDataTip(STR_JUST_DATE_LONG, STR_NULL), SetTextStyle(TC_BLACK, FS_SMALL),
 				NWidget(NWID_SPACER), SetFill(0, 1),
 			EndContainer(),
 		EndContainer(),
@@ -164,7 +163,7 @@ static const NWidgetPart _nested_thin_news_widgets[] = {
 			NWidget(WWT_CLOSEBOX, COLOUR_WHITE, WID_N_CLOSEBOX), SetPadding(0, 0, 0, 1),
 			NWidget(NWID_SPACER), SetFill(1, 0),
 			NWidget(NWID_VERTICAL),
-				NWidget(WWT_LABEL, COLOUR_WHITE, WID_N_DATE), SetDataTip(STR_DATE_LONG_SMALL, STR_NULL),
+				NWidget(WWT_LABEL, COLOUR_WHITE, WID_N_DATE), SetDataTip(STR_JUST_DATE_LONG, STR_NULL), SetTextStyle(TC_BLACK, FS_SMALL),
 				NWidget(NWID_SPACER), SetFill(0, 1),
 			EndContainer(),
 		EndContainer(),
@@ -310,7 +309,7 @@ struct NewsWindow : Window {
 		/* Initialize viewport if it exists. */
 		NWidgetViewport *nvp = this->GetWidget<NWidgetViewport>(WID_N_VIEWPORT);
 		if (nvp != nullptr) {
-			nvp->InitializeViewport(this, ni->reftype1 == NR_VEHICLE ? 0x80000000 | ni->ref1 : (uint32)GetReferenceTile(ni->reftype1, ni->ref1),ScaleZoomGUI(ZOOM_LVL_NEWS));
+			nvp->InitializeViewport(this, ni->reftype1 == NR_VEHICLE ? 0x80000000 | ni->ref1 : GetReferenceTile(ni->reftype1, ni->ref1), ScaleZoomGUI(ZOOM_LVL_NEWS));
 			if (this->ni->flags & NF_NO_TRANSPARENT) nvp->disp_flags |= ND_NO_TRANSPARENCY;
 			if ((this->ni->flags & NF_INCOLOUR) == 0) {
 				nvp->disp_flags |= ND_SHADE_GREY;
@@ -359,7 +358,7 @@ struct NewsWindow : Window {
 			}
 
 			case WID_N_MGR_FACE:
-				*size = maxdim(*size, GetSpriteSize(SPR_GRADIENT));
+				*size = maxdim(*size, GetScaledSpriteSize(SPR_GRADIENT));
 				break;
 
 			case WID_N_MGR_NAME:
@@ -428,7 +427,7 @@ struct NewsWindow : Window {
 	{
 		switch (widget) {
 			case WID_N_CAPTION:
-				DrawCaption(r, COLOUR_LIGHT_BLUE, this->owner, TC_FROMSTRING, STR_NEWS_MESSAGE_CAPTION, SA_CENTER);
+				DrawCaption(r, COLOUR_LIGHT_BLUE, this->owner, TC_FROMSTRING, STR_NEWS_MESSAGE_CAPTION, SA_CENTER, FS_NORMAL);
 				break;
 
 			case WID_N_PANEL:
@@ -442,7 +441,7 @@ struct NewsWindow : Window {
 
 			case WID_N_MGR_FACE: {
 				const CompanyNewsInformation *cni = static_cast<const CompanyNewsInformation*>(this->ni->data.get());
-				DrawCompanyManagerFace(cni->face, cni->colour, r.left, r.top);
+				DrawCompanyManagerFace(cni->face, cni->colour, r);
 				GfxFillRect(r.left, r.top, r.right, r.bottom, PALETTE_NEWSPAPER, FILLRECT_RECOLOUR);
 				break;
 			}
@@ -486,7 +485,7 @@ struct NewsWindow : Window {
 		switch (widget) {
 			case WID_N_CLOSEBOX:
 				NewsWindow::duration = 0;
-				this->Close();
+				delete this;
 				_forced_news = nullptr;
 				break;
 
@@ -577,10 +576,13 @@ private:
 
 		int mintop = std::min(newtop, this->top);
 		int maxtop = std::max(newtop, this->top);
-		if (this->viewport != nullptr) this->viewport->top += newtop - this->top;
 		this->top = newtop;
+		if (this->viewport != nullptr) {
+			NWidgetViewport *nvp = this->GetWidget<NWidgetViewport>(WID_N_VIEWPORT);
+			nvp->UpdateViewportCoordinates(this);
+		}
 
-		AddDirtyBlock(this->left, mintop, this->left + this->width, maxtop + this->height);
+		SetDirtyBlocks(this->left, mintop, this->left + this->width, maxtop + this->height);
 	}
 
 	StringID GetCompanyMessageString() const
@@ -601,7 +603,7 @@ private:
 				return STR_NEWS_NEW_VEHICLE_NOW_AVAILABLE;
 
 			case WID_N_VEH_NAME:
-				SetDParam(0, engine);
+				SetDParam(0, PackEngineNameDParam(engine, EngineNameContext::PreviewNews));
 				return STR_NEWS_NEW_VEHICLE_TYPE;
 
 			default:
@@ -717,7 +719,7 @@ static void MoveToNextNewsItem()
 	 * there is no status bar but possible news. */
 	if (FindWindowById(WC_STATUS_BAR, 0) == nullptr) return;
 
-	CloseWindowById(WC_NEWS_WINDOW, 0); // close the newspapers window if shown
+	DeleteWindowById(WC_NEWS_WINDOW, 0); // close the newspapers window if shown
 	_forced_news = nullptr;
 
 	/* if we're not at the last item, then move on */
@@ -854,46 +856,52 @@ void AddNewsItem(StringID string, NewsType type, NewsFlag flags, NewsReferenceTy
 
 /**
  * Create a new custom news item.
+ * @param tile unused
  * @param flags type of operation
- * @aram type NewsType of the message.
- * @param reftype1 NewsReferenceType of first reference.
- * @param company Company this news message is for.
- * @param reference First reference of the news message.
+ * @param p1 various bitstuffed elements
+ * - p1 = (bit  0 -  7) - NewsType of the message.
+ * - p1 = (bit  8 - 15) - NewsReferenceType of first reference.
+ * - p1 = (bit 16 - 23) - Company this news message is for.
+ * @param p2 First reference of the news message.
  * @param text The text of the news message.
  * @return the cost of this operation or an error
  */
-CommandCost CmdCustomNewsItem(DoCommandFlag flags, NewsType type, NewsReferenceType reftype1, CompanyID company, uint32 reference, const std::string &text)
+CommandCost CmdCustomNewsItem(TileIndex tile, DoCommandFlag flags, uint32 p1, uint32 p2, const char *text)
 {
 	if (_current_company != OWNER_DEITY) return CMD_ERROR;
 
+	NewsType type = (NewsType)GB(p1, 0, 8);
+	NewsReferenceType reftype1 = (NewsReferenceType)GB(p1, 8, 8);
+	CompanyID company = (CompanyID)GB(p1, 16, 8);
+
 	if (company != INVALID_OWNER && !Company::IsValidID(company)) return CMD_ERROR;
 	if (type >= NT_END) return CMD_ERROR;
-	if (text.empty()) return CMD_ERROR;
+	if (StrEmpty(text)) return CMD_ERROR;
 
 	switch (reftype1) {
 		case NR_NONE: break;
 		case NR_TILE:
-			if (!IsValidTile(reference)) return CMD_ERROR;
+			if (!IsValidTile(p2)) return CMD_ERROR;
 			break;
 
 		case NR_VEHICLE:
-			if (!Vehicle::IsValidID(reference)) return CMD_ERROR;
+			if (!Vehicle::IsValidID(p2)) return CMD_ERROR;
 			break;
 
 		case NR_STATION:
-			if (!Station::IsValidID(reference)) return CMD_ERROR;
+			if (!Station::IsValidID(p2)) return CMD_ERROR;
 			break;
 
 		case NR_INDUSTRY:
-			if (!Industry::IsValidID(reference)) return CMD_ERROR;
+			if (!Industry::IsValidID(p2)) return CMD_ERROR;
 			break;
 
 		case NR_TOWN:
-			if (!Town::IsValidID(reference)) return CMD_ERROR;
+			if (!Town::IsValidID(p2)) return CMD_ERROR;
 			break;
 
 		case NR_ENGINE:
-			if (!Engine::IsValidID(reference)) return CMD_ERROR;
+			if (!Engine::IsValidID(p2)) return CMD_ERROR;
 			break;
 
 		default: return CMD_ERROR;
@@ -904,7 +912,7 @@ CommandCost CmdCustomNewsItem(DoCommandFlag flags, NewsType type, NewsReferenceT
 	if (flags & DC_EXEC) {
 		NewsStringData *news = new NewsStringData(text);
 		SetDParamStr(0, news->string);
-		AddNewsItem(STR_NEWS_CUSTOM_ITEM, type, NF_NORMAL, reftype1, reference, NR_NONE, UINT32_MAX, news);
+		AddNewsItem(STR_NEWS_CUSTOM_ITEM, type, NF_NORMAL, reftype1, p2, NR_NONE, UINT32_MAX, news);
 	}
 
 	return CommandCost();
@@ -1013,9 +1021,9 @@ void NewsLoop()
 
 	static byte _last_clean_month = 0;
 
-	if (_last_clean_month != _cur_month) {
+	if (_last_clean_month != _cur_date_ymd.month) {
 		RemoveOldNewsItems();
-		_last_clean_month = _cur_month;
+		_last_clean_month = _cur_date_ymd.month;
 	}
 
 	if (ReadyForNextTickerItem()) MoveToNextTickerItem();
@@ -1028,13 +1036,13 @@ static void ShowNewsMessage(const NewsItem *ni)
 	assert(_total_news != 0);
 
 	/* Delete the news window */
-	CloseWindowById(WC_NEWS_WINDOW, 0);
+	DeleteWindowById(WC_NEWS_WINDOW, 0);
 
 	/* setup forced news item */
 	_forced_news = ni;
 
 	if (_forced_news != nullptr) {
-		CloseWindowById(WC_NEWS_WINDOW, 0);
+		DeleteWindowById(WC_NEWS_WINDOW, 0);
 		ShowNewspaper(ni);
 	}
 }
@@ -1046,7 +1054,7 @@ static void ShowNewsMessage(const NewsItem *ni)
 bool HideActiveNewsMessage() {
 	NewsWindow *w = (NewsWindow*)FindWindowById(WC_NEWS_WINDOW, 0);
 	if (w == nullptr) return false;
-	w->Close();
+	delete w;
 	return true;
 }
 
@@ -1159,7 +1167,7 @@ struct MessageHistoryWindow : Window {
 			/* Months are off-by-one, so it's actually 8. Not using
 			 * month 12 because the 1 is usually less wide. */
 			SetDParam(0, ConvertYMDToDate(ORIGINAL_MAX_YEAR, 7, 30));
-			this->date_width = GetStringBoundingBox(STR_SHORT_DATE).width + WidgetDimensions::scaled.hsep_wide;
+			this->date_width = GetStringBoundingBox(STR_JUST_DATE_TINY).width + WidgetDimensions::scaled.hsep_wide;
 
 			size->height = 4 * resize->height + WidgetDimensions::scaled.framerect.Vertical(); // At least 4 lines are visible.
 			size->width = std::max(200u, size->width); // At least 200 pixels wide.
@@ -1190,7 +1198,7 @@ struct MessageHistoryWindow : Window {
 		int y = news.top;
 		for (int n = this->vscroll->GetCapacity(); n > 0; n--) {
 			SetDParam(0, ni->date);
-			DrawString(date.left, date.right, y, STR_SHORT_DATE);
+			DrawString(date.left, date.right, y, STR_JUST_DATE_TINY, TC_WHITE);
 
 			DrawNewsString(news.left, news.right, y, TC_WHITE, ni);
 			y += this->line_height;
@@ -1261,6 +1269,6 @@ static WindowDesc _message_history_desc(
 /** Display window with news messages history */
 void ShowMessageHistory()
 {
-	CloseWindowById(WC_MESSAGE_HISTORY, 0);
+	DeleteWindowById(WC_MESSAGE_HISTORY, 0);
 	new MessageHistoryWindow(&_message_history_desc);
 }

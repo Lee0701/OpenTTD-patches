@@ -85,12 +85,13 @@ void GetRoadVehSpriteSize(EngineID engine, uint &width, uint &height, int &xoffs
 struct RoadVehPathCache {
 	std::deque<Trackdir> td;
 	std::deque<TileIndex> tile;
+	uint32 layout_ctr;
 
 	inline bool empty() const { return this->td.empty(); }
 
 	inline size_t size() const
 	{
-		assert(this->td.size() == this->tile.size());
+		dbg_assert(this->td.size() == this->tile.size());
 		return this->td.size();
 	}
 
@@ -117,6 +118,8 @@ struct RoadVehicle FINAL : public GroundVehicle<RoadVehicle, VEH_ROAD> {
 	RoadType roadtype;              //!< Roadtype of this vehicle.
 	RoadTypes compatible_roadtypes; //!< Roadtypes this consist is powered on.
 
+	byte critical_breakdown_count; ///< Counter for the number of critical breakdowns since last service
+
 	/** We don't want GCC to zero our struct! It already is zeroed and has an index! */
 	RoadVehicle() : GroundVehicleBase() {}
 	/** We want to 'destruct' the right class. */
@@ -136,16 +139,41 @@ struct RoadVehicle FINAL : public GroundVehicle<RoadVehicle, VEH_ROAD> {
 	bool IsInDepot() const override { return this->state == RVSB_IN_DEPOT; }
 	bool Tick() override;
 	void OnNewDay() override;
+	void OnPeriodic() override;
 	uint Crash(bool flooded = false) override;
 	Trackdir GetVehicleTrackdir() const override;
 	TileIndex GetOrderStationLocation(StationID station) override;
-	bool FindClosestDepot(TileIndex *location, DestinationID *destination, bool *reverse) override;
+	ClosestDepot FindClosestDepot() override;
 
 	bool IsBus() const;
 
 	int GetCurrentMaxSpeed() const override;
-	int UpdateSpeed();
+	int GetEffectiveMaxSpeed() const;
+	int GetDisplayEffectiveMaxSpeed() const { return this->GetEffectiveMaxSpeed() / 2; }
+	int UpdateSpeed(int max_speed);
 	void SetDestTile(TileIndex tile) override;
+
+	inline bool IsRoadVehicleOnLevelCrossing() const
+	{
+		if (HasBit(_roadtypes_non_train_colliding, this->roadtype)) return false;
+		for (const RoadVehicle *u = this; u != nullptr; u = u->Next()) {
+			if (IsLevelCrossingTile(u->tile)) return true;
+		}
+		return false;
+	}
+
+	inline bool IsRoadVehicleStopped() const
+	{
+		if (!(this->vehstatus & VS_STOPPED)) return false;
+		return !this->IsRoadVehicleOnLevelCrossing();
+	}
+
+	inline uint GetOvertakingCounterThreshold() const
+	{
+		return RV_OVERTAKE_TIMEOUT + (this->gcache.cached_total_length / 2) - (VEHICLE_LENGTH / 2);
+	}
+
+	void SetRoadVehicleOvertaking(byte overtaking);
 
 protected: // These functions should not be called outside acceleration code.
 
@@ -173,20 +201,43 @@ protected: // These functions should not be called outside acceleration code.
 	}
 
 	/**
-	 * Allows to know the weight value that this vehicle will use.
+	 * Allows to know the weight value that this vehicle will use (excluding cargo).
 	 * @return Weight value from the engine in tonnes.
 	 */
-	inline uint16 GetWeight() const
+	inline uint16 GetWeightWithoutCargo() const
 	{
-		uint16 weight = CargoSpec::Get(this->cargo_type)->WeightOfNUnits(this->cargo.StoredCount());
+		uint16 weight = 0;
 
 		/* Vehicle weight is not added for articulated parts. */
 		if (!this->IsArticulatedPart()) {
 			/* Road vehicle weight is in units of 1/4 t. */
 			weight += GetVehicleProperty(this, PROP_ROADVEH_WEIGHT, RoadVehInfo(this->engine_type)->weight) / 4;
+
+			/*
+			 * TODO: DIRTY HACK: at least 1 for realistic accelerate
+			 */
+			if (weight == 0) weight = 1;
 		}
 
 		return weight;
+	}
+
+	/**
+	 * Allows to know the weight value that this vehicle will use (cargo only).
+	 * @return Weight value from the engine in tonnes.
+	 */
+	inline uint16 GetCargoWeight() const
+	{
+		return CargoSpec::Get(this->cargo_type)->WeightOfNUnits(this->cargo.StoredCount());
+	}
+
+	/**
+	 * Allows to know the weight value that this vehicle will use.
+	 * @return Weight value from the engine in tonnes.
+	 */
+	inline uint16 GetWeight() const
+	{
+		return this->GetWeightWithoutCargo() + this->GetCargoWeight();
 	}
 
 	/**
@@ -229,7 +280,7 @@ protected: // These functions should not be called outside acceleration code.
 	 */
 	inline AccelStatus GetAccelerationStatus() const
 	{
-		return (this->vehstatus & VS_STOPPED) ? AS_BRAKE : AS_ACCEL;
+		return this->IsRoadVehicleStopped() ? AS_BRAKE : AS_ACCEL;
 	}
 
 	/**
@@ -288,8 +339,7 @@ protected: // These functions should not be called outside acceleration code.
 	 */
 	inline bool TileMayHaveSlopedTrack() const
 	{
-		TrackStatus ts = GetTileTrackStatus(this->tile, TRANSPORT_ROAD, GetRoadTramType(this->roadtype));
-		TrackBits trackbits = TrackStatusToTrackBits(ts);
+		TrackBits trackbits = TrackdirBitsToTrackBits(GetTileTrackdirBits(this->tile, TRANSPORT_ROAD, GetRoadTramType(this->roadtype)));
 
 		return trackbits == TRACK_BIT_X || trackbits == TRACK_BIT_Y;
 	}

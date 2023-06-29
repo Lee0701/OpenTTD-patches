@@ -15,14 +15,17 @@
 
 #include "../safeguards.h"
 
+namespace upstream_sl {
+
 static const SaveLoad _league_table_elements_desc[] = {
-	 SLE_VAR(LeagueTableElement, table,       SLE_UINT8),
-	 SLE_VAR(LeagueTableElement, rating,      SLE_UINT64),
-	 SLE_VAR(LeagueTableElement, company,     SLE_UINT8),
-	SLE_SSTR(LeagueTableElement, text,        SLE_STR | SLF_ALLOW_CONTROL),
-	SLE_SSTR(LeagueTableElement, score,       SLE_STR | SLF_ALLOW_CONTROL),
-	 SLE_VAR(LeagueTableElement, link.type,   SLE_UINT8),
-	 SLE_VAR(LeagueTableElement, link.target, SLE_UINT32),
+	    SLE_VAR(LeagueTableElement, table,       SLE_UINT8),
+	SLE_CONDVAR(LeagueTableElement, rating,      SLE_FILE_U64 | SLE_VAR_I64, SL_MIN_VERSION, SLV_LINKGRAPH_EDGES),
+	SLE_CONDVAR(LeagueTableElement, rating,      SLE_INT64,                  SLV_LINKGRAPH_EDGES, SL_MAX_VERSION),
+	    SLE_VAR(LeagueTableElement, company,     SLE_UINT8),
+	   SLE_SSTR(LeagueTableElement, text,        SLE_STR | SLF_ALLOW_CONTROL),
+	   SLE_SSTR(LeagueTableElement, score,       SLE_STR | SLF_ALLOW_CONTROL),
+	    SLE_VAR(LeagueTableElement, link.type,   SLE_UINT8),
+	    SLE_VAR(LeagueTableElement, link.target, SLE_UINT32),
 };
 
 struct LEAEChunkHandler : ChunkHandler {
@@ -52,6 +55,8 @@ struct LEAEChunkHandler : ChunkHandler {
 
 static const SaveLoad _league_tables_desc[] = {
 	SLE_SSTR(LeagueTable, title, SLE_STR | SLF_ALLOW_CONTROL),
+	SLE_SSTR(LeagueTable, header, SLE_STR | SLF_ALLOW_CONTROL),
+	SLE_SSTR(LeagueTable, footer, SLE_STR | SLF_ALLOW_CONTROL),
 };
 
 struct LEATChunkHandler : ChunkHandler {
@@ -87,3 +92,5 @@ static const ChunkHandlerRef league_chunk_handlers[] = {
 };
 
 extern const ChunkHandlerTable _league_chunk_handlers(league_chunk_handlers);
+
+}

@@ -28,7 +28,7 @@ extern Prices _price;
 int UpdateCompanyRatingAndValue(Company *c, bool update);
 void StartupIndustryDailyChanges(bool init_counter);
 
-Money GetTransportedGoodsIncome(uint num_pieces, uint dist, byte transit_days, CargoID cargo_type);
+Money GetTransportedGoodsIncome(uint num_pieces, uint dist, uint16 transit_days, CargoID cargo_type);
 uint MoveGoodsToStation(CargoID type, uint amount, SourceType source_type, SourceID source_id, const StationList *all_stations, Owner exclusivity = INVALID_OWNER);
 
 void PrepareUnload(Vehicle *front_v);
@@ -48,5 +48,8 @@ static inline bool EconomyIsInRecession()
 {
 	return _economy.fluct <= 0;
 }
+
+uint ScaleQuantity(uint amount, int scale_factor, bool allow_trunc = false);
+uint ScaleQuantity(uint amount, int cf, int fine, bool allow_trunc = false);
 
 #endif /* ECONOMY_FUNC_H */

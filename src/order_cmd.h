@@ -5,42 +5,73 @@
  * See the GNU General Public License for more details. You should have received a copy of the GNU General Public License along with OpenTTD. If not, see <http://www.gnu.org/licenses/>.
  */
 
-/** @file order_cmd.h Command definitions related to orders. */
+/** @file order_cmd.h Functions related to order commands. */
 
 #ifndef ORDER_CMD_H
 #define ORDER_CMD_H
 
-#include "command_type.h"
 #include "order_base.h"
-#include "misc/endian_buffer.hpp"
+#include "order_func.h"
+#include "vehicle_base.h"
 
-CommandCost CmdModifyOrder(DoCommandFlag flags, VehicleID veh, VehicleOrderID sel_ord, ModifyOrderFlags mof, uint16 data);
-CommandCost CmdSkipToOrder(DoCommandFlag flags, VehicleID veh_id, VehicleOrderID sel_ord);
-CommandCost CmdDeleteOrder(DoCommandFlag flags, VehicleID veh_id, VehicleOrderID sel_ord);
-CommandCost CmdInsertOrder(DoCommandFlag flags, VehicleID veh, VehicleOrderID sel_ord, const Order &new_order);
-CommandCost CmdOrderRefit(DoCommandFlag flags, VehicleID veh, VehicleOrderID order_number, CargoID cargo);
-CommandCost CmdCloneOrder(DoCommandFlag flags, CloneOptions action, VehicleID veh_dst, VehicleID veh_src);
-CommandCost CmdMoveOrder(DoCommandFlag flags, VehicleID veh, VehicleOrderID moving_order, VehicleOrderID target_order);
-CommandCost CmdClearOrderBackup(DoCommandFlag flags, TileIndex tile, ClientID user_id);
+void UpdateOrderDestinationRefcount(const Order *order, VehicleType type, Owner owner, int delta);
 
-DEF_CMD_TRAIT(CMD_MODIFY_ORDER,       CmdModifyOrder,       0,             CMDT_ROUTE_MANAGEMENT)
-DEF_CMD_TRAIT(CMD_SKIP_TO_ORDER,      CmdSkipToOrder,       0,             CMDT_ROUTE_MANAGEMENT)
-DEF_CMD_TRAIT(CMD_DELETE_ORDER,       CmdDeleteOrder,       0,             CMDT_ROUTE_MANAGEMENT)
-DEF_CMD_TRAIT(CMD_INSERT_ORDER,       CmdInsertOrder,       0,             CMDT_ROUTE_MANAGEMENT)
-DEF_CMD_TRAIT(CMD_ORDER_REFIT,        CmdOrderRefit,        0,             CMDT_ROUTE_MANAGEMENT)
-DEF_CMD_TRAIT(CMD_CLONE_ORDER,        CmdCloneOrder,        0,             CMDT_ROUTE_MANAGEMENT)
-DEF_CMD_TRAIT(CMD_MOVE_ORDER,         CmdMoveOrder,         0,             CMDT_ROUTE_MANAGEMENT)
-DEF_CMD_TRAIT(CMD_CLEAR_ORDER_BACKUP, CmdClearOrderBackup,  CMD_CLIENT_ID, CMDT_SERVER_SETTING)
-
-template <typename Tcont, typename Titer>
-inline EndianBufferWriter<Tcont, Titer> &operator <<(EndianBufferWriter<Tcont, Titer> &buffer, const Order &order)
+inline void RegisterOrderDestination(const Order *order, VehicleType type, Owner owner)
 {
-	return buffer << order.type << order.flags << order.dest << order.refit_cargo << order.wait_time << order.travel_time << order.max_speed;
+	if (_order_destination_refcount_map_valid) UpdateOrderDestinationRefcount(order, type, owner, 1);
 }
 
-inline EndianBufferReader &operator >>(EndianBufferReader &buffer, Order &order)
+inline void UnregisterOrderDestination(const Order *order, VehicleType type, Owner owner)
 {
-	return buffer >> order.type >> order.flags >> order.dest >> order.refit_cargo >> order.wait_time >> order.travel_time >> order.max_speed;
+	if (_order_destination_refcount_map_valid) UpdateOrderDestinationRefcount(order, type, owner, -1);
+}
+
+/**
+ * Removes all orders from a vehicle for which order_predicate returns true.
+ * Handles timetable updating, removing implicit orders correctly, etc.
+ * @param v The vehicle.
+ * @param order_predicate Functor with signature: bool (const Order *)
+ */
+template <typename F> void RemoveVehicleOrdersIf(Vehicle * const v, F order_predicate) {
+	/* Clear the order from the order-list */
+	int id = -1;
+	for(Order *order = v->GetFirstOrder(); order != nullptr; order = order->next) {
+		id++;
+restart:
+
+		if (order_predicate(const_cast<const Order *>(order))) {
+			/* We want to clear implicit orders, but we don't want to make them
+			 * dummy orders. They should just vanish. Also check the actual order
+			 * type as ot is currently OT_GOTO_STATION. */
+			if (order->IsType(OT_IMPLICIT)) {
+				order = order->next; // DeleteOrder() invalidates current order
+				DeleteOrder(v, id);
+				if (order != nullptr) goto restart;
+				break;
+			}
+
+			UnregisterOrderDestination(order, v->type, v->owner);
+
+			/* Clear wait time */
+			if (!order->IsType(OT_CONDITIONAL)) v->orders->UpdateTotalDuration(-static_cast<Ticks>(order->GetWaitTime()));
+			if (order->IsWaitTimetabled()) {
+				if (!order->IsType(OT_CONDITIONAL)) v->orders->UpdateTimetableDuration(-static_cast<Ticks>(order->GetTimetabledWait()));
+				order->SetWaitTimetabled(false);
+			}
+			order->SetWaitTime(0);
+
+			/* Clear order, preserving travel time */
+			bool travel_timetabled = order->IsTravelTimetabled();
+			order->MakeDummy();
+			order->SetTravelTimetabled(travel_timetabled);
+
+			for (const Vehicle *w = v->FirstShared(); w != nullptr; w = w->NextShared()) {
+				/* In GUI, simulate by removing the order and adding it back */
+				InvalidateVehicleOrder(w, id | (INVALID_VEH_ORDER_ID << 16));
+				InvalidateVehicleOrder(w, (INVALID_VEH_ORDER_ID << 16) | id);
+			}
+		}
+	}
 }
 
 #endif /* ORDER_CMD_H */

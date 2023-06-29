@@ -27,9 +27,6 @@
 #include "hotkeys.h"
 #include "vehicle_func.h"
 #include "gui.h"
-#include "command_func.h"
-#include "airport_cmd.h"
-#include "station_cmd.h"
 #include "zoom_func.h"
 
 #include "widgets/airport_widget.h"
@@ -45,7 +42,7 @@ static void ShowBuildAirportPicker(Window *parent);
 
 SpriteID GetCustomAirportSprite(const AirportSpec *as, byte layout);
 
-void CcBuildAirport(Commands cmd, const CommandCost &result, TileIndex tile)
+void CcBuildAirport(const CommandCost &result, TileIndex tile, uint32 p1, uint32 p2, uint64 p3, uint32 cmd)
 {
 	if (result.Failed()) return;
 
@@ -60,20 +57,13 @@ void CcBuildAirport(Commands cmd, const CommandCost &result, TileIndex tile)
 static void PlaceAirport(TileIndex tile)
 {
 	if (_selected_airport_index == -1) return;
+	uint32 p2 = _ctrl_pressed;
+	SB(p2, 16, 16, INVALID_STATION); // no station to join
 
-	byte airport_type = AirportClass::Get(_selected_airport_class)->GetSpec(_selected_airport_index)->GetIndex();
-	byte layout = _selected_airport_layout;
-	bool adjacent = _ctrl_pressed;
-
-	auto proc = [=](bool test, StationID to_join) -> bool {
-		if (test) {
-			return Command<CMD_BUILD_AIRPORT>::Do(CommandFlagsToDCFlags(GetCommandFlags<CMD_BUILD_AIRPORT>()), tile, airport_type, layout, INVALID_STATION, adjacent).Succeeded();
-		} else {
-			return Command<CMD_BUILD_AIRPORT>::Post(STR_ERROR_CAN_T_BUILD_AIRPORT_HERE, CcBuildAirport, tile, airport_type, layout, to_join, adjacent);
-		}
-	};
-
-	ShowSelectStationIfNeeded(TileArea(tile, _thd.size.x / TILE_SIZE, _thd.size.y / TILE_SIZE), proc);
+	uint32 p1 = AirportClass::Get(_selected_airport_class)->GetSpec(_selected_airport_index)->GetIndex();
+	p1 |= _selected_airport_layout << 8;
+	CommandContainer cmdcont = NewCommandContainerBasic(tile, p1, p2, CMD_BUILD_AIRPORT | CMD_MSG(STR_ERROR_CAN_T_BUILD_AIRPORT_HERE), CcBuildAirport);
+	ShowSelectStationIfNeeded(cmdcont, TileArea(tile, _thd.size.x / TILE_SIZE, _thd.size.y / TILE_SIZE));
 }
 
 /** Airport build toolbar window handler. */
@@ -88,11 +78,10 @@ struct BuildAirToolbarWindow : Window {
 		this->last_user_action = WIDGET_LIST_END;
 	}
 
-	void Close() override
+	~BuildAirToolbarWindow()
 	{
 		if (this->IsWidgetLowered(WID_AT_AIRPORT)) SetViewportCatchmentStation(nullptr, true);
-		if (_settings_client.gui.link_terraform_toolbar) CloseWindowById(WC_SCEN_LAND_GEN, 0, false);
-		this->Window::Close();
+		if (_settings_client.gui.link_terraform_toolbar) DeleteWindowById(WC_SCEN_LAND_GEN, 0, false);
 	}
 
 	/**
@@ -109,7 +98,7 @@ struct BuildAirToolbarWindow : Window {
 			WID_AT_AIRPORT,
 			WIDGET_LIST_END);
 		if (!can_build) {
-			CloseWindowById(WC_BUILD_STATION, TRANSPORT_AIR);
+			DeleteWindowById(WC_BUILD_STATION, TRANSPORT_AIR);
 
 			/* Show in the tooltip why this button is disabled. */
 			this->GetWidget<NWidgetCore>(WID_AT_AIRPORT)->SetToolTip(STR_TOOLBAR_DISABLED_NO_VEHICLE_AVAILABLE);
@@ -171,8 +160,8 @@ struct BuildAirToolbarWindow : Window {
 
 		this->RaiseButtons();
 
-		CloseWindowById(WC_BUILD_STATION, TRANSPORT_AIR);
-		CloseWindowById(WC_SELECT_STATION, 0);
+		DeleteWindowById(WC_BUILD_STATION, TRANSPORT_AIR);
+		DeleteWindowById(WC_SELECT_STATION, 0);
 	}
 
 	static HotkeyList hotkeys;
@@ -230,7 +219,7 @@ Window *ShowBuildAirToolbar()
 {
 	if (!Company::IsValidID(_local_company)) return nullptr;
 
-	CloseWindowByClass(WC_BUILD_TOOLBAR);
+	DeleteWindowByClass(WC_BUILD_TOOLBAR);
 	return AllocateWindowDescFront<BuildAirToolbarWindow>(&_air_toolbar_desc, TRANSPORT_AIR);
 }
 
@@ -244,7 +233,7 @@ class BuildAirportWindow : public PickerWindowBase {
 	{
 		DropDownList list;
 
-		for (uint i = 0; i < AirportClass::GetClassCount(); i++) {
+		for (uint i = 0; AirportClass::IsClassIDValid((AirportClassID)i); i++) {
 			list.emplace_back(new DropDownListStringItem(AirportClass::Get((AirportClassID)i)->name, i, false));
 		}
 
@@ -289,10 +278,9 @@ public:
 		if (selectFirstAirport) this->SelectFirstAvailableAirport(true);
 	}
 
-	void Close() override
+	virtual ~BuildAirportWindow()
 	{
-		CloseWindowById(WC_SELECT_STATION, 0);
-		this->PickerWindowBase::Close();
+		DeleteWindowById(WC_SELECT_STATION, 0);
 	}
 
 	void SetStringParameters(int widget) const override
@@ -326,8 +314,7 @@ public:
 			case WID_AP_CLASS_DROPDOWN: {
 				Dimension d = {0, 0};
 				for (uint i = 0; i < AirportClass::GetClassCount(); i++) {
-					SetDParam(0, AirportClass::Get((AirportClassID)i)->name);
-					d = maxdim(d, GetStringBoundingBox(STR_BLACK_STRING));
+					d = maxdim(d, GetStringBoundingBox(AirportClass::Get((AirportClassID)i)->name));
 				}
 				d.width += padding.width;
 				d.height += padding.height;
@@ -372,9 +359,7 @@ public:
 						StringID string = GetAirportTextCallback(as, layout, CBID_AIRPORT_ADDITIONAL_TEXT);
 						if (string == STR_UNDEFINED) continue;
 
-						/* STR_BLACK_STRING is used to start the string with {BLACK} */
-						SetDParam(0, string);
-						Dimension d = GetStringMultiLineBoundingBox(STR_BLACK_STRING, *size);
+						Dimension d = GetStringMultiLineBoundingBox(string, *size);
 						*size = maxdim(d, *size);
 					}
 				}
@@ -415,8 +400,7 @@ public:
 					const AirportSpec *as = AirportClass::Get(_selected_airport_class)->GetSpec(_selected_airport_index);
 					StringID string = GetAirportTextCallback(as, _selected_airport_layout, CBID_AIRPORT_ADDITIONAL_TEXT);
 					if (string != STR_UNDEFINED) {
-						SetDParam(0, string);
-						DrawStringMultiLine(r.left, r.right, r.top, r.bottom, STR_BLACK_STRING);
+						DrawStringMultiLine(r.left, r.right, r.top, r.bottom, string, TC_BLACK);
 					}
 				}
 				break;
@@ -432,7 +416,7 @@ public:
 
 		if (_selected_airport_index != -1) {
 			const AirportSpec *as = AirportClass::Get(_selected_airport_class)->GetSpec(_selected_airport_index);
-			int rad = _settings_game.station.modified_catchment ? as->catchment : (uint)CA_UNMODIFIED;
+			int rad = (_settings_game.station.modified_catchment ? as->catchment : (uint)CA_UNMODIFIED) + _settings_game.station.catchment_increase;
 
 			/* only show the station (airport) noise, if the noise option is activated */
 			if (_settings_game.economy.station_noise_level) {
@@ -490,7 +474,7 @@ public:
 			this->SetWidgetDisabledState(WID_AP_LAYOUT_DECREASE, _selected_airport_layout == 0);
 			this->SetWidgetDisabledState(WID_AP_LAYOUT_INCREASE, _selected_airport_layout + 1 >= as->num_table);
 
-			int rad = _settings_game.station.modified_catchment ? as->catchment : (uint)CA_UNMODIFIED;
+			int rad = (_settings_game.station.modified_catchment ? as->catchment : (uint)CA_UNMODIFIED) + _settings_game.station.catchment_increase;
 			if (_settings_client.gui.station_show_coverage) SetTileSelectBigSize(-rad, -rad, 2 * rad, 2 * rad);
 		}
 	}
@@ -590,7 +574,7 @@ static const NWidgetPart _nested_build_airport_widgets[] = {
 	EndContainer(),
 	NWidget(WWT_PANEL, COLOUR_DARK_GREEN), SetFill(1, 0), SetPIP(2, 0, 2),
 		NWidget(WWT_LABEL, COLOUR_DARK_GREEN), SetDataTip(STR_STATION_BUILD_AIRPORT_CLASS_LABEL, STR_NULL), SetFill(1, 0),
-		NWidget(WWT_DROPDOWN, COLOUR_GREY, WID_AP_CLASS_DROPDOWN), SetFill(1, 0), SetDataTip(STR_BLACK_STRING, STR_STATION_BUILD_AIRPORT_TOOLTIP),
+		NWidget(WWT_DROPDOWN, COLOUR_GREY, WID_AP_CLASS_DROPDOWN), SetFill(1, 0), SetDataTip(STR_JUST_STRING, STR_STATION_BUILD_AIRPORT_TOOLTIP),
 		NWidget(WWT_EMPTY, COLOUR_DARK_GREEN, WID_AP_AIRPORT_SPRITE), SetFill(1, 0),
 		NWidget(NWID_HORIZONTAL),
 			NWidget(WWT_MATRIX, COLOUR_GREY, WID_AP_AIRPORT_LIST), SetFill(1, 0), SetMatrixDataTip(1, 5, STR_STATION_BUILD_AIRPORT_TOOLTIP), SetScrollbar(WID_AP_SCROLLBAR),
@@ -598,7 +582,7 @@ static const NWidgetPart _nested_build_airport_widgets[] = {
 		EndContainer(),
 		NWidget(NWID_HORIZONTAL),
 			NWidget(WWT_PUSHARROWBTN, COLOUR_GREY, WID_AP_LAYOUT_DECREASE), SetMinimalSize(12, 0), SetDataTip(AWV_DECREASE, STR_NULL),
-			NWidget(WWT_LABEL, COLOUR_GREY, WID_AP_LAYOUT_NUM), SetResize(1, 0), SetFill(1, 0), SetDataTip(STR_BLACK_STRING, STR_NULL),
+			NWidget(WWT_LABEL, COLOUR_GREY, WID_AP_LAYOUT_NUM), SetResize(1, 0), SetFill(1, 0), SetDataTip(STR_JUST_STRING, STR_NULL),
 			NWidget(WWT_PUSHARROWBTN, COLOUR_GREY, WID_AP_LAYOUT_INCREASE), SetMinimalSize(12, 0), SetDataTip(AWV_INCREASE, STR_NULL),
 		EndContainer(),
 		NWidget(WWT_EMPTY, COLOUR_DARK_GREEN, WID_AP_EXTRA_TEXT), SetFill(1, 0), SetMinimalSize(150, 0),

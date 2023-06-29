@@ -31,8 +31,8 @@ struct is_compatible_element
 <
 	C, E, std::void_t<
 		decltype(std::data(std::declval<C>())),
-		typename std::remove_pointer_t<decltype(std::data( std::declval<C&>()))>(*)[]>
-> : std::is_convertible<typename std::remove_pointer_t<decltype(std::data(std::declval<C&>()))>(*)[], E(*)[]>{};
+		typename std::remove_pointer<decltype(std::data( std::declval<C&>()))>::type(*)[]>
+> : std::is_convertible<typename std::remove_pointer<decltype(std::data(std::declval<C&>()))>::type(*)[], E(*)[]>{};
 
 /* Template to check if a container is compatible. gsl-lite also includes is_array and is_std_array, but as we don't use them, they are omitted. */
 template <class C, class E>
@@ -82,6 +82,7 @@ public:
 	template<class Container, typename std::enable_if<(std::is_const<element_type>::value && is_compatible_container<Container, element_type>::value), int>::type = 0>
 	constexpr span(const Container &list) noexcept : first(std::data(list)), last(std::data(list) + std::size(list)) {}
 
+	constexpr pointer data() const noexcept { return first; }
 	constexpr size_t size() const noexcept { return static_cast<size_t>( last - first ); }
 	constexpr std::ptrdiff_t ssize() const noexcept { return static_cast<std::ptrdiff_t>( last - first ); }
 	constexpr bool empty() const noexcept { return size() == 0; }
@@ -91,8 +92,6 @@ public:
 
 	constexpr const_iterator cbegin() const noexcept { return const_iterator(first); }
 	constexpr const_iterator cend() const noexcept { return const_iterator(last); }
-
-	constexpr reference operator[](size_type idx) const { return first[idx]; }
 
 private:
 	pointer first;
