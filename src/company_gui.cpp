@@ -654,7 +654,7 @@ private:
 				if (HasBit(this->sel, scheme)) break;
 			}
 			if (scheme == LS_END) scheme = LS_DEFAULT;
-			livery = &c->livery[scheme];
+			livery = &Company::Get((CompanyID)this->window_number)->livery[scheme];
 			if (scheme != LS_DEFAULT) default_livery = &c->livery[LS_DEFAULT];
 		} else {
 			const Group *g = Group::Get(this->sel);
@@ -1379,7 +1379,7 @@ class SelectCompanyManagerFaceWindow : public Window
 	 * @param val            the value which will be displayed
 	 * @param is_bool_widget is it a bool button
 	 */
-	void SetFaceStringParameters(byte widget_index, uint8 val, bool is_bool_widget) const
+	void SetFaceStringParameters(int widget_index, uint8 val, bool is_bool_widget) const
 	{
 		const NWidgetCore *nwi_widget = this->GetWidget<NWidgetCore>(widget_index);
 		if (nwi_widget->IsDisabled()) {

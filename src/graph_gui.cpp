@@ -27,11 +27,12 @@
 #include "table/strings.h"
 #include "table/sprites.h"
 #include <math.h>
+#include <string>
 
 #include "safeguards.h"
 
 /* Bitmasks of company and cargo indices that shouldn't be drawn. */
-static CompanyMask _legend_excluded_companies;
+static Bitset<MAX_COMPANIES> _legend_excluded_companies;
 static CargoTypes _legend_excluded_cargo;
 
 /* Apparently these don't play well with enums. */
@@ -48,7 +49,7 @@ struct GraphLegendWindow : Window {
 		this->InitNested(window_number);
 
 		for (CompanyID c = COMPANY_FIRST; c < MAX_COMPANIES; c++) {
-			if (!HasBit(_legend_excluded_companies, c)) this->LowerWidget(c + WID_GL_FIRST_COMPANY);
+			if (!_legend_excluded_companies.at(c)) this->LowerWidget(c + WID_GL_FIRST_COMPANY);
 
 			this->OnInvalidateData(c);
 		}
@@ -71,14 +72,14 @@ struct GraphLegendWindow : Window {
 		const Rect tr = ir.Indent(d.width + WidgetDimensions::scaled.hsep_normal, rtl);
 		SetDParam(0, cid);
 		SetDParam(1, cid);
-		DrawString(tr.left, tr.right, CenterBounds(tr.top, tr.bottom, FONT_HEIGHT_NORMAL), STR_COMPANY_NAME_COMPANY_NUM, HasBit(_legend_excluded_companies, cid) ? TC_BLACK : TC_WHITE);
+		DrawString(tr.left, tr.right, CenterBounds(tr.top, tr.bottom, FONT_HEIGHT_NORMAL), STR_COMPANY_NAME_COMPANY_NUM, _legend_excluded_companies.at(cid) ? TC_BLACK : TC_WHITE);
 	}
 
 	void OnClick(Point pt, int widget, int click_count) override
 	{
 		if (!IsInsideMM(widget, WID_GL_FIRST_COMPANY, MAX_COMPANIES + WID_GL_FIRST_COMPANY)) return;
 
-		ToggleBit(_legend_excluded_companies, widget - WID_GL_FIRST_COMPANY);
+		_legend_excluded_companies.toggle(widget - WID_GL_FIRST_COMPANY);
 		this->ToggleWidgetLoweredState(widget);
 		this->SetDirty();
 		InvalidateWindowData(WC_INCOME_GRAPH, 0);
@@ -98,7 +99,7 @@ struct GraphLegendWindow : Window {
 		if (!gui_scope) return;
 		if (Company::IsValidID(data)) return;
 
-		SetBit(_legend_excluded_companies, data);
+		_legend_excluded_companies.set(data);
 		this->RaiseWidget(data + WID_GL_FIRST_COMPANY);
 	}
 };
@@ -163,7 +164,8 @@ struct ValuesInterval {
 
 struct BaseGraphWindow : Window {
 protected:
-	static const int GRAPH_MAX_DATASETS     =  64;
+	static const int GRAPH_MAX_DATASETS     =  (int)MAX_COMPANIES > (int)NUM_CARGO ? (int)MAX_COMPANIES : (int)NUM_CARGO;
+	static const int GRAPH_AXIS_LINE_COLOUR = PC_BLACK;
 	static const int GRAPH_BASE_COLOUR      =  GREY_SCALE(2);
 	static const int GRAPH_GRID_COLOUR      =  GREY_SCALE(3);
 	static const int GRAPH_AXIS_LINE_COLOUR =  GREY_SCALE(1);
@@ -176,8 +178,8 @@ protected:
 	static const int MIN_GRAPH_NUM_LINES_Y  =   9; ///< Minimal number of horizontal lines to draw.
 	static const int MIN_GRID_PIXEL_SIZE    =  20; ///< Minimum distance between graph lines.
 
-	uint64 excluded_data; ///< bitmask of the datasets that shouldn't be displayed.
-	byte num_dataset;
+	Bitset<GRAPH_MAX_DATASETS> excluded_data; ///< bitmask of the datasets that shouldn't be displayed.
+	int num_dataset;
 	byte num_on_x_axis;
 	byte num_vert_lines;
 
@@ -211,7 +213,7 @@ protected:
 		current_interval.lowest  = INT64_MAX;
 
 		for (int i = 0; i < this->num_dataset; i++) {
-			if (HasBit(this->excluded_data, i)) continue;
+			if (this->excluded_data.at(i)) continue;
 			for (int j = 0; j < this->num_on_x_axis; j++) {
 				OverflowSafeInt64 datapoint = this->cost[i][j];
 
@@ -418,7 +420,7 @@ protected:
 		uint pointoffs1 = (linewidth + 1) / 2;
 		uint pointoffs2 = linewidth + 1 - pointoffs1;
 		for (int i = 0; i < this->num_dataset; i++) {
-			if (!HasBit(this->excluded_data, i)) {
+			if (!this->excluded_data.at(i)) {
 				/* Centre the dot between the grid lines. */
 				x = r.left + (x_sep / 2);
 
@@ -566,11 +568,11 @@ public:
 	 */
 	void UpdateStatistics(bool initialize)
 	{
-		CompanyMask excluded_companies = _legend_excluded_companies;
+		Bitset<GRAPH_MAX_DATASETS> excluded_companies = _legend_excluded_companies;
 
 		/* Exclude the companies which aren't valid */
 		for (CompanyID c = COMPANY_FIRST; c < MAX_COMPANIES; c++) {
-			if (!Company::IsValidID(c)) SetBit(excluded_companies, c);
+			if (!Company::IsValidID(c)) excluded_companies.set(c);
 		}
 
 		byte nums = 0;
@@ -904,11 +906,11 @@ struct PaymentRatesGraphWindow : BaseGraphWindow {
 
 	void UpdateExcludedData()
 	{
-		this->excluded_data = 0;
+		this->excluded_data.reset();
 
 		int i = 0;
 		for (const CargoSpec *cs : _sorted_standard_cargo_specs) {
-			if (HasBit(_legend_excluded_cargo, cs->Index())) SetBit(this->excluded_data, i);
+			if (HasBit(_legend_excluded_cargo, cs->Index())) this->excluded_data.set(i);
 			i++;
 		}
 	}
@@ -978,7 +980,8 @@ struct PaymentRatesGraphWindow : BaseGraphWindow {
 			case WID_CPR_ENABLE_CARGOES:
 				/* Remove all cargoes from the excluded lists. */
 				_legend_excluded_cargo = 0;
-				this->excluded_data = 0;
+				this->excluded_data.reset();
+				this->UpdateLoweredWidgets();
 				this->SetDirty();
 				break;
 
@@ -987,7 +990,7 @@ struct PaymentRatesGraphWindow : BaseGraphWindow {
 				int i = 0;
 				for (const CargoSpec *cs : _sorted_standard_cargo_specs) {
 					SetBit(_legend_excluded_cargo, cs->Index());
-					SetBit(this->excluded_data, i);
+					this->excluded_data.set(i);
 					i++;
 				}
 				this->SetDirty();
@@ -1097,6 +1100,217 @@ static WindowDesc _cargo_payment_rates_desc(
 void ShowCargoPaymentRates()
 {
 	AllocateWindowDescFront<PaymentRatesGraphWindow>(&_cargo_payment_rates_desc, 0);
+}
+
+/************************/
+/* COMPANY LEAGUE TABLE */
+/************************/
+
+static const StringID _performance_titles[] = {
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_ENGINEER,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_ENGINEER,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_TRAFFIC_MANAGER,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_TRAFFIC_MANAGER,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_TRANSPORT_COORDINATOR,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_TRANSPORT_COORDINATOR,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_ROUTE_SUPERVISOR,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_ROUTE_SUPERVISOR,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_DIRECTOR,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_DIRECTOR,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_CHIEF_EXECUTIVE,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_CHIEF_EXECUTIVE,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_CHAIRMAN,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_CHAIRMAN,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_PRESIDENT,
+	STR_COMPANY_LEAGUE_PERFORMANCE_TITLE_TYCOON,
+};
+
+static inline StringID GetPerformanceTitleFromValue(uint value)
+{
+	return _performance_titles[minu(value, 1000) >> 6];
+}
+
+class CompanyLeagueWindow : public Window {
+private:
+	GUIList<const Company*> companies;
+	Scrollbar *vscroll;
+	uint ordinal_width; ///< The width of the ordinal number
+	uint text_width;    ///< The width of the actual text
+	uint icon_width;    ///< The width of the company icon
+	int line_height;    ///< Height of the text lines
+
+	/**
+	 * (Re)Build the company league list
+	 */
+	void BuildCompanyList()
+	{
+		if (!this->companies.NeedRebuild()) return;
+
+		this->companies.Clear();
+
+		const Company *c;
+		FOR_ALL_COMPANIES(c) {
+			*this->companies.Append() = c;
+		}
+
+		this->companies.Compact();
+		this->companies.RebuildDone();
+	}
+
+	/** Sort the company league by performance history */
+	static int CDECL PerformanceSorter(const Company * const *c1, const Company * const *c2)
+	{
+		return (*c2)->old_economy[0].performance_history - (*c1)->old_economy[0].performance_history;
+	}
+
+public:
+	CompanyLeagueWindow(WindowDesc *desc, WindowNumber window_number) : Window(desc)
+	{
+		this->CreateNestedTree();
+		this->vscroll = this->GetScrollbar(WID_CL_SCROLLBAR);
+		this->FinishInitNested(window_number);
+
+		this->companies.ForceRebuild();
+		this->companies.NeedResort();
+	}
+
+	virtual void OnPaint()
+	{
+		this->BuildCompanyList();
+		this->companies.Sort(&PerformanceSorter);
+
+		this->vscroll->SetCount(this->companies.Length());
+		this->DrawWidgets();
+	}
+
+	virtual void DrawWidget(const Rect &r, int widget) const
+	{
+		if (widget != WID_CL_BACKGROUND) return;
+
+		int icon_y_offset = 1 + (FONT_HEIGHT_NORMAL - this->line_height) / 2;
+		uint y = r.top + WD_FRAMERECT_TOP - icon_y_offset;
+
+		bool rtl = _current_text_dir == TD_RTL;
+		uint ordinal_left  = rtl ? r.right - WD_FRAMERECT_LEFT - this->ordinal_width : r.left + WD_FRAMERECT_LEFT;
+		uint ordinal_right = rtl ? r.right - WD_FRAMERECT_LEFT : r.left + WD_FRAMERECT_LEFT + this->ordinal_width;
+		uint icon_left     = r.left + WD_FRAMERECT_LEFT + WD_FRAMERECT_RIGHT + (rtl ? this->text_width : this->ordinal_width);
+		uint text_left     = rtl ? r.left + WD_FRAMERECT_LEFT : r.right - WD_FRAMERECT_LEFT - this->text_width;
+		uint text_right    = rtl ? r.left + WD_FRAMERECT_LEFT + this->text_width : r.right - WD_FRAMERECT_LEFT;
+
+		uint count = min(this->vscroll->GetCapacity(), this->companies.Length());
+		for (uint i = this->vscroll->GetPosition(), t = i + count; i != t; i++) {
+			const Company *c = this->companies[i];
+			if (i + STR_ORDINAL_NUMBER_1ST <= STR_ORDINAL_NUMBER_15TH)
+				DrawString(ordinal_left, ordinal_right, y, i + STR_ORDINAL_NUMBER_1ST, i == 0 ? TC_WHITE : TC_YELLOW);
+			else
+				DrawString(ordinal_left, ordinal_right, y, (std::to_string(i + 1) + ".").c_str(), i == 0 ? TC_WHITE : TC_YELLOW);
+
+			DrawCompanyIcon(c->index, icon_left, y + icon_y_offset);
+
+			SetDParam(0, c->index);
+			SetDParam(1, c->index);
+			SetDParam(2, GetPerformanceTitleFromValue(c->old_economy[0].performance_history));
+			DrawString(text_left, text_right, y, STR_COMPANY_LEAGUE_COMPANY_NAME);
+			y += this->line_height;
+		}
+	}
+
+	virtual void UpdateWidgetSize(int widget, Dimension *size, const Dimension &padding, Dimension *fill, Dimension *resize)
+	{
+		if (widget != WID_CL_BACKGROUND) return;
+
+		this->ordinal_width = 0;
+		for (uint i = 0; i < MAX_COMPANIES; i++) {
+			if (i + STR_ORDINAL_NUMBER_1ST <= STR_ORDINAL_NUMBER_15TH)
+				this->ordinal_width = max(this->ordinal_width, GetStringBoundingBox(i + STR_ORDINAL_NUMBER_1ST).width);
+			else
+				this->ordinal_width = max(this->ordinal_width, GetStringBoundingBox((std::to_string(i + 1) + ".").c_str()).width);
+		}
+		this->ordinal_width += 5; // Keep some extra spacing
+
+		uint widest_width = 0;
+		uint widest_title = 0;
+		for (uint i = 0; i < lengthof(_performance_titles); i++) {
+			uint width = GetStringBoundingBox(_performance_titles[i]).width;
+			if (width > widest_width) {
+				widest_title = i;
+				widest_width = width;
+			}
+		}
+
+		Dimension d = GetSpriteSize(SPR_COMPANY_ICON);
+		this->icon_width = d.width + 2;
+		this->line_height = max<int>(d.height + 2, FONT_HEIGHT_NORMAL);
+
+		const Company *c;
+		FOR_ALL_COMPANIES(c) {
+			SetDParam(0, c->index);
+			SetDParam(1, c->index);
+			SetDParam(2, _performance_titles[widest_title]);
+			widest_width = max(widest_width, GetStringBoundingBox(STR_COMPANY_LEAGUE_COMPANY_NAME).width);
+		}
+
+		this->text_width = widest_width + 30; // Keep some extra spacing
+
+		resize->height = this->line_height;
+		size->width = WD_FRAMERECT_LEFT + this->ordinal_width + WD_FRAMERECT_RIGHT + this->icon_width + WD_FRAMERECT_LEFT + this->text_width + WD_FRAMERECT_RIGHT;
+		size->height = WD_FRAMERECT_TOP + this->line_height * OLD_MAX_COMPANIES + WD_FRAMERECT_BOTTOM;
+	}
+
+	virtual void OnResize()
+	{
+		this->vscroll->SetCapacityFromWidget(this, WID_CL_BACKGROUND, WD_FRAMERECT_TOP + WD_FRAMERECT_BOTTOM);
+	}
+
+	virtual void OnTick()
+	{
+		if (this->companies.NeedResort()) {
+			this->SetDirty();
+		}
+	}
+
+	/**
+	 * Some data on this window has become invalid.
+	 * @param data Information about the changed data.
+	 * @param gui_scope Whether the call is done from GUI scope. You may not do everything when not in GUI scope. See #InvalidateWindowData() for details.
+	 */
+	virtual void OnInvalidateData(int data = 0, bool gui_scope = true)
+	{
+		if (data == 0) {
+			/* This needs to be done in command-scope to enforce rebuilding before resorting invalid data */
+			this->companies.ForceRebuild();
+		} else {
+			this->companies.ForceResort();
+		}
+	}
+};
+
+static const NWidgetPart _nested_company_league_widgets[] = {
+	NWidget(NWID_HORIZONTAL),
+		NWidget(WWT_CLOSEBOX, COLOUR_GREY),
+		NWidget(WWT_CAPTION, COLOUR_GREY), SetDataTip(STR_COMPANY_LEAGUE_TABLE_CAPTION, STR_TOOLTIP_WINDOW_TITLE_DRAG_THIS),
+		NWidget(WWT_SHADEBOX, COLOUR_GREY),
+		NWidget(WWT_STICKYBOX, COLOUR_GREY),
+	EndContainer(),
+	NWidget(NWID_HORIZONTAL),
+		NWidget(WWT_PANEL, COLOUR_GREY, WID_CL_BACKGROUND), SetMinimalSize(400, 0), SetScrollbar(WID_CL_SCROLLBAR), EndContainer(),
+		NWidget(NWID_VERTICAL),
+			NWidget(NWID_VSCROLLBAR, COLOUR_GREY, WID_CL_SCROLLBAR),
+			NWidget(WWT_RESIZEBOX, COLOUR_GREY),
+		EndContainer(),
+	EndContainer(),
+};
+
+static WindowDesc _company_league_desc(
+	WDP_AUTO, "league", 0, 0,
+	WC_COMPANY_LEAGUE, WC_NONE,
+	0,
+	_nested_company_league_widgets, lengthof(_nested_company_league_widgets)
+);
+
+void ShowCompanyLeagueTable()
+{
+	AllocateWindowDescFront<CompanyLeagueWindow>(&_company_league_desc, 0);
 }
 
 /*****************************/

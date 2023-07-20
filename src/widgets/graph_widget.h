@@ -49,6 +49,13 @@ enum CargoPaymentRatesWidgets {
 	WID_CPR_DISABLE_CARGOES, ///< Disable cargoes button.
 	WID_CPR_MATRIX,          ///< Cargo list.
 	WID_CPR_MATRIX_SCROLLBAR,///< Cargo list scrollbar.
+	WID_CPR_CARGO_FIRST,     ///< First cargo in the list.
+};
+
+/** Widget of the #CompanyLeagueWindow class. */
+enum CompanyLeagueWidgets {
+	WID_CL_BACKGROUND, ///< Background of the window.
+	WID_CL_SCROLLBAR,
 };
 
 /** Widget of the #PerformanceRatingDetailWindow class. */

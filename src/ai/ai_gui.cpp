@@ -765,6 +765,22 @@ struct AIConfigWindow : public Window {
 				resize->height = this->line_height;
 				size->height = 8 * this->line_height;
 				break;
+
+			case WID_AIC_CHANGE: {
+				SetDParam(0, STR_AI_CONFIG_CHANGE_GAMESCRIPT);
+				Dimension dim = GetStringBoundingBox(STR_AI_CONFIG_CHANGE);
+
+				SetDParam(0, STR_AI_CONFIG_CHANGE_NONE);
+				dim = maxdim(dim, GetStringBoundingBox(STR_AI_CONFIG_CHANGE));
+
+				SetDParam(0, STR_AI_CONFIG_CHANGE_AI);
+				dim = maxdim(dim, GetStringBoundingBox(STR_AI_CONFIG_CHANGE));
+
+				dim.width += padding.width;
+				dim.height += padding.height;
+				*size = maxdim(*size, dim);
+				break;
+			}
 		}
 	}
 
@@ -1365,7 +1381,7 @@ StringFilter AIDebugWindow::break_string_filter(&AIDebugWindow::case_sensitive_b
 /** Make a number of rows with buttons for each company for the AI debug window. */
 NWidgetBase *MakeCompanyButtonRowsAIDebug(int *biggest_index)
 {
-	return MakeCompanyButtonRows(biggest_index, WID_AID_COMPANY_BUTTON_START, WID_AID_COMPANY_BUTTON_END, COLOUR_GREY, 8, STR_AI_DEBUG_SELECT_AI_TOOLTIP);
+	return MakeCompanyButtonRows(biggest_index, WID_AID_COMPANY_BUTTON_START, WID_AID_COMPANY_BUTTON_END, COLOUR_GREY, 15, STR_AI_DEBUG_SELECT_AI_TOOLTIP);
 }
 
 /**
