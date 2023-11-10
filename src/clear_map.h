@@ -290,6 +290,7 @@ static inline void MakeField(TileIndex t, uint field_type, IndustryID industry)
 	SB(_me[t].m6, 2, 4, 0);
 	_me[t].m7 = 0;
 	_me[t].m8 = 0;
+	_me[t].m9 = 0;
 }
 
 /**
