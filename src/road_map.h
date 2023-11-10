@@ -234,6 +234,17 @@ static inline bool HasTileAnyRoadType(TileIndex t, RoadTypes rts)
 static inline Owner GetRoadOwner(TileIndex t, RoadTramType rtt)
 {
 	assert(MayHaveRoad(t));
+	if (rtt == RTT_ROAD) return GetTileOwner(t);
+
+	/* Trams don't need OWNER_TOWN, and remapping OWNER_NONE
+	 * to OWNER_TOWN makes it use one bit less */
+	Owner o = GetTileOwner(t);
+	return o == OWNER_TOWN ? OWNER_NONE : o;
+}
+
+static inline Owner GetOldRoadOwner(TileIndex t, RoadTramType rtt)
+{
+	assert(MayHaveRoad(t));
 	if (rtt == RTT_ROAD) return (Owner)GB(IsNormalRoadTile(t) ? _m[t].m1 : _me[t].m7, 0, 5);
 
 	/* Trams don't need OWNER_TOWN, and remapping OWNER_NONE
@@ -249,6 +260,15 @@ static inline Owner GetRoadOwner(TileIndex t, RoadTramType rtt)
  * @param o  New owner of the given road type.
  */
 static inline void SetRoadOwner(TileIndex t, RoadTramType rtt, Owner o)
+{
+	if (rtt == RTT_ROAD) {
+		SetTileOwner(t, o);
+	} else {
+		SetTileOwner(t, o == OWNER_NONE ? OWNER_TOWN : o);
+	}
+}
+
+static inline void SetOldRoadOwner(TileIndex t, RoadTramType rtt, Owner o)
 {
 	if (rtt == RTT_ROAD) {
 		SB(IsNormalRoadTile(t) ? _m[t].m1 : _me[t].m7, 0, 5, o);
@@ -689,7 +709,7 @@ static inline void MakeRoadDepot(TileIndex t, Owner owner, DepotID did, DiagDire
 	_m[t].m4 = INVALID_ROADTYPE;
 	_m[t].m5 = ROAD_TILE_DEPOT << 6 | dir;
 	SB(_me[t].m6, 2, 4, 0);
-	_me[t].m7 = owner;
+	SetTileOwner(t, owner);
 	_me[t].m8 = INVALID_ROADTYPE << 6;
 	SetRoadType(t, GetRoadTramType(rt), rt);
 	SetRoadOwner(t, RTT_TRAM, owner);
