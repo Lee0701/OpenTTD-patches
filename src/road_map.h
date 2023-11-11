@@ -234,12 +234,7 @@ static inline bool HasTileAnyRoadType(TileIndex t, RoadTypes rts)
 static inline Owner GetRoadOwner(TileIndex t, RoadTramType rtt)
 {
 	assert(MayHaveRoad(t));
-	if (rtt == RTT_ROAD) return GetTileOwner(t);
-
-	/* Trams don't need OWNER_TOWN, and remapping OWNER_NONE
-	 * to OWNER_TOWN makes it use one bit less */
-	Owner o = GetTileOwner(t);
-	return o == OWNER_TOWN ? OWNER_NONE : o;
+	return GetTileOwner(t);
 }
 
 static inline Owner GetOldRoadOwner(TileIndex t, RoadTramType rtt)
@@ -261,11 +256,7 @@ static inline Owner GetOldRoadOwner(TileIndex t, RoadTramType rtt)
  */
 static inline void SetRoadOwner(TileIndex t, RoadTramType rtt, Owner o)
 {
-	if (rtt == RTT_ROAD) {
-		SetTileOwner(t, o);
-	} else {
-		SetTileOwner(t, o == OWNER_NONE ? OWNER_TOWN : o);
-	}
+	SetTileOwner(t, o);
 }
 
 static inline void SetOldRoadOwner(TileIndex t, RoadTramType rtt, Owner o)

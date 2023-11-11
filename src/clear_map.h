@@ -282,7 +282,6 @@ static inline void MakeField(TileIndex t, uint field_type, IndustryID industry)
 {
 	SetTileType(t, MP_CLEAR);
 	_m[t].m1 = 0;
-	SetTileOwner(t, OWNER_NONE);
 	_m[t].m2 = industry;
 	_m[t].m3 = field_type;
 	_m[t].m4 = 0 << 5 | 0 << 2;
@@ -291,6 +290,7 @@ static inline void MakeField(TileIndex t, uint field_type, IndustryID industry)
 	_me[t].m7 = 0;
 	_me[t].m8 = 0;
 	_me[t].m9 = 0;
+	SetTileOwner(t, OWNER_NONE);
 }
 
 /**
