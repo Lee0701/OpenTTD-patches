@@ -915,7 +915,7 @@ bool AfterLoadGame()
 				BaseStation *bst = BaseStation::GetByTile(t);
 
 				/* Sanity check */
-				if (!IsBuoy(t) && bst->owner != GetOldTileOwner(t)) SlErrorCorrupt("Wrong owner for station tile");
+				if (!IsBuoy(t) && bst->owner != GetOldTileOwner(t) && bst->owner != GetTileOwner(t)) SlErrorCorrupt("Wrong owner for station tile");
 
 				/* Set up station spread */
 				bst->rect.BeforeAddTile(t, StationRect::ADD_FORCE);
