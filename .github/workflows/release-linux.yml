@@ -28,8 +28,8 @@ jobs:
         sudo apt install -y \
           build-essential \
           ninja-build \
-          libicu libicu-dev \
-          fluidsynth libfluidsynth-dev \
+          libicu-dev \
+          libfluidsynth-dev \
           libasound2-dev \
           libjack-jackd2-dev \
           libpulse-dev \
