@@ -42,7 +42,7 @@ static const SaveLoad _engine_desc[] = {
 	 SLE_CONDARR(Engine, company_avail.data,  SLE_UINT64, CompanyMask::bsize, SLV_MORE_COMPANIES, SL_MAX_VERSION),
 	 SLE_CONDVAR(Engine, company_hidden.data, SLE_FILE_U16 | SLE_VAR_U64,  SLV_193, SLV_MORE_COMPANIES),
 	 SLE_CONDARR(Engine, company_hidden.data, SLE_UINT64, CompanyMask::bsize, SLV_MORE_COMPANIES, SL_MAX_VERSION),
-	 SLE_CONDSTR(Engine, name,                SLE_STR, 0,                 SLV_84, SL_MAX_VERSION),
+	 SLE_CONDSSTR(Engine, name,                SLE_STR,                 SLV_84, SL_MAX_VERSION),
 };
 
 static std::vector<Engine*> _temp_engine;
