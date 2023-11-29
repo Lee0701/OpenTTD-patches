@@ -32,7 +32,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: /vcpkg/installed
-        key: ubuntu-20.04-vcpkg-release-1 # Increase the number whenever dependencies are modified
+        key: ubuntu-20.04-vcpkg-release-z # Increase the number whenever dependencies are modified
         restore-keys: |
           ubuntu-20.04-vcpkg-release
 
@@ -92,7 +92,7 @@ jobs:
 
         # We do a little dance to make sure we copy the cached install folder
         # into our new clone.
-        git clone --depth=1 https://github.com/microsoft/vcpkg /vcpkg-clone
+        git clone --depth=1 --branch=2023.07.21 https://github.com/microsoft/vcpkg /vcpkg-clone
         if [ -e /vcpkg/installed ]; then
           mv /vcpkg/installed /vcpkg-clone/
           rm -rf /vcpkg
