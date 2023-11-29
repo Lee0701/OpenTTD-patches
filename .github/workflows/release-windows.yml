@@ -49,7 +49,6 @@ jobs:
       shell: bash
       run: |
         echo "::group::Install choco dependencies"
-        choco install pandoc
         echo "::endgroup::"
 
         echo "::group::Install breakpad dependencies"
