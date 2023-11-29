@@ -37,10 +37,6 @@ jobs:
           # EOF
         echo "::endgroup::"
 
-        echo "::group::Install breakpad dependencies"
-        cargo install dump_syms
-        echo "::endgroup::"
-
     - name: Prepare cache key
       id: key
       run: |
@@ -58,8 +54,6 @@ jobs:
     - name: Prepare vcpkg
       run: |
         vcpkg install \
-          breakpad:x64-osx \
-          breakpad:arm64-osx \
           curl:x64-osx \
           curl:arm64-osx \
           liblzma:x64-osx \
@@ -137,18 +131,6 @@ jobs:
         cmake --build . -j $(sysctl -n hw.logicalcpu) --target openttd
         echo "::endgroup::"
 
-    - name: Create breakpad symbols
-      run: |
-        cd build-x64
-        mkdir dSYM
-        dsymutil ./openttd -o dSYM/openttd
-        dump_syms ./dSYM/openttd --inlines --store symbols
-
-        cd ../build-arm64
-        mkdir dSYM
-        dsymutil ./openttd -o dSYM/openttd
-        dump_syms ./dSYM/openttd --inlines --store ../build-x64/symbols
-
     - name: Create bundles
       run: |
         cd build-x64
@@ -213,11 +195,4 @@ jobs:
       with:
         name: openttd-macos-universal
         path: build-x64/bundles
-        retention-days: 5
-
-    - name: Store symbols
-      uses: actions/upload-artifact@v3
-      with:
-        name: symbols-macos-universal
-        path: build-x64/symbols
         retention-days: 5

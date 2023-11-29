@@ -45,10 +45,6 @@ jobs:
         echo "::group::Install choco dependencies"
         echo "::endgroup::"
 
-        echo "::group::Install breakpad dependencies"
-        cargo install dump_syms
-        echo "::endgroup::"
-
     - name: Prepare cache key
       id: key
       shell: powershell
@@ -75,13 +71,6 @@ jobs:
           lzo \
           zlib \
           # EOF
-
-        # arm64-windows-static is not (yet) supported for breakpad.
-        if [ "${{ matrix.arch }}" != "arm64" ]; then
-          vcpkg install --triplet=${{ matrix.arch }}-windows-static \
-            breakpad \
-            # EOF
-        fi
 
     - name: Install MSVC problem matcher
       uses: ammaraskar/msvc-problem-matcher@master
@@ -165,27 +154,12 @@ jobs:
       env:
         WINDOWS_CERTIFICATE_COMMON_NAME: ${{ secrets.WINDOWS_CERTIFICATE_COMMON_NAME }}
 
-    - name: Create breakpad symbols
-      shell: bash
-      run: |
-        cd build
-        dump_syms openttd.pdb --inlines --store symbols
-
     - name: Create bundles
       shell: bash
       run: |
         cd ${GITHUB_WORKSPACE}/build
         echo "::group::Run CPack"
         cpack
-        echo "::endgroup::"
-
-        echo "::group::Move PDB and exe to symbols"
-        PDB_FOLDER=$(find symbols -mindepth 2 -type d)
-        cp openttd.pdb ${PDB_FOLDER}/
-
-        EXE_FOLDER=symbols/openttd.exe/$(grep "INFO CODE_ID" symbols/*/*/openttd.sym | cut -d\  -f3)
-        mkdir -p ${EXE_FOLDER}
-        cp openttd.exe ${EXE_FOLDER}/
         echo "::endgroup::"
 
         echo "::group::Cleanup"
@@ -199,11 +173,4 @@ jobs:
       with:
         name: openttd-windows-${{ matrix.arch }}
         path: build/bundles
-        retention-days: 5
-
-    - name: Store symbols
-      uses: actions/upload-artifact@v3
-      with:
-        name: symbols-windows-${{ matrix.arch }}
-        path: build/symbols
         retention-days: 5
