@@ -98,16 +98,6 @@ jobs:
         cmake --build . -j $(sysctl -n hw.logicalcpu) --target tools
         echo "::endgroup::"
 
-    - name: Import code signing certificates
-      uses: Apple-Actions/import-codesign-certs@v2
-      with:
-        # The certificates in a PKCS12 file encoded as a base64 string
-        p12-file-base64: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
-        # The password used to import the PKCS12 file.
-        p12-password: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
-      # If this is run on a fork, there may not be a certificate set up - continue in this case
-      continue-on-error: true
-
     - name: Build arm64
       run: |
         mkdir build-arm64

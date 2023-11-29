@@ -120,21 +120,6 @@ jobs:
       with:
         arch: ${{ matrix.host }}
 
-    - name: Import code signing certificate
-      shell: powershell
-      # If this is run on a fork, there may not be a certificate set up - continue in this case
-      continue-on-error: true
-      run: |
-        $tempFile = [System.IO.Path]::GetTempFileName()
-        $bytes = [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_P12)
-        [IO.File]::WriteAllBytes($tempFile, $bytes)
-        $pwd = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
-        Import-PfxCertificate -FilePath $tempFile -CertStoreLocation Cert:\CurrentUser\My -Password $pwd
-        Remove-Item $tempFile
-      env:
-        WINDOWS_CERTIFICATE_P12: ${{ secrets.WINDOWS_CERTIFICATE_P12 }}
-        WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-
     - name: Build (with installer)
       if: inputs.is_tag == 'true'
       shell: bash
