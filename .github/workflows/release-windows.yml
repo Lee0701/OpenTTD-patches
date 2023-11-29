@@ -200,17 +200,6 @@ jobs:
         rm -f bundles/*.sha256
         echo "::endgroup::"
 
-    - name: Sign installer
-      if: inputs.is_tag == 'true'
-      shell: bash
-      # If this is run on a fork, there may not be a certificate set up - continue in this case
-      continue-on-error: true
-      run: |
-        cd ${GITHUB_WORKSPACE}/build/bundles
-        ../../os/windows/sign.bat *.exe "${WINDOWS_CERTIFICATE_COMMON_NAME}"
-      env:
-        WINDOWS_CERTIFICATE_COMMON_NAME: ${{ secrets.WINDOWS_CERTIFICATE_COMMON_NAME }}
-
     - name: Store bundles
       uses: actions/upload-artifact@v3
       with:
