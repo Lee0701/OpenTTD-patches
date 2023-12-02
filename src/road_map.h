@@ -234,7 +234,7 @@ static inline bool HasTileAnyRoadType(TileIndex t, RoadTypes rts)
 static inline Owner GetRoadOwner(TileIndex t, RoadTramType rtt)
 {
 	assert(MayHaveRoad(t));
-	if(rtt == RTT_TRAM) {
+	if(rtt == RTT_ROAD) {
 		if(IsNormalRoadTile(t)) return GetTileOwner(t);
 		else return (Owner) _m[t].m3;
 	}
