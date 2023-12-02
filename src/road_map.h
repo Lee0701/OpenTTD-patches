@@ -234,7 +234,13 @@ static inline bool HasTileAnyRoadType(TileIndex t, RoadTypes rts)
 static inline Owner GetRoadOwner(TileIndex t, RoadTramType rtt)
 {
 	assert(MayHaveRoad(t));
-	return GetTileOwner(t);
+	if(rtt == RTT_TRAM) {
+		if(IsNormalRoadTile(t)) return GetTileOwner(t);
+		else return (Owner) _m[t].m1;
+	}
+
+	Owner o = (Owner) _m[t].m3;
+	return o == OWNER_TOWN ? OWNER_NONE : o;
 }
 
 static inline Owner GetOldRoadOwner(TileIndex t, RoadTramType rtt)
@@ -256,7 +262,12 @@ static inline Owner GetOldRoadOwner(TileIndex t, RoadTramType rtt)
  */
 static inline void SetRoadOwner(TileIndex t, RoadTramType rtt, Owner o)
 {
-	SetTileOwner(t, o);
+	if(rtt == RTT_ROAD) {
+		if(IsNormalRoadTile(t)) SetTileOwner(t, o);
+		else _m[t].m1 = o;
+	} else {
+		_m[t].m3 = o == OWNER_NONE ? OWNER_TOWN : o;
+	}
 }
 
 static inline void SetOldRoadOwner(TileIndex t, RoadTramType rtt, Owner o)
@@ -677,15 +688,15 @@ static inline void MakeRoadCrossing(TileIndex t, Owner road, Owner tram, Owner r
 	_m[t].m4 = INVALID_ROADTYPE;
 	_m[t].m5 = ROAD_TILE_CROSSING << 6 | roaddir;
 	SB(_me[t].m6, 2, 4, 0);
-	_me[t].m7 = road;
 	_me[t].m8 = INVALID_ROADTYPE << 6 | rat;
 	SetRoadTypes(t, road_rt, tram_rt);
+	SetRoadOwner(t, RTT_ROAD, road);
 	SetRoadOwner(t, RTT_TRAM, tram);
 }
 
 /**
  * Make a road depot.
- * @param t     Tile to make a level crossing.
+ * @param t     Tile to make a road depot.
  * @param owner New owner of the depot.
  * @param did   New depot ID.
  * @param dir   Direction of the depot exit.*

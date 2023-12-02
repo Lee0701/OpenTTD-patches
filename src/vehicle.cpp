@@ -1395,7 +1395,6 @@ void AgeVehicle(Vehicle *v)
 	/* Don't warn about vehicles which are non-primary (e.g., part of an articulated vehicle), don't belong to us, are crashed, or are stopped */
 	if (v->Previous() != nullptr || v->owner != _local_company || (v->vehstatus & VS_CRASHED) != 0 || (v->vehstatus & VS_STOPPED) != 0) return;
 
-	const Company *c = Company::Get(v->owner);
 	/* Don't warn if a renew is active */
 	if (Company::Get(v->owner)->settings.engine_renew && v->GetEngine()->company_avail.any()) return;
 

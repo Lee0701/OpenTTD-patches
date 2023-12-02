@@ -210,7 +210,7 @@ static inline void SetTileOwner(TileIndex tile, Owner owner)
 	assert(!IsTileType(tile, MP_HOUSE));
 	assert(!IsTileType(tile, MP_INDUSTRY));
 
-	_me[tile].m9 = (owner << 8);
+	SB(_me[tile].m9, 8, 8, owner);
 }
 
 static inline void SetOldTileOwner(TileIndex tile, Owner owner)
