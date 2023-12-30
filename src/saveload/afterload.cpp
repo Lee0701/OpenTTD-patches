@@ -49,6 +49,7 @@
 #include "../subsidy_base.h"
 #include "../subsidy_func.h"
 #include "../newgrf.h"
+#include "../newgrf_station.h"
 #include "../engine_func.h"
 #include "../rail_gui.h"
 #include "../road_gui.h"
@@ -1775,7 +1776,7 @@ bool AfterLoadGame()
 	}
 
 	for (Company *c : Company::Iterate()) {
-		c->avail_railtypes = GetCompanyRailtypes(c->index);
+		c->avail_railtypes = GetCompanyRailTypes(c->index);
 		c->avail_roadtypes = GetCompanyRoadTypes(c->index);
 	}
 
@@ -2049,9 +2050,9 @@ bool AfterLoadGame()
 
 	if (IsSavegameVersionBefore(SLV_74)) {
 		for (Station *st : Station::Iterate()) {
-			for (CargoID c = 0; c < NUM_CARGO; c++) {
-				st->goods[c].last_speed = 0;
-				if (st->goods[c].CargoAvailableCount() != 0) SetBit(st->goods[c].status, GoodsEntry::GES_RATING);
+			for (GoodsEntry &ge : st->goods) {
+				ge.last_speed = 0;
+				if (ge.CargoAvailableCount() != 0) SetBit(ge.status, GoodsEntry::GES_RATING);
 			}
 		}
 	}
@@ -3215,9 +3216,6 @@ bool AfterLoadGame()
 		}
 	}
 
-	/* The center of train vehicles was changed, fix up spacing. */
-	if (IsSavegameVersionBefore(SLV_164)) FixupTrainLengths();
-
 	if (IsSavegameVersionBefore(SLV_165)) {
 		for (Town *t : Town::Iterate()) {
 			/* Set the default cargo requirement for town growth */
@@ -3336,6 +3334,10 @@ bool AfterLoadGame()
 		/* Initialise script settings profile */
 		_settings_game.script.settings_profile = IsInsideMM(_old_diff_level, SP_BEGIN, SP_END) ? _old_diff_level : (uint)SP_MEDIUM;
 	}
+
+	/* Station blocked, wires and pylon flags need to be stored in the map.
+	 * This is done here as the SLV_182 check below needs the blocked status. */
+	UpdateStationTileCacheFlags(SlXvIsFeatureMissing(XSLFI_STATION_TILE_CACHE_FLAGS));
 
 	if (IsSavegameVersionBefore(SLV_182)) {
 		/* Aircraft acceleration variable was bonkers */
@@ -4266,6 +4268,12 @@ bool AfterLoadGame()
 		}
 	}
 
+	/*
+	 * The center of train vehicles was changed, fix up spacing.
+	 * Delay this until all train and track updates have been performed.
+	 */
+	if (IsSavegameVersionBefore(SLV_164)) FixupTrainLengths();
+
 	InitializeRoadGUI();
 
 	/* This needs to be done after conversion. */
@@ -4388,6 +4396,7 @@ void ReloadNewGRFData()
 	GroupStatistics::UpdateAfterLoad();
 	/* update station graphics */
 	AfterLoadStations();
+	UpdateStationTileCacheFlags(false);
 
 	RailType rail_type_translate_map[RAILTYPE_END];
 	for (RailType old_type = RAILTYPE_BEGIN; old_type != RAILTYPE_END; old_type++) {

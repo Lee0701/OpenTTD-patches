@@ -210,6 +210,8 @@ add_files(
     guitimer_func.h
     heightmap.cpp
     heightmap.h
+    help_gui.cpp
+    help_gui.h
     highscore.cpp
     highscore.h
     highscore_gui.cpp
@@ -442,7 +444,6 @@ add_files(
     story_base.h
     story_gui.cpp
     story_type.h
-    strgen/strgen.h
     string.cpp
     string_base.h
     string_extra.cpp
@@ -453,6 +454,7 @@ add_files(
     stringfilter_type.h
     strings.cpp
     strings_func.h
+    strings_internal.h
     strings_type.h
     subsidy.cpp
     subsidy_base.h

@@ -40,9 +40,7 @@ void DrawRoadVehDetails(const Vehicle *v, const Rect &r)
 
 	if (v->HasArticulatedPart()) {
 		CargoArray max_cargo{};
-		StringID subtype_text[NUM_CARGO];
-
-		memset(subtype_text, 0, sizeof(subtype_text));
+		std::array<StringID, NUM_CARGO> subtype_text{};
 
 		for (const Vehicle *u = v; u != nullptr; u = u->Next()) {
 			max_cargo[u->cargo_type] += u->cargo_cap;
@@ -55,16 +53,17 @@ void DrawRoadVehDetails(const Vehicle *v, const Rect &r)
 		std::string capacity = GetString(STR_VEHICLE_DETAILS_TRAIN_ARTICULATED_RV_CAPACITY);
 
 		bool first = true;
-		for (CargoID i = 0; i < NUM_CARGO; i++) {
-			if (max_cargo[i] > 0) {
+		for (const CargoSpec *cs : _sorted_cargo_specs) {
+			CargoID cid = cs->Index();
+			if (max_cargo[cid] > 0) {
 				if (!first) capacity += ", ";
 
-				SetDParam(0, i);
-				SetDParam(1, max_cargo[i]);
+				SetDParam(0, cid);
+				SetDParam(1, max_cargo[cid]);
 				capacity += GetString(STR_JUST_CARGO);
 
-				if (subtype_text[i] != 0) {
-					capacity += GetString(subtype_text[i]);
+				if (subtype_text[cid] != STR_NULL) {
+					capacity += GetString(subtype_text[cid]);
 				}
 
 				first = false;
@@ -81,9 +80,9 @@ void DrawRoadVehDetails(const Vehicle *v, const Rect &r)
 			if (u->cargo.StoredCount() > 0) {
 				SetDParam(0, u->cargo_type);
 				SetDParam(1, u->cargo.StoredCount());
-				SetDParam(2, u->cargo.Source());
+				SetDParam(2, u->cargo.GetFirstStation());
 				str = STR_VEHICLE_DETAILS_CARGO_FROM;
-				feeder_share += u->cargo.FeederShare();
+				feeder_share += u->cargo.GetFeederShare();
 			}
 			DrawString(r.left, r.right, y, str);
 			y += FONT_HEIGHT_NORMAL;
@@ -100,9 +99,9 @@ void DrawRoadVehDetails(const Vehicle *v, const Rect &r)
 		if (v->cargo.StoredCount() > 0) {
 			SetDParam(0, v->cargo_type);
 			SetDParam(1, v->cargo.StoredCount());
-			SetDParam(2, v->cargo.Source());
+			SetDParam(2, v->cargo.GetFirstStation());
 			str = STR_VEHICLE_DETAILS_CARGO_FROM;
-			feeder_share += v->cargo.FeederShare();
+			feeder_share += v->cargo.GetFeederShare();
 		}
 		DrawString(r.left, r.right, y, str);
 		y += FONT_HEIGHT_NORMAL + WidgetDimensions::scaled.vsep_normal;
